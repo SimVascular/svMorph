@@ -11,10 +11,9 @@ from vtk.util.numpy_support import numpy_to_vtk as n2v
 np.set_printoptions(threshold=np.inf)
 np.set_printoptions(linewidth=np.inf)
 
-import vtk_utils
-import common
-# import mask
-import ring_points_optimizer
+from kelvinlet_core import vtk_utils
+from kelvinlet_core import common
+from kelvinlet_core import ring_points_optimizer
 
 def define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas):
     centerline_points = copy.deepcopy(v2n(centerline_polydata.GetPoints().GetData()))

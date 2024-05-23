@@ -13,7 +13,7 @@ from vtk.util.numpy_support import numpy_to_vtk as n2v
 np.set_printoptions(threshold=np.inf)
 np.set_printoptions(linewidth=np.inf)
 
-import vtk_utils
+from kelvinlet_core import vtk_utils
 
 """
 As defined below eqn 3 in De Goes 2017

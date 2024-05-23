@@ -5,7 +5,7 @@ import numpy as np
 import scipy.optimize as opt
 import matplotlib.pyplot as plt
 
-import common
+from kelvinlet_core import common
 
 def linear(length, x):
     y = -x + length
