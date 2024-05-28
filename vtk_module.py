@@ -41,7 +41,7 @@ class VTKHandler:
 
         self.mesh_actor = vtkActor()
         self.mesh_actor.SetMapper(self.mesh_mapper)
-        self.mesh_actor.GetProperty().SetColor(self.colors.GetColor3d('MistyRose'))
+        self.mesh_actor.GetProperty().SetColor(self.colors.GetColor3d('LightBlue'))
         self.mesh_actor.GetProperty().SetOpacity(0.7)
         self.mesh_actor.SetPickable(0)
 
@@ -51,7 +51,7 @@ class VTKHandler:
         self.renderer = vtkRenderer()
         self.renderer.AddActor(self.mesh_actor)
         self.renderer.AddActor(self.centerline_actor)
-        self.renderer.SetBackground(0.1, 0.2, 0.3)
+        self.renderer.SetBackground(0.1, 0.1, 0.1)
 
     def get_renderer(self):
         return self.renderer
@@ -159,6 +159,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def update_mesh_viewer(self):
         updated_mesh = load_vtp_file("obtained_aneurysm_surface_aneurysm_constant_uniscale_25.vtp")
         updated_centerline = load_vtp_file("obtained_aneurysm_centerline_aneurysm_constant_uniscale_25.vtp")
+        self.mesh_filename = "obtained_aneurysm_surface_aneurysm_constant_uniscale_25.vtp"
+        self.centerline_filename = "obtained_aneurysm_centerline_aneurysm_constant_uniscale_25.vtp"
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.RemoveAllViewProps()
@@ -195,6 +197,8 @@ def create_aneurysm(mesh_filename, centerline_filename, selected_points, area_pe
     list_of_other_geometry_polydata_input_file_names = []
     list_of_other_geometry_polydata_output_file_names = []
 
+    # to make sure the selected points are in order regardless of picking order
+    selected_points.sort()
     force_center_point_id = selected_points[1]
     list_of_node_point_indices = selected_points
     # area_percent_change = 500
