@@ -41,8 +41,8 @@ class VTKHandler:
 
         self.mesh_actor = vtkActor()
         self.mesh_actor.SetMapper(self.mesh_mapper)
-        self.mesh_actor.GetProperty().SetColor(self.colors.GetColor3d('LightBlue'))
-        self.mesh_actor.GetProperty().SetOpacity(0.7)
+        self.mesh_actor.GetProperty().SetColor(0.8, 1.0, 1.0)
+        self.mesh_actor.GetProperty().SetOpacity(0.6)
         self.mesh_actor.SetPickable(0)
 
         self.centerline_actor = vtkActor()
@@ -57,10 +57,10 @@ class VTKHandler:
         return self.renderer
 
     def get_interactor_style(self, interactor):
-        return MouseInteractorStylePP(self.mesh, self.centerline, self.mesh_filename, self.centerline_filename, interactor)
+        return MouseInteractorStylePP(self.mesh, self.centerline, self.mesh_filename, self.centerline_filename, self.mesh_actor, interactor)
 
 class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
-    def __init__(self, mesh, centerline, mesh_filename, centerline_filename, interactor, parent=None):
+    def __init__(self, mesh, centerline, mesh_filename, centerline_filename, mesh_actor, interactor, parent=None):
         super().__init__()
         self.AddObserver("LeftButtonPressEvent", self.left_button_press_event)
         self.AddObserver("KeyPressEvent", self.on_key_press)
@@ -71,6 +71,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.mesh_filename = mesh_filename
         self.centerline_filename = centerline_filename
         self.interactor = interactor
+        self.mesh_actor = mesh_actor
         self.selected_points = []
 
     def on_key_press(self, obj, event):
@@ -111,7 +112,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
         actor = vtkmodules.vtkRenderingCore.vtkActor()
         actor.SetMapper(mapper)
-        actor.GetProperty().SetColor(1.0, 1.0, 1.0)
+        actor.GetProperty().SetColor(0.0, 1.0, 0.0)
         actor.centerpointID = pointID
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
@@ -121,7 +122,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def place_highlight_sphere(self, position):
         sphere = vtkSphereSource()
         sphere.SetCenter(position)
-        sphere.SetRadius(0.05)
+        sphere.SetRadius(0.06)
 
         mapper = vtkPolyDataMapper()
         mapper.SetInputConnection(sphere.GetOutputPort())
@@ -129,7 +130,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         actor = vtkmodules.vtkRenderingCore.vtkActor()
         actor.SetMapper(mapper)
         actor.GetProperty().SetColor(1.0, 0.0, 0.0)
-        actor.GetProperty().SetOpacity(0.5)
+        actor.GetProperty().SetOpacity(0.8)
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.AddActor(actor)
@@ -146,12 +147,16 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             transformed_point = transform.TransformPoint(point)
             self.place_visualization_sphere(transformed_point, i)
 
+        self.mesh_actor.GetProperty().SetOpacity(0.3)
         self.GetInteractor().GetRenderWindow().Render()
 
     def deform_mesh(self, area_percent_change):
         if len(self.selected_points) < 3:
             print("Please select at least 3 points along the centerline.")
             return
+        if len(self.selected_points) > 3:
+            print("Using only the most recent 3 points picked.")
+            self.selected_points = self.selected_points[-3:]
 
         create_aneurysm(self.mesh_filename, self.centerline_filename, self.selected_points, area_percent_change)
         self.update_mesh_viewer()
@@ -169,8 +174,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         mesh_mapper.SetInputData(updated_mesh)
         mesh_actor = vtkActor()
         mesh_actor.SetMapper(mesh_mapper)
-        mesh_actor.GetProperty().SetColor(vtkNamedColors().GetColor3d('MistyRose'))
-        mesh_actor.GetProperty().SetOpacity(0.7)
+        mesh_actor.GetProperty().SetColor(0.8, 1.0, 1.0)
+        mesh_actor.GetProperty().SetOpacity(0.6)
         mesh_actor.SetPickable(0)
 
         centerline_mapper = vtkPolyDataMapper()
@@ -184,6 +189,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.mesh = updated_mesh
         self.centerline = updated_centerline
         # add temporary file names and make copies as intermediate files
+        self.mesh_actor = mesh_actor
         self.selected_points = []
 
         ren.GetRenderWindow().Render()
