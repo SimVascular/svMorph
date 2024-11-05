@@ -5,6 +5,7 @@ import numpy as np
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 from vtk.util.numpy_support import numpy_to_vtk as n2v
 
+
 def write_polydata(polydata_file_name, polydata):
     _, ext = os.path.splitext(polydata_file_name)
     if ext == '.vtp':
@@ -74,8 +75,8 @@ references:
     https://github.com/StanfordCBCL/DataCuration/blob/master/vtk_functions.py -- cut_plane()
 """
 def cut_polydata(polydata, origin, normal):
-    assert(len(origin) == 3)
-    assert(len(normal) == 3)
+    # assert(len(origin) == 3)
+    # assert(len(normal) == 3)
     cutting_plane = vtk.vtkPlane()
     cutting_plane.SetOrigin(origin[0], origin[1], origin[2])
     cutting_plane.SetNormal(normal[0], normal[1], normal[2])

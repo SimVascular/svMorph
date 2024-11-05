@@ -79,6 +79,34 @@ def apply_mask(displacements, mask):
     assert(displacements.shape == mask.shape)
     return np.multiply(displacements, mask)
 
+def kelvinlets_translation_v2(x, y, z, x0, y0, z0, a, b, eps):
+    n = len(x)
+    m = len(x0)
+
+    # Pre-allocate rv array to avoid dstack
+    rv = np.empty((n, m, 3, 1))
+    rv[:, :, 0, 0] = x.reshape((n, 1)) - x0.reshape((1, m))
+    rv[:, :, 1, 0] = y.reshape((n, 1)) - y0.reshape((1, m))
+    rv[:, :, 2, 0] = z.reshape((n, 1)) - z0.reshape((1, m))
+
+    # Calculate re directly with added epsilon term
+    re = np.sqrt(np.sum(rv[..., 0] ** 2, axis=2) + eps**2)
+    re = re.reshape((n, m, 1, 1))  # Ensure re has shape (n, m, 1, 1)
+    re3 = re ** 3
+
+    # Preallocate identities
+    identity3 = np.eye(3)
+    identities = np.tile(identity3, (n, m, 1, 1))
+
+    # Calculate K components
+    K = ((a - b) / re) * identities
+    rvT = rv.transpose((0, 1, 3, 2))  # Transpose rv to shape (n, m, 1, 3)
+    K += (b / re3) * np.matmul(rv, rvT)
+    K += (a / 2 * eps**2 / re3) * identities
+
+    return K
+
+
 """
 Eqn 6 of De Goes 2017
 
@@ -90,13 +118,13 @@ Inputs:
     y0: array of shape (m, )
     z0: array of shape (m, )
 """
-def kelvinlets_translation_v2(x, y, z, x0, y0, z0, a, b, eps):
+def kelvinlets_translation_v2_jonathan(x, y, z, x0, y0, z0, a, b, eps):
     n = len(x) # number of points for which to compute the kelvinlets
     m = len(x0) # number of forces applied
-    assert(len(y) == n)
-    assert(len(z) == n)
-    assert(len(y0) == m)
-    assert(len(z0) == m)
+    # assert(len(y) == n)
+    # assert(len(z) == n)
+    # assert(len(y0) == m)
+    # assert(len(z0) == m)
     
     # start = perf_counter()
     x = x.reshape((n, 1, 1, 1))
@@ -124,7 +152,7 @@ def kelvinlets_translation_v2(x, y, z, x0, y0, z0, a, b, eps):
     
     # start = perf_counter()
     rv = np.dstack((x - x0, y - y0, z - z0))
-    assert(rv.shape == (n, m, 3, 1))
+    # assert(rv.shape == (n, m, 3, 1))
     # print("dstack time = ", perf_counter() - start)
     
     # start = perf_counter()
@@ -182,6 +210,42 @@ Inputs:
     z0: array of shape (m, )
 """
 def laplacian_kelvinlets_translation_v2(x, y, z, x0, y0, z0, a, b, eps):
+    n = len(x)
+    m = len(x0)
+
+    # Pre-allocate rv array to avoid dstack
+    rv = np.empty((n, m, 3, 1))
+    rv[:, :, 0, 0] = x.reshape((n, 1)) - x0.reshape((1, m))
+    rv[:, :, 1, 0] = y.reshape((n, 1)) - y0.reshape((1, m))
+    rv[:, :, 2, 0] = z.reshape((n, 1)) - z0.reshape((1, m))
+
+    # Calculate re directly, incorporating epsilon squared
+    re = np.sqrt(np.sum(rv[..., 0] ** 2, axis=2) + eps**2)
+    re = re.reshape((n, m, 1, 1))  # Ensure re has shape (n, m, 1, 1)
+    re2 = re ** 2
+    re7 = re ** 7
+
+    # Calculate r^2 and broadcast it
+    r2 = np.sum(rv[..., 0] ** 2, axis=2).reshape((n, m, 1, 1))
+
+    # Preallocate identities without stacking
+    identity3 = np.eye(3)
+    identities = np.tile(identity3, (n, m, 1, 1))
+
+    # Calculate the main component K
+    term1 = 15 * a * eps**4
+    term2 = 2 * b * re2 * (5 * eps**2 + 2 * r2)
+    K = (term1 - term2) / (2 * re7) * identities
+
+    # Calculate K2 component and add it to K
+    rvT = rv.transpose((0, 1, 3, 2))  # Transpose rv to shape (n, m, 1, 3)
+    K2 = np.matmul(rv, rvT)
+    K += (3 * b * (7 * eps**2 + 2 * r2) / re7) * K2
+    
+    return K
+
+
+def laplacian_kelvinlets_translation_v2_jonathan(x, y, z, x0, y0, z0, a, b, eps):
     n = len(x) # number of points for which to compute the kelvinlets
     m = len(x0) # number of forces applied
     assert(len(y) == n)

@@ -160,12 +160,23 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
         create_aneurysm(self.mesh_filename, self.centerline_filename, self.selected_points, area_percent_change)
         self.update_mesh_viewer()
+    
+    def deform_mesh_stenosis(self, area_percent_change, num_ring_points, falloff_type, weight_regularized_laplacian):
+        if len(self.selected_points) < 3:
+            print("Please select at least 3 points along the centerline.")
+            return
+        if len(self.selected_points) > 3:
+            print("Using only the most recent 3 points picked.")
+            self.selected_points = self.selected_points[-3:]
+
+        create_stenosis(self.mesh_filename, self.centerline_filename, self.selected_points, area_percent_change, num_ring_points, falloff_type, weight_regularized_laplacian, model="test_stenosis")
+        # self.update_mesh_viewer()
 
     def update_mesh_viewer(self):
-        updated_mesh = load_vtp_file("obtained_aneurysm_surface_aneurysm_constant_uniscale_25.vtp")
-        updated_centerline = load_vtp_file("obtained_aneurysm_centerline_aneurysm_constant_uniscale_25.vtp")
-        self.mesh_filename = "obtained_aneurysm_surface_aneurysm_constant_uniscale_25.vtp"
-        self.centerline_filename = "obtained_aneurysm_centerline_aneurysm_constant_uniscale_25.vtp"
+        updated_mesh = load_vtp_file("obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp")
+        updated_centerline = load_vtp_file("obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp")
+        self.mesh_filename = "obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp"
+        self.centerline_filename = "obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp"
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.RemoveAllViewProps()
@@ -214,6 +225,7 @@ def create_aneurysm(mesh_filename, centerline_filename, selected_points, area_pe
     mu = 1
     nu = 0.4
     num_time_steps = 25
+    num_time_steps = 1
 
     # write_vtp_file(centerline, centerline_polydata_input_file_name)
     # write_vtp_file(mesh, surface_polydata_input_file_name)
@@ -223,4 +235,29 @@ def create_aneurysm(mesh_filename, centerline_filename, selected_points, area_pe
         centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, 
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names
+    )
+
+def create_stenosis(mesh_filename, centerline_filename, selected_points, area_percent_change, num_ring_points, falloff_type, weight_regularized_laplacian, model="test_stenosis"):
+    centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
+    surface_polydata_output_file_name = "obtained_aneurysm_surface"
+
+    list_of_other_geometry_polydata_input_file_names = []
+    list_of_other_geometry_polydata_output_file_names = []
+
+    selected_points.sort()
+    force_center_point_id = selected_points[1]
+    list_of_node_point_indices = [force_center_point_id]
+    affine_params = {"eps": {model: 1.0}}
+
+    mu = 1
+    nu = 0.1
+    num_time_steps = 25
+    num_time_steps = 1
+
+
+    scaling.run_stenosis_v4(
+        affine_params, model, centerline_filename, mesh_filename,
+        centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, force_center_point_id, 
+        num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, 
+        list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian
     )

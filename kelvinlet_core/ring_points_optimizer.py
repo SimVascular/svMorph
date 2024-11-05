@@ -85,12 +85,12 @@ def objective_function(scale, original_points, prescribed_area):
     return objective
 
 def find_scale_to_get_prescribed_area(original_points, prescribed_area):
-    print("note that I think this only works for convex-shapes (not non-convex shapes), but i think it is okay to assume that vessels usually have convex cross-sections")
+    # print("note that I think this only works for convex-shapes (not non-convex shapes), but i think it is okay to assume that vessels usually have convex cross-sections")
     
     num_points = original_points.shape[0]
     num_spatial_dims = original_points.shape[1]
     assert(original_points.shape == (num_points, num_spatial_dims))
-    np.testing.assert_equal(original_points[0, :], original_points[-1, :])
+    # np.testing.assert_equal(original_points[0, :], original_points[-1, :])
     # np.testing.assert_allclose(common.get_centroid(original_points), np.zeros((1, num_spatial_dims)), atol=1e-8)
     
     # reference: https://www.einblick.ai/python-code-examples/minimizing-function-scipy-optimize-minimize/

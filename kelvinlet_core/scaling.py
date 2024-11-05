@@ -313,6 +313,42 @@ def get_ring_point_and_forces_v2(data, a, b, eps, origin, normal, surface_polyda
     return ring_points, ring_forces
 
 def get_ring_displacements_v2(data, a, b, eps, mesh_type, ring_points, ring_forces, falloff_type):
+    # Validate mesh_type efficiently
+    valid_mesh_types = {"surface", "centerline"}
+    if not (mesh_type in valid_mesh_types or mesh_type.startswith("other_geometry_")):
+        raise ValueError(f"Error. mesh_type '{mesh_type}' is not valid.")
+
+    num_mesh_points = data["points"][mesh_type].shape[0]
+    num_ring_points = ring_points.shape[0]
+
+    # Select the correct kelvinlet function based on falloff_type
+    kelvinlet_func = {
+        "regular": common.kelvinlets_translation_v2,
+        "laplacian": common.laplacian_kelvinlets_translation_v2,
+        "bilaplacian": common.bilaplacian_kelvinlets_translation_v2
+    }.get(falloff_type)
+
+    if kelvinlet_func is None:
+        raise ValueError(f"Error. falloff_type '{falloff_type}' is not recognized.")
+
+    # Compute the kelvinlets
+    mesh_points = data["points"][mesh_type]
+    kk = kelvinlet_func(
+        mesh_points[:, 0], mesh_points[:, 1], mesh_points[:, 2],
+        ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0],
+        a, b, eps
+    )
+
+    # Reshape kk to match kelvinlet_matrix's shape directly
+    # kelvinlet_matrix = kk.reshape(num_mesh_points, 3, 3 * num_ring_points)
+    kelvinlet_matrix = kk.transpose(0, 2, 1, 3).reshape(num_mesh_points, 3, 3 * num_ring_points)
+
+    # Multiply the kelvinlets by the forces and compute total displacement
+    displacement = np.einsum('ijk,kl->ij', kelvinlet_matrix, ring_forces)
+    return displacement
+
+
+def get_ring_displacements_v2_jonathan(data, a, b, eps, mesh_type, ring_points, ring_forces, falloff_type):
     
     if mesh_type != "surface" and mesh_type != "centerline" and (mesh_type[:15] != "other_geometry_"):
         sys.exit("Error. mesh_type, " + mesh_type + ", is not valid.")
@@ -349,16 +385,16 @@ def get_ring_displacements_v2(data, a, b, eps, mesh_type, ring_points, ring_forc
                                                             a, b, eps)
     else:
         sys.exit("Error. falloff_type, ", falloff_type, ", is not recognized.")
-    assert(kk.shape == (num_mesh_points, num_ring_points, 3, 3))
+    # assert(kk.shape == (num_mesh_points, num_ring_points, 3, 3))
     
     for l in range(num_ring_points):
         kelvinlet_matrix[:, :, 3 * l : 3 * (l + 1)] = kk[:, l, :, :]
     
     # multiply the kelvinlets by the forces and add the displacements to get the total displacement due to the contribution of a force-applying kelvinlet located at each ring point
     displacement = np.matmul(kelvinlet_matrix, ring_forces)
-    assert(displacement.shape == (num_mesh_points, 3, 1))
+    # assert(displacement.shape == (num_mesh_points, 3, 1))
     displacement = np.squeeze(displacement)
-    assert(displacement.shape == (num_mesh_points, 3))
+    # assert(displacement.shape == (num_mesh_points, 3))
     
     return displacement
 
@@ -377,6 +413,82 @@ def get_displacement_needed_for_prescribed_displacement(radius_at_force_center_p
     return delta_radius
 
 def run_aneurysm(affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names):
+
+    affine_type = "aneurysm"
+    brush_level = "uniscale"
+    extension = ".vtp"
+    
+    a, b = common.get_a_b(mu, nu)
+    
+    centerline_polydata = vtk_utils.read_polydata_file(centerline_polydata_input_file_name)
+    surface_polydata = vtk_utils.read_polydata_file(surface_polydata_input_file_name)
+    surface_polydata_copy = vtk_utils.read_polydata_file(surface_polydata_input_file_name)
+    
+    other_geometry_polydatas = []
+    for other_geometry_polydata_input_file_name in list_of_other_geometry_polydata_input_file_names:
+        other_geometry_polydatas.append(vtk_utils.read_polydata_file(other_geometry_polydata_input_file_name))
+    
+    data = define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+    assert(list_of_node_point_indices is not None)
+    data = define_nodes_affine(data, list_of_node_point_indices)
+    assert(force_center_point_id is not None)
+    data = assign_force_location_affine_v2(data, force_center_point_id)
+        
+    data_surface_copy = {"points" : {"surface" : copy.deepcopy(v2n(surface_polydata_copy.GetPoints().GetData()))}}
+    
+    centerline_polydata = add_node_data_to_centerline_polydata_affine(data, centerline_polydata)
+    
+    vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_run_scale_original" + extension, centerline_polydata)
+    
+    origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, data["nodes"]["force_center_point_id"])
+    current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+    delta_radius = get_displacement_needed_for_prescribed_displacement(current_radius, area_percent_change, affine_type) / num_time_steps
+    
+    for it in range(num_time_steps):
+        eps = affine_params["eps"][model] * current_radius
+        s = get_force_matrix_scale(affine_params["scale"][model] * current_radius / num_time_steps, a, b)
+        
+        surface_displacements = get_affine_displacements_v2(data, a, b, eps, s, phi_type, "surface", None)
+        
+        ###################################
+        # get what the resulting radius would be, to determine the approriate scaling factor to achieve the prescribed radius change
+        data_surface_copy = common.update_points_with_displacements(data_surface_copy, surface_displacements, "surface")
+        surface_polydata_copy = common.update_polydata_with_points(surface_polydata_copy, data_surface_copy, "surface")
+        tentative_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata_copy, origin, normal) / np.pi)
+        surface_displacements_norm = tentative_radius - current_radius
+        surface_mesh_scale_factor = delta_radius / surface_displacements_norm
+        surface_displacements *= surface_mesh_scale_factor
+        ###################################
+        
+        # centerline_displacements = get_affine_displacements_v2(data, a, b, eps, s, phi_type, "centerline", surface_mesh_scale_factor)
+        
+        data = common.update_points_with_displacements(data, surface_displacements, "surface")
+        # data = common.update_points_with_displacements(data, centerline_displacements, "centerline")
+        
+        surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
+        # centerline_polydata = common.update_polydata_with_points(centerline_polydata, data, "centerline")
+        
+        for ig in range(len(other_geometry_polydatas)):
+            other_geometry_displacements = get_affine_displacements_v2(data, a, b, eps, s, phi_type, "other_geometry_" + str(ig), surface_mesh_scale_factor)
+            data = common.update_points_with_displacements(data, other_geometry_displacements, "other_geometry_" + str(ig))
+            other_geometry_polydatas[ig] = common.update_polydata_with_points(other_geometry_polydatas[ig], data, "other_geometry_" + str(ig))
+        
+        data_surface_copy = {"points" : {"surface" : copy.deepcopy(v2n(surface_polydata.GetPoints().GetData()))}}
+        surface_polydata_copy = common.update_polydata_with_points(surface_polydata_copy, data_surface_copy, "surface")
+        current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        
+        # centerline_polydata = vtk_utils.update_centerline_polydata_areas(centerline_polydata, surface_polydata, [data["nodes"]["force_center_point_id"]])
+    
+    vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + str(num_time_steps) + extension, centerline_polydata)
+    
+    surface_polydata = vtk_utils.update_surface_polydata_normals(surface_polydata)
+        
+    vtk_utils.write_polydata(surface_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + str(num_time_steps) + extension, surface_polydata)
+    
+    for ig in range(len(other_geometry_polydatas)):
+        vtk_utils.write_polydata(list_of_other_geometry_polydata_output_file_names[ig] + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + str(num_time_steps) + extension, other_geometry_polydatas[ig])
+
+def run_stent(affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names):
 
     affine_type = "aneurysm"
     brush_level = "uniscale"
@@ -486,7 +598,6 @@ def run_stenosis_v4(affine_params, model, centerline_polydata_input_file_name, s
     delta_area = (target_area - original_area) / num_time_steps
     
     for it in range(num_time_steps):
-        
         print("---------------------------------------------------------------------- it = ", it)
         
         current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
@@ -496,20 +607,20 @@ def run_stenosis_v4(affine_params, model, centerline_polydata_input_file_name, s
         
         surface_displacements = get_ring_displacements_v2(data, a, b, eps, "surface", ring_points, ring_forces, falloff_type)
         
-        centerline_displacements = get_ring_displacements_v2(data, a, b, eps, "centerline", ring_points, ring_forces, falloff_type)
+        # centerline_displacements = get_ring_displacements_v2(data, a, b, eps, "centerline", ring_points, ring_forces, falloff_type)
         
         if falloff_type == "regular":
             ring_points_lap, ring_forces_lap = get_ring_point_and_forces_v2(data, a, b, eps, np.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), "laplacian")
             surface_displacements_lap = get_ring_displacements_v2(data, a, b, eps, "surface", ring_points_lap, ring_forces_lap, "laplacian")
-            centerline_displacements_lap = get_ring_displacements_v2(data, a, b, eps, "centerline", ring_points_lap, ring_forces_lap, "laplacian")
+            # centerline_displacements_lap = get_ring_displacements_v2(data, a, b, eps, "centerline", ring_points_lap, ring_forces_lap, "laplacian")
             surface_displacements = weight_regularized_laplacian * surface_displacements + (1 - weight_regularized_laplacian) * surface_displacements_lap
-            centerline_displacements = weight_regularized_laplacian * centerline_displacements + (1 - weight_regularized_laplacian) * centerline_displacements_lap
+            # centerline_displacements = weight_regularized_laplacian * centerline_displacements + (1 - weight_regularized_laplacian) * centerline_displacements_lap
         
         data = common.update_points_with_displacements(data, surface_displacements, "surface")
-        data = common.update_points_with_displacements(data, centerline_displacements, "centerline")
+        # data = common.update_points_with_displacements(data, centerline_displacements, "centerline")
         
         surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
-        centerline_polydata = common.update_polydata_with_points(centerline_polydata, data, "centerline")
+        # centerline_polydata = common.update_polydata_with_points(centerline_polydata, data, "centerline")
         
         for ig in range(len(other_geometry_polydatas)):
             other_geometry_displacements = get_ring_displacements_v2(data, a, b, eps, "other_geometry_" + str(ig), ring_points, ring_forces, falloff_type)
@@ -519,13 +630,15 @@ def run_stenosis_v4(affine_params, model, centerline_polydata_input_file_name, s
             data = common.update_points_with_displacements(data, other_geometry_displacements, "other_geometry_" + str(ig))
             other_geometry_polydatas[ig] = common.update_polydata_with_points(other_geometry_polydatas[ig], data, "other_geometry_" + str(ig))
         
-        centerline_polydata = vtk_utils.update_centerline_polydata_areas(centerline_polydata, surface_polydata, [data["nodes"]["force_center_point_id"]])
+        # centerline_polydata = vtk_utils.update_centerline_polydata_areas(centerline_polydata, surface_polydata, [data["nodes"]["force_center_point_id"]])
     
-    vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_" + str(num_time_steps) + extension, centerline_polydata)
+    # vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_" + str(num_time_steps) + extension, centerline_polydata)
+    # vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + "aneurysm" + "_" + "constant" + "_" + brush_level + "_" + str(num_time_steps) + extension, centerline_polydata)
     
     surface_polydata = vtk_utils.update_surface_polydata_normals(surface_polydata)
         
-    vtk_utils.write_polydata(surface_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_" + str(num_time_steps) + extension, surface_polydata)
+    # vtk_utils.write_polydata(surface_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_" + str(num_time_steps) + extension, surface_polydata)
+    vtk_utils.write_polydata(surface_polydata_output_file_name + "_" + "aneurysm" + "_" + "constant" + "_" + brush_level + "_" + str(num_time_steps) + extension, surface_polydata)
     
     for ig in range(len(other_geometry_polydatas)):
         vtk_utils.write_polydata(list_of_other_geometry_polydata_output_file_names[ig] + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_" + str(num_time_steps) + extension, other_geometry_polydatas[ig])
