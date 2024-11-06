@@ -12,8 +12,11 @@ from vtkmodules.vtkRenderingCore import (
 )
 from vtkmodules.vtkIOXML import vtkXMLPolyDataReader, vtkXMLPolyDataWriter
 from kelvinlet_core import scaling
+from kelvinlet_core import vtk_utils
+from kelvinlet_core import common
+import numpy as np
 
-def load_vtp_file(filename):
+def load_vtp_file(filename): # this is a less robust version of vtk_utils.read_polydata_file, TODO: replace usage with vtk_utils.read_polydata_file
     reader = vtkXMLPolyDataReader()
     reader.SetFileName(filename)
     reader.Update()
@@ -162,6 +165,91 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.update_mesh_viewer()
     
     def deform_mesh_stenosis(self, area_percent_change, num_ring_points, falloff_type, weight_regularized_laplacian):
+        if len(self.selected_points) < 3:
+            print("Please select at least 3 points along the centerline.")
+            return
+        if len(self.selected_points) > 3:
+            print("Using only the most recent 3 points picked.")
+            self.selected_points = self.selected_points[-3:]
+
+        centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
+        surface_polydata_output_file_name = "obtained_aneurysm_surface"
+        list_of_other_geometry_polydata_input_file_names = []
+        list_of_other_geometry_polydata_output_file_names = []
+        self.selected_points.sort()
+        force_center_point_id = self.selected_points[1]
+        list_of_node_point_indices = [force_center_point_id]
+        model="test_stenosis"
+        affine_params = {"eps": {model: 1.0}}
+        mu = 1
+        nu = 0.1
+        num_time_steps = 1
+        self.run_stenosis_v5(
+        affine_params, model, self.centerline_filename, self.mesh_filename,
+        centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, force_center_point_id, 
+        num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, 
+        list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian
+        )
+        self.GetInteractor().GetRenderWindow().Render()
+    
+    def run_stenosis_v5(self, affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, force_center_point_id, num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian):
+        affine_type = "stenosis"
+        brush_level = "uniscale"
+        phi_type = "point"
+        extension = ".vtp"
+
+        assert((0 <= weight_regularized_laplacian) and (weight_regularized_laplacian <= 1))
+        
+        a, b = common.get_a_b(mu, nu)
+        
+        centerline_polydata = vtk_utils.read_polydata_file(centerline_polydata_input_file_name)
+        # surface_polydata = vtk_utils.read_polydata_file(surface_polydata_input_file_name)
+        centerline_polydata = self.centerline
+        surface_polydata = self.mesh
+        
+        other_geometry_polydatas = []
+        for other_geometry_polydata_input_file_name in list_of_other_geometry_polydata_input_file_names:
+            other_geometry_polydatas.append(vtk_utils.read_polydata_file(other_geometry_polydata_input_file_name))
+        
+        data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        assert(list_of_node_point_indices is not None)
+        data = scaling.define_nodes_affine(data, list_of_node_point_indices)
+        assert(force_center_point_id is not None)
+        data = scaling.assign_force_location_affine_v2(data, force_center_point_id)
+        
+        centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(data, centerline_polydata)
+        
+        vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_run_stenosis_original" + extension, centerline_polydata)
+        
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, data["nodes"]["force_center_point_id"])
+        original_area = vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal)
+        target_area = original_area * area_percent_change / 100
+        delta_area = (target_area - original_area) / num_time_steps
+        
+        for it in range(num_time_steps):
+            print("---------------------------------------------------------------------- it = ", it)
+            
+            current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+            eps = affine_params["eps"][model] * current_radius
+            
+            ring_points, ring_forces = scaling.get_ring_point_and_forces_v2(data, a, b, eps, np.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), falloff_type)
+            
+            surface_displacements = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points, ring_forces, falloff_type)
+            
+            if falloff_type == "regular":
+                ring_points_lap, ring_forces_lap = scaling.get_ring_point_and_forces_v2(data, a, b, eps, np.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), "laplacian")
+                surface_displacements_lap = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points_lap, ring_forces_lap, "laplacian")
+                surface_displacements = weight_regularized_laplacian * surface_displacements + (1 - weight_regularized_laplacian) * surface_displacements_lap
+            
+            data = common.update_points_with_displacements(data, surface_displacements, "surface")
+            
+            surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
+        
+        surface_polydata = vtk_utils.update_surface_polydata_normals(surface_polydata)
+            
+        # vtk_utils.write_polydata(surface_polydata_output_file_name + "_" + "aneurysm" + "_" + "constant" + "_" + brush_level + "_" + str(num_time_steps) + extension, surface_polydata)
+
+    def deform_mesh_stenosis_jonathan(self, area_percent_change, num_ring_points, falloff_type, weight_regularized_laplacian):
         if len(self.selected_points) < 3:
             print("Please select at least 3 points along the centerline.")
             return

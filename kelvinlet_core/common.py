@@ -35,6 +35,12 @@ def get_radius_at_point(centerline_polydata, point_id):
     return radius
 
 def update_polydata_with_points(polydata, data, mesh_type):
+    polypoints = polydata.GetPoints()
+    polypoints.SetData(n2v(data["points"][mesh_type]))
+    polydata.Modified()
+    return polydata
+
+def update_polydata_with_points_jonathan(polydata, data, mesh_type):
     new_polydata_points = vtk.vtkPoints()
     new_polydata_points.SetData(n2v(data["points"][mesh_type]))
     polydata.SetPoints(new_polydata_points)

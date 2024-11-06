@@ -642,3 +642,60 @@ def run_stenosis_v4(affine_params, model, centerline_polydata_input_file_name, s
     
     for ig in range(len(other_geometry_polydatas)):
         vtk_utils.write_polydata(list_of_other_geometry_polydata_output_file_names[ig] + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_" + str(num_time_steps) + extension, other_geometry_polydatas[ig])
+
+# to delete this, because it is instead in  vtk_module.py
+def run_stenosis_v5(affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, force_center_point_id, num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian):
+    
+    affine_type = "stenosis"
+    brush_level = "uniscale"
+    phi_type = "point"
+    extension = ".vtp"
+
+    assert((0 <= weight_regularized_laplacian) and (weight_regularized_laplacian <= 1))
+    
+    a, b = common.get_a_b(mu, nu)
+    
+    centerline_polydata = vtk_utils.read_polydata_file(centerline_polydata_input_file_name)
+    surface_polydata = vtk_utils.read_polydata_file(surface_polydata_input_file_name)
+    
+    other_geometry_polydatas = []
+    for other_geometry_polydata_input_file_name in list_of_other_geometry_polydata_input_file_names:
+        other_geometry_polydatas.append(vtk_utils.read_polydata_file(other_geometry_polydata_input_file_name))
+    
+    data = define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+    assert(list_of_node_point_indices is not None)
+    data = define_nodes_affine(data, list_of_node_point_indices)
+    assert(force_center_point_id is not None)
+    data = assign_force_location_affine_v2(data, force_center_point_id)
+    
+    centerline_polydata = add_node_data_to_centerline_polydata_affine(data, centerline_polydata)
+    
+    vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_run_stenosis_original" + extension, centerline_polydata)
+    
+    origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, data["nodes"]["force_center_point_id"])
+    original_area = vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal)
+    target_area = original_area * area_percent_change / 100
+    delta_area = (target_area - original_area) / num_time_steps
+    
+    for it in range(num_time_steps):
+        print("---------------------------------------------------------------------- it = ", it)
+        
+        current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        eps = affine_params["eps"][model] * current_radius
+        
+        ring_points, ring_forces = get_ring_point_and_forces_v2(data, a, b, eps, np.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), falloff_type)
+        
+        surface_displacements = get_ring_displacements_v2(data, a, b, eps, "surface", ring_points, ring_forces, falloff_type)
+        
+        if falloff_type == "regular":
+            ring_points_lap, ring_forces_lap = get_ring_point_and_forces_v2(data, a, b, eps, np.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), "laplacian")
+            surface_displacements_lap = get_ring_displacements_v2(data, a, b, eps, "surface", ring_points_lap, ring_forces_lap, "laplacian")
+            surface_displacements = weight_regularized_laplacian * surface_displacements + (1 - weight_regularized_laplacian) * surface_displacements_lap
+        
+        data = common.update_points_with_displacements(data, surface_displacements, "surface")
+        
+        surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
+    
+    surface_polydata = vtk_utils.update_surface_polydata_normals(surface_polydata)
+        
+    vtk_utils.write_polydata(surface_polydata_output_file_name + "_" + "aneurysm" + "_" + "constant" + "_" + brush_level + "_" + str(num_time_steps) + extension, surface_polydata)
