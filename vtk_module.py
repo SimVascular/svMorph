@@ -15,6 +15,8 @@ from kelvinlet_core import scaling
 from kelvinlet_core import vtk_utils
 from kelvinlet_core import common
 import numpy as np
+import copy
+from vtk.util.numpy_support import vtk_to_numpy as v2n
 
 def load_vtp_file(filename): # this is a less robust version of vtk_utils.read_polydata_file, TODO: replace usage with vtk_utils.read_polydata_file
     reader = vtkXMLPolyDataReader()
@@ -35,7 +37,7 @@ class VTKHandler:
         self.centerline = load_vtp_file(centerline_filename)
         self.mesh_filename = mesh_filename
         self.centerline_filename = centerline_filename
-        self.selected_points = []
+        # self.selected_points = []
 
         self.mesh_mapper = vtkPolyDataMapper()
         self.mesh_mapper.SetInputData(self.mesh)
@@ -69,6 +71,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.AddObserver("KeyPressEvent", self.on_key_press)
         self.Points = vtkmodules.vtkCommonCore.vtkPoints()
         self.vertexVisualizationActors = []
+        self.redHighlightActors = []
         self.mesh = mesh
         self.centerline = centerline
         self.mesh_filename = mesh_filename
@@ -137,6 +140,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.AddActor(actor)
+        self.redHighlightActors.append(actor)
 
     def display_vertices(self):
         points = self.centerline.GetPoints()
@@ -154,6 +158,101 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def deform_mesh(self, area_percent_change):
+        if len(self.selected_points) < 3:
+            print("Please select at least 3 points along the centerline.")
+            return
+        if len(self.selected_points) > 3:
+            print("Using only the most recent 3 points picked.")
+            self.selected_points = self.selected_points[-3:]
+
+        # create_aneurysm(self.mesh_filename, self.centerline_filename, self.selected_points, area_percent_change)
+        centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
+        surface_polydata_output_file_name = "obtained_aneurysm_surface"
+        list_of_other_geometry_polydata_input_file_names = []
+        list_of_other_geometry_polydata_output_file_names = []
+        # to make sure the selected points are in order regardless of picking order
+        self.selected_points.sort()
+        force_center_point_id = self.selected_points[1]
+        list_of_node_point_indices = self.selected_points
+        # area_percent_change = 500
+        phi_type = "constant"
+        model = "test_aneurysm"
+        affine_params = {"eps": {model: 1.0}, "scale": {model: 1.1}}
+        mu = 1
+        nu = 0.4
+        num_time_steps = 25
+        num_time_steps = 1
+        self.run_aneurysm(
+        affine_params, model, self.centerline_filename, self.mesh_filename,centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
+        force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, 
+        list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
+        self.update_mesh_viewer()
+        
+    def run_aneurysm(self, affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names):
+        affine_type = "aneurysm"
+        brush_level = "uniscale"
+        extension = ".vtp"
+        
+        a, b = common.get_a_b(mu, nu)
+        
+        centerline_polydata = self.centerline
+        surface_polydata = self.mesh
+        surface_polydata_copy = vtk_utils.read_polydata_file(surface_polydata_input_file_name)
+        
+        other_geometry_polydatas = []
+        for other_geometry_polydata_input_file_name in list_of_other_geometry_polydata_input_file_names:
+            other_geometry_polydatas.append(vtk_utils.read_polydata_file(other_geometry_polydata_input_file_name))
+        
+        data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        assert(list_of_node_point_indices is not None)
+        data = scaling.define_nodes_affine(data, list_of_node_point_indices)
+        assert(force_center_point_id is not None)
+        data = scaling.assign_force_location_affine_v2(data, force_center_point_id)
+            
+        data_surface_copy = {"points" : {"surface" : copy.deepcopy(v2n(surface_polydata_copy.GetPoints().GetData()))}}
+        
+        centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(data, centerline_polydata)
+        
+        # vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_run_scale_original" + extension, centerline_polydata)
+        
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, data["nodes"]["force_center_point_id"])
+        current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        delta_radius = scaling.get_displacement_needed_for_prescribed_displacement(current_radius, area_percent_change, affine_type) / num_time_steps
+        
+        for it in range(num_time_steps):
+            eps = affine_params["eps"][model] * current_radius
+            s = scaling.get_force_matrix_scale(affine_params["scale"][model] * current_radius / num_time_steps, a, b)
+            
+            surface_displacements = scaling.get_affine_displacements_v2(data, a, b, eps, s, phi_type, "surface", None)
+            
+            ###################################
+            # get what the resulting radius would be, to determine the approriate scaling factor to achieve the prescribed radius change
+            data_surface_copy = common.update_points_with_displacements(data_surface_copy, surface_displacements, "surface")
+            surface_polydata_copy = common.update_polydata_with_points(surface_polydata_copy, data_surface_copy, "surface")
+            tentative_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata_copy, origin, normal) / np.pi)
+            surface_displacements_norm = tentative_radius - current_radius
+            surface_mesh_scale_factor = delta_radius / surface_displacements_norm
+            surface_displacements *= surface_mesh_scale_factor
+            ###################################
+            
+            # centerline_displacements = get_affine_displacements_v2(data, a, b, eps, s, phi_type, "centerline", surface_mesh_scale_factor)
+            
+            data = common.update_points_with_displacements(data, surface_displacements, "surface")
+            # data = common.update_points_with_displacements(data, centerline_displacements, "centerline")
+            
+            surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
+            # centerline_polydata = common.update_polydata_with_points(centerline_polydata, data, "centerline")
+            
+            for ig in range(len(other_geometry_polydatas)):
+                other_geometry_displacements = scaling.get_affine_displacements_v2(data, a, b, eps, s, phi_type, "other_geometry_" + str(ig), surface_mesh_scale_factor)
+                data = common.update_points_with_displacements(data, other_geometry_displacements, "other_geometry_" + str(ig))
+                other_geometry_polydatas[ig] = common.update_polydata_with_points(other_geometry_polydatas[ig], data, "other_geometry_" + str(ig))
+            
+            data_surface_copy = {"points" : {"surface" : copy.deepcopy(v2n(surface_polydata.GetPoints().GetData()))}}
+            surface_polydata_copy = common.update_polydata_with_points(surface_polydata_copy, data_surface_copy, "surface")
+            current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+
+    def deform_mesh_jonathan(self, area_percent_change):
         if len(self.selected_points) < 3:
             print("Please select at least 3 points along the centerline.")
             return
@@ -190,7 +289,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, 
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian
         )
-        self.GetInteractor().GetRenderWindow().Render()
+        self.update_mesh_viewer()
     
     def run_stenosis_v5(self, affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, force_center_point_id, num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian):
         affine_type = "stenosis"
@@ -219,7 +318,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(data, centerline_polydata)
         
-        vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_run_stenosis_original" + extension, centerline_polydata)
+        # vtk_utils.write_polydata(centerline_polydata_output_file_name + "_" + affine_type + "_" + phi_type + "_" + brush_level + "_" + falloff_type + "_run_stenosis_original" + extension, centerline_polydata)
         
         origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, data["nodes"]["force_center_point_id"])
         original_area = vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal)
@@ -261,11 +360,19 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # self.update_mesh_viewer()
 
     def update_mesh_viewer(self):
-        updated_mesh = load_vtp_file("obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp")
-        updated_centerline = load_vtp_file("obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp")
+        # updated_mesh = load_vtp_file("obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp")
+        # updated_centerline = load_vtp_file("obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp")
         self.mesh_filename = "obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp"
         self.centerline_filename = "obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp"
+        
+        self.selected_points = []
+        ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+        for actor in self.redHighlightActors:
+            ren.RemoveActor(actor)
+        self.redHighlightActors = []
+        self.GetInteractor().GetRenderWindow().Render()
 
+        '''
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.RemoveAllViewProps()
 
@@ -290,8 +397,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # add temporary file names and make copies as intermediate files
         self.mesh_actor = mesh_actor
         self.selected_points = []
-
         ren.GetRenderWindow().Render()
+        '''
 
 def create_aneurysm(mesh_filename, centerline_filename, selected_points, area_percent_change, model="test_aneurysm"):
     # centerline_polydata_input_file_name = centerline_filename
