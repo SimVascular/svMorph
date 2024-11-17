@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
         
         self.stenosis_area_slider = QSlider(Qt.Orientation.Horizontal)
         self.stenosis_area_slider.setRange(1, 100)
-        self.stenosis_area_slider.setValue(5)
+        self.stenosis_area_slider.setValue(95)
         self.controls_layout2.addWidget(self.stenosis_area_slider)
         
         self.stenosis_slider_value = QLineEdit()
@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
         # self.vtk_handler.get_interactor_style(self.vtk_interactor).deform_mesh()
         # self.vtk_widget.GetRenderWindow().Render()
     
-    @profile_func
+    # @profile_func
     def run_stenosis(self):
         if self.vtk_handler is None:
             print("Please import both mesh and centerline files before running the stenosis.")

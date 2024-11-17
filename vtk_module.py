@@ -17,6 +17,9 @@ from kelvinlet_core import common
 import numpy as np
 import copy
 from vtk.util.numpy_support import vtk_to_numpy as v2n
+import jax as jx
+import jax.numpy as jnp
+import time
 
 def load_vtp_file(filename): # this is a less robust version of vtk_utils.read_polydata_file, TODO: replace usage with vtk_utils.read_polydata_file
     reader = vtkXMLPolyDataReader()
@@ -37,7 +40,6 @@ class VTKHandler:
         self.centerline = load_vtp_file(centerline_filename)
         self.mesh_filename = mesh_filename
         self.centerline_filename = centerline_filename
-        # self.selected_points = []
 
         self.mesh_mapper = vtkPolyDataMapper()
         self.mesh_mapper.SetInputData(self.mesh)
@@ -142,6 +144,70 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         ren.AddActor(actor)
         self.redHighlightActors.append(actor)
 
+    def jit_warm_up(self):
+        centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
+        surface_polydata_output_file_name = "obtained_aneurysm_surface"
+        selected_points = [380, 400, 420]
+        force_center_point_id = selected_points[1]
+        list_of_node_point_indices = [force_center_point_id]
+        model="test_stenosis"
+        affine_params = {"eps": {model: 1.0}}
+        mu = 1
+        nu = 0.1
+        num_time_steps = 1
+        start_time = time.time()
+        # Calculate `a` and `b` using material properties
+        a, b = common.get_a_b(mu, nu)
+        print(f"Time to get a and b: {time.time() - start_time:.4f} seconds")
+        # Read centerline and surface polydata files
+        centerline_polydata = self.centerline
+        surface_polydata = self.mesh
+
+        other_geometry_polydatas = []
+        # Define affine points and nodes
+        start = time.time()
+        data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        data = scaling.define_nodes_affine(data, list_of_node_point_indices)
+        print(f"Time to define affine points and nodes: {time.time() - start:.4f} seconds")
+        # Assign force location
+        start = time.time()
+        data = scaling.assign_force_location_affine_v2(data, force_center_point_id)
+        print(f"Time to assign force location: {time.time() - start:.4f} seconds")
+        # Add node data to centerline
+        start = time.time()
+        centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(data, centerline_polydata)
+        print(f"Time to add node data to centerline: {time.time() - start:.4f} seconds")
+        # Calculate origin, normal, original area, and target area
+        start = time.time()
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, data["nodes"]["force_center_point_id"])
+        original_area = vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal)
+        target_area = original_area * 5 / 100
+        delta_area = (target_area - original_area) / num_time_steps
+        print(f"Time to calculate origin, normal, and target area: {time.time() - start:.4f} seconds")
+        # Calculate current radius and `eps`
+        start = time.time()
+        current_radius = jnp.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / jnp.pi)
+        eps = affine_params["eps"][model] * current_radius
+        print(f"Time to calculate current radius and eps: {time.time() - start:.4f} seconds")
+        # Precompile Kelvinlet translation function
+        start = time.time()
+        kelvinlets_translation_jit = jx.jit(common.kelvinlets_translation_v2_jax)
+        kelvinlets_translation_jit_non_blocky = jx.jit(common.kelvinlets_translation_v2_jax_non_blocky)
+        print(f"Time to precompile the two kelvinlets_translation_v2_jax functions: {time.time() - start:.4f} seconds")
+        # Calculate ring points and forces
+        num_ring_points = 35
+        start = time.time()
+        ring_points, ring_forces = scaling.get_ring_point_and_forces_v2(
+            data, a, b, eps, jnp.array(origin), normal, surface_polydata, 
+            num_ring_points, original_area + delta_area, "regular", kelvinlets_translation_jit
+        )
+        print(f"WARM UP Time to calculate ring points and forces: {time.time() - start:.4f} seconds")
+        start = time.time()
+        surface_displacements = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points, ring_forces, "regular", kelvinlets_translation_jit_non_blocky)
+        print(f"Time to calculate surface displacements: {time.time() - start:.4f} seconds")
+        data = common.update_points_with_displacements(data, surface_displacements, "surface")
+        # surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
+
     def display_vertices(self):
         points = self.centerline.GetPoints()
         transform = vtkTransform()
@@ -156,6 +222,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
         self.mesh_actor.GetProperty().SetOpacity(0.3)
         self.GetInteractor().GetRenderWindow().Render()
+        self.jit_warm_up()
 
     def deform_mesh(self, area_percent_change):
         if len(self.selected_points) < 3:
@@ -283,7 +350,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         mu = 1
         nu = 0.1
         num_time_steps = 1
-        self.run_stenosis_v5(
+        self.run_stenosis_v5_timer(
         affine_params, model, self.centerline_filename, self.mesh_filename,
         centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, force_center_point_id, 
         num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, 
@@ -291,6 +358,125 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         )
         self.update_mesh_viewer()
     
+    def run_stenosis_v5_timer(self, affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, force_center_point_id, num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian):
+        affine_type = "stenosis"
+        brush_level = "uniscale"
+        phi_type = "point"
+        extension = ".vtp"
+
+        start_time = time.time()
+        
+        # Validate input
+        assert((0 <= weight_regularized_laplacian) and (weight_regularized_laplacian <= 1))
+
+        # Calculate `a` and `b` using material properties
+        a, b = common.get_a_b(mu, nu)
+        print(f"Time to get a and b: {time.time() - start_time:.4f} seconds")
+
+        # Read centerline and surface polydata files
+        centerline_polydata = vtk_utils.read_polydata_file(centerline_polydata_input_file_name)
+        centerline_polydata = self.centerline
+        surface_polydata = self.mesh
+
+        start = time.time()
+        other_geometry_polydatas = []
+        for other_geometry_polydata_input_file_name in list_of_other_geometry_polydata_input_file_names:
+            other_geometry_polydatas.append(vtk_utils.read_polydata_file(other_geometry_polydata_input_file_name))
+        print(f"Time to read other geometry polydatas: {time.time() - start:.4f} seconds")
+
+        # Define affine points and nodes
+        start = time.time()
+        data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        data = scaling.define_nodes_affine(data, list_of_node_point_indices)
+        print(f"Time to define affine points and nodes: {time.time() - start:.4f} seconds")
+
+        # Assign force location
+        start = time.time()
+        data = scaling.assign_force_location_affine_v2(data, force_center_point_id)
+        print(f"Time to assign force location: {time.time() - start:.4f} seconds")
+
+        # Add node data to centerline
+        start = time.time()
+        centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(data, centerline_polydata)
+        print(f"Time to add node data to centerline: {time.time() - start:.4f} seconds")
+
+        # Calculate origin, normal, original area, and target area
+        start = time.time()
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, data["nodes"]["force_center_point_id"])
+        print(f"Time to calculate origin, normal {time.time() - start:.4f} seconds")
+        start = time.time()
+        # original_area = vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal)
+        # target_area = original_area * area_percent_change / 100
+        # delta_area = (target_area - original_area) / num_time_steps
+        original_area = 0
+        delta_area = 0
+        print(f"Time to calculate target area: {time.time() - start:.4f} seconds")
+
+        # Main time-stepping loop
+        for it in range(num_time_steps):
+            print(f"---------------------------------------------------------------------- it = {it}")
+
+            # Calculate current radius and `eps`
+            start = time.time()
+            current_radius = jnp.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / jnp.pi)
+            eps = affine_params["eps"][model] * current_radius
+            print(f"Time to calculate current radius and eps: {time.time() - start:.4f} seconds")
+
+            # Precompile Kelvinlet translation function
+            start = time.time()
+            kelvinlets_translation_jit = jx.jit(common.kelvinlets_translation_v2_jax)
+            print(f"Time to precompile kelvinlets_translation_v2_jax: {time.time() - start:.4f} seconds")
+            # Precompile second Kelvinlet translation function
+            start = time.time()
+            kelvinlets_translation_jit_non_blocky = jx.jit(common.kelvinlets_translation_v2_jax_non_blocky)
+            print(f"Time to precompile kelvinlets_translation_v2_jax_non_blocky: {time.time() - start:.4f} seconds")
+
+            # Calculate ring points and forces
+            start = time.time()
+            ring_points, ring_forces = scaling.get_ring_point_and_forces_v2(
+                data, a, b, eps, jnp.array(origin), normal, surface_polydata, 
+                num_ring_points, original_area + delta_area * (it + 1), falloff_type, kelvinlets_translation_jit
+            )
+            print(f"First Time to calculate ring points and forces (iteration {it}): {time.time() - start:.4f} seconds")
+            # Calculate ring points and forces
+            # start = time.time()
+            # ring_points, ring_forces = scaling.get_ring_point_and_forces_v2(
+            #     data, a, b, eps, jnp.array(origin), normal, surface_polydata, 
+            #     num_ring_points, original_area + delta_area * (it + 1), falloff_type, kelvinlets_translation_jit
+            # )
+            # print(f"Second Time to calculate ring points and forces (iteration {it}): {time.time() - start:.4f} seconds")
+
+            # Calculate ring displacements
+            start = time.time()
+            surface_displacements = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points, ring_forces, falloff_type, kelvinlets_translation_jit_non_blocky)
+            print(f"Time to calculate surface displacements (iteration {it}): {time.time() - start:.4f} seconds")
+
+            # Additional Laplacian calculation if required
+            if falloff_type != "regular":
+                start = time.time()
+                ring_points_lap, ring_forces_lap = scaling.get_ring_point_and_forces_v2(
+                    data, a, b, eps, jnp.array(origin), normal, surface_polydata, 
+                    num_ring_points, original_area + delta_area * (it + 1), "laplacian"
+                )
+                surface_displacements_lap = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points_lap, ring_forces_lap, "laplacian", kelvinlets_translation_jit_non_blocky)
+                surface_displacements = weight_regularized_laplacian * surface_displacements + (1 - weight_regularized_laplacian) * surface_displacements_lap
+                print(f"Time to calculate Laplacian adjustments (iteration {it}): {time.time() - start:.4f} seconds")
+
+            # Update points and polydata
+            start = time.time()
+            data = common.update_points_with_displacements(data, surface_displacements, "surface")
+            surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
+            print(f"Time to update points and polydata (iteration {it}): {time.time() - start:.4f} seconds")
+
+        # Update normals
+        start = time.time()
+        # surface_polydata = vtk_utils.update_surface_polydata_normals(surface_polydata)
+        print(f"Time to update surface polydata normals: {time.time() - start:.4f} seconds")
+
+        total_time = time.time() - start_time
+        print(f"Total execution time for run_stenosis_v5_timer: {total_time:.4f} seconds")
+
+
     def run_stenosis_v5(self, affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, force_center_point_id, num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian):
         affine_type = "stenosis"
         brush_level = "uniscale"
@@ -324,20 +510,25 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         original_area = vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal)
         target_area = original_area * area_percent_change / 100
         delta_area = (target_area - original_area) / num_time_steps
+
+        # Precompile second Kelvinlet translation function
+        kelvinlets_translation_jit_non_blocky = jx.jit(common.kelvinlets_translation_v2_jax_non_blocky)
         
         for it in range(num_time_steps):
             print("---------------------------------------------------------------------- it = ", it)
             
-            current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+            current_radius = jnp.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / jnp.pi)
             eps = affine_params["eps"][model] * current_radius
             
-            ring_points, ring_forces = scaling.get_ring_point_and_forces_v2(data, a, b, eps, np.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), falloff_type)
+            kelvinlets_translation_jit = jx.jit(common.kelvinlets_translation_v2_jax)
+            ring_points, ring_forces = scaling.get_ring_point_and_forces_v2(data, a, b, eps, jnp.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), falloff_type, kelvinlets_translation_jit)
+            ring_points, ring_forces = scaling.get_ring_point_and_forces_v2(data, a, b, eps, jnp.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), falloff_type, kelvinlets_translation_jit)
             
-            surface_displacements = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points, ring_forces, falloff_type)
+            surface_displacements = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points, ring_forces, falloff_type, kelvinlets_translation_jit_non_blocky)
             
-            if falloff_type == "regular":
-                ring_points_lap, ring_forces_lap = scaling.get_ring_point_and_forces_v2(data, a, b, eps, np.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), "laplacian")
-                surface_displacements_lap = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points_lap, ring_forces_lap, "laplacian")
+            if falloff_type != "regular":
+                ring_points_lap, ring_forces_lap = scaling.get_ring_point_and_forces_v2(data, a, b, eps, jnp.array(origin), normal, surface_polydata, num_ring_points, original_area + delta_area * (it + 1), "laplacian")
+                surface_displacements_lap = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points_lap, ring_forces_lap, "laplacian", kelvinlets_translation_jit_non_blocky)
                 surface_displacements = weight_regularized_laplacian * surface_displacements + (1 - weight_regularized_laplacian) * surface_displacements_lap
             
             data = common.update_points_with_displacements(data, surface_displacements, "surface")
@@ -365,11 +556,11 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.mesh_filename = "obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp"
         self.centerline_filename = "obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp"
         
-        self.selected_points = []
-        ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
-        for actor in self.redHighlightActors:
-            ren.RemoveActor(actor)
-        self.redHighlightActors = []
+        # self.selected_points = []
+        # ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+        # for actor in self.redHighlightActors:
+        #     ren.RemoveActor(actor)
+        # self.redHighlightActors = []
         self.GetInteractor().GetRenderWindow().Render()
 
         '''

@@ -9,16 +9,22 @@ import numpy as np
 import functools
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 from vtk.util.numpy_support import numpy_to_vtk as n2v
-
-np.set_printoptions(threshold=np.inf)
-np.set_printoptions(linewidth=np.inf)
-
+# np.set_printoptions(threshold=np.inf)
+# np.set_printoptions(linewidth=np.inf)
 from kelvinlet_core import vtk_utils
+
+import jax as jx
+import jax.numpy as jnp
+
+def get_a_b(mu, nu):
+    a = 1 / (4 * jnp.pi * mu)
+    b = a / (4 * (1 - nu))
+    return a, b
 
 """
 As defined below eqn 3 in De Goes 2017
 """
-def get_a_b(mu, nu):
+def get_a_b_jonathan(mu, nu):
     a = 1 / (4 * np.pi * mu)
     b = a / (4 * (1 - nu))
     return a, b
@@ -84,6 +90,62 @@ def horizontal_broadcast(mask, num_copies):
 def apply_mask(displacements, mask):
     assert(displacements.shape == mask.shape)
     return np.multiply(displacements, mask)
+
+def kelvinlets_translation_v2_jax_non_blocky(x, y, z, x0, y0, z0, a, b, eps):
+    n = x.shape[0]
+    m = x0.shape[0]
+
+    # Pre-allocate rv array using JAX operations
+    rv = jnp.empty((n, m, 3, 1))
+    rv = rv.at[:, :, 0, 0].set(x.reshape((n, 1)) - x0.reshape((1, m)))
+    rv = rv.at[:, :, 1, 0].set(y.reshape((n, 1)) - y0.reshape((1, m)))
+    rv = rv.at[:, :, 2, 0].set(z.reshape((n, 1)) - z0.reshape((1, m)))
+
+    # Calculate re with epsilon added
+    re = jnp.sqrt(jnp.sum(rv[..., 0] ** 2, axis=2) + eps**2)
+    re = re.reshape((n, m, 1, 1))  # Ensure re has shape (n, m, 1, 1)
+    re3 = re ** 3
+
+    # Preallocate identities using JAX
+    identity3 = jnp.eye(3)
+    identities = jnp.tile(identity3, (n, m, 1, 1))
+
+    # Calculate K components
+    K = ((a - b) / re) * identities
+    rvT = rv.transpose((0, 1, 3, 2))  # Transpose rv to shape (n, m, 1, 3)
+    K += (b / re3) * jnp.matmul(rv, rvT)
+    K += (a / 2 * eps**2 / re3) * identities
+
+    return K
+
+def kelvinlets_translation_v2_jax(x, y, z, x0, y0, z0, a, b, eps):
+    n = x.shape[0]
+    m = x0.shape[0]
+
+    # Pre-allocate rv array using JAX operations
+    rv = jnp.empty((n, m, 3, 1))
+    rv = rv.at[:, :, 0, 0].set(x.reshape((n, 1)) - x0.reshape((1, m)))
+    rv = rv.at[:, :, 1, 0].set(y.reshape((n, 1)) - y0.reshape((1, m)))
+    rv = rv.at[:, :, 2, 0].set(z.reshape((n, 1)) - z0.reshape((1, m)))
+
+    # Calculate re with epsilon added
+    re = jnp.sqrt(jnp.sum(rv[..., 0] ** 2, axis=2) + eps**2)
+    re = re.reshape((n, m, 1, 1))  # Ensure re has shape (n, m, 1, 1)
+    re3 = re ** 3
+
+    # Preallocate identities using JAX
+    identity3 = jnp.eye(3)
+    identities = jnp.tile(identity3, (n, m, 1, 1))
+
+    # Calculate K components
+    K = ((a - b) / re) * identities
+    rvT = rv.transpose((0, 1, 3, 2))  # Transpose rv to shape (n, m, 1, 3)
+    K += (b / re3) * jnp.matmul(rv, rvT)
+    K += (a / 2 * eps**2 / re3) * identities
+
+    K = jnp.block([[K[i, l, :, :] for l in range(n)] for i in range(m)])
+
+    return K
 
 def kelvinlets_translation_v2(x, y, z, x0, y0, z0, a, b, eps):
     n = len(x)
@@ -204,6 +266,9 @@ def kelvinlets_translation_v2_jonathan(x, y, z, x0, y0, z0, a, b, eps):
     
     return K
 
+def laplacian_kelvinlets_translation_v2_jit(x, y, z, x0, y0, z0, a, b, eps):
+    return jx.jit(laplacian_kelvinlets_translation_v2_jax)(x, y, z, x0, y0, z0, a, b, eps)
+
 """
 Eqn 15 and 2 of De Goes 2019
 
@@ -215,6 +280,41 @@ Inputs:
     y0: array of shape (m, )
     z0: array of shape (m, )
 """
+def laplacian_kelvinlets_translation_v2_jax(x, y, z, x0, y0, z0, a, b, eps):
+    n = x.shape[0]
+    m = x0.shape[0]
+
+    # Pre-allocate rv array to avoid dstack
+    rv = jnp.empty((n, m, 3, 1))
+    rv = rv.at[:, :, 0, 0].set(x.reshape((n, 1)) - x0.reshape((1, m)))
+    rv = rv.at[:, :, 1, 0].set(y.reshape((n, 1)) - y0.reshape((1, m)))
+    rv = rv.at[:, :, 2, 0].set(z.reshape((n, 1)) - z0.reshape((1, m)))
+
+    # Calculate re directly, incorporating epsilon squared
+    re = jnp.sqrt(jnp.sum(rv[..., 0] ** 2, axis=2) + eps**2)
+    re = re.reshape((n, m, 1, 1))  # Ensure re has shape (n, m, 1, 1)
+    re2 = re ** 2
+    re7 = re ** 7
+
+    # Calculate r^2 and broadcast it
+    r2 = jnp.sum(rv[..., 0] ** 2, axis=2).reshape((n, m, 1, 1))
+
+    # Preallocate identities without stacking
+    identity3 = jnp.eye(3)
+    identities = jnp.tile(identity3, (n, m, 1, 1))
+
+    # Calculate the main component K
+    term1 = 15 * a * eps**4
+    term2 = 2 * b * re2 * (5 * eps**2 + 2 * r2)
+    K = (term1 - term2) / (2 * re7) * identities
+
+    # Calculate K2 component and add it to K
+    rvT = rv.transpose((0, 1, 3, 2))  # Transpose rv to shape (n, m, 1, 3)
+    K2 = jnp.matmul(rv, rvT)
+    K += (3 * b * (7 * eps**2 + 2 * r2) / re7) * K2
+
+    return K
+
 def laplacian_kelvinlets_translation_v2(x, y, z, x0, y0, z0, a, b, eps):
     n = len(x)
     m = len(x0)
@@ -384,6 +484,14 @@ def get_average_radius_between_two_points(surface_polydata, centerline_polydata,
     return average_radius
 
 def get_centroid(points):
+    assert points.shape[1] in (2, 3)  # Ensure points are 2D or 3D
+    # Calculate the centroid by taking the mean across the first axis
+    centroid = jnp.mean(points, axis=0, keepdims=True)
+    # Ensure centroid shape is correct
+    assert centroid.shape == (1, points.shape[1])
+    return centroid
+
+def get_centroid_jonathan(points):
     num_points = points.shape[0]
     assert(points.shape == (num_points, 2) or points.shape == (num_points, 3))
     centroid = np.array([np.sum(points, axis = 0) / num_points])
@@ -424,6 +532,64 @@ def sort_ccw_predicate(point1, point2):
     return 1 # determinant < 0
 
 def sort_ring_points_in_ccw(ring_points, plane_normal):
+    num_ring_points = ring_points.shape[0]
+    assert ring_points.shape == (num_ring_points, 3)
+    assert plane_normal.shape == (3,)
+
+    # Calculate centroid using JAX
+    centroid = get_centroid(ring_points).reshape(3)
+    assert centroid.shape == (3,)
+
+    # Define basis vectors for the plane
+    e2 = plane_normal / jnp.linalg.norm(plane_normal)
+    e0 = ring_points[0] - centroid
+    e0 /= jnp.linalg.norm(e0)
+    e1 = jnp.cross(e2, e0)
+
+    # Project ring_points onto the plane to get 2D points in the e0-e1 basis
+    points_projected_2d = jnp.stack([
+        jnp.dot(ring_points - centroid, e0),
+        jnp.dot(ring_points - centroid, e1)
+    ], axis=1)
+
+    # Calculate angles from the "12 o'clock" position for CCW sorting
+    angles = jnp.arctan2(points_projected_2d[:, 1], points_projected_2d[:, 0])
+
+    # Get sorting indices based on angles in ascending order
+    sorted_indices = jnp.argsort(angles)
+
+    # Use sorted indices to arrange the original 3D points in CCW order
+    points_projected_3d = ring_points[sorted_indices]
+
+    return points_projected_3d
+
+
+def sort_ring_points_in_ccw_potentially_wrong(ring_points, plane_normal):
+    num_ring_points = ring_points.shape[0]
+    assert ring_points.shape == (num_ring_points, 3)
+    assert plane_normal.shape == (3,)
+    # Calculate centroid using JAX
+    centroid = get_centroid(ring_points).reshape(3)
+    assert centroid.shape == (3,)
+    # Define basis vectors for the plane
+    e2 = plane_normal / jnp.linalg.norm(plane_normal)
+    e0 = ring_points[0] - centroid
+    e0 /= jnp.linalg.norm(e0)
+    e1 = jnp.cross(e2, e0)
+    # Project ring_points onto the 2D plane
+    points_projected_2d = jnp.stack([
+        jnp.dot(ring_points - centroid, e0),
+        jnp.dot(ring_points - centroid, e1)
+    ], axis=1)
+    # Calculate angles from the "12 o'clock" position for sorting in CCW order
+    angles = jnp.arctan2(points_projected_2d[:, 1], points_projected_2d[:, 0])
+    sorted_indices = jnp.argsort(angles)
+    # Use sorted indices to rearrange the original 3D points
+    points_projected_3d = ring_points[sorted_indices]
+
+    return points_projected_3d
+
+def sort_ring_points_in_ccw_jonathan(ring_points, plane_normal):
     num_ring_points = ring_points.shape[0]
     assert(ring_points.shape == (num_ring_points, 3))
     assert(plane_normal.shape == (3, ))

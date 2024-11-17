@@ -15,7 +15,70 @@ from kelvinlet_core import vtk_utils
 from kelvinlet_core import common
 from kelvinlet_core import ring_points_optimizer
 
+import jax as jx
+import jax.numpy as jnp
+# Profiling to check the bottleneck
+import cProfile
+import pstats
+from functools import wraps
+import time
+
+def profile_func(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        profiler = cProfile.Profile()
+        profiler.enable()
+        result = func(*args, **kwargs)
+        profiler.disable()
+        
+        # Print profiling results
+        ps = pstats.Stats(profiler)
+        ps.strip_dirs().sort_stats("cumulative").print_stats(10)
+        
+        return result
+    return wrapper
+
 def define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas):
+    # Convert to JAX-compatible arrays by using jnp.array
+    centerline_points = jnp.array(copy.deepcopy(v2n(centerline_polydata.GetPoints().GetData())))
+    surface_points = jnp.array(copy.deepcopy(v2n(surface_polydata.GetPoints().GetData())))
+    
+    # Check if points have the required shape
+    assert centerline_points.shape[1] == 3  # Ensure (x, y, z) coordinates
+    assert surface_points.shape[1] == 3
+
+    # Create a dictionary to store data, including the JAX arrays
+    data = {
+        "points": {
+            "centerline": centerline_points,
+            "surface": surface_points
+        },
+        "nodes": {
+            "all_indices": [],
+            "force_center_point_id": -1
+        },
+        "centerline_coordinate": jnp.array([])
+    }
+    
+    # Check for the "centerline_coordinate" array and convert if available
+    if centerline_polydata.GetPointData().HasArray("centerline_coordinate"):
+        num_centerline_points = data["points"]["centerline"].shape[0]
+        data["centerline_coordinate"] = jnp.array(copy.deepcopy(
+            v2n(centerline_polydata.GetPointData().GetArray("centerline_coordinate"))
+        ))
+        assert data["centerline_coordinate"].shape[0] == num_centerline_points
+    else:
+        sys.exit("'centerline_coordinate' is not a point array on the centerline polydata.")
+    
+    # Process and add other geometry points as JAX arrays
+    for ig, polydata in enumerate(other_geometry_polydatas):
+        other_geometry_points = jnp.array(copy.deepcopy(v2n(polydata.GetPoints().GetData())))
+        assert other_geometry_points.shape[1] == 3
+        data["points"][f"other_geometry_{ig}"] = other_geometry_points
+    
+    return data
+
+def define_points_affine_jonathan(centerline_polydata, surface_polydata, other_geometry_polydatas):
     centerline_points = copy.deepcopy(v2n(centerline_polydata.GetPoints().GetData()))
     surface_points = copy.deepcopy(v2n(surface_polydata.GetPoints().GetData()))
     
@@ -45,6 +108,23 @@ def define_nodes_affine(data, list_of_node_point_indices):
     return data
 
 def add_node_data_to_centerline_polydata_affine(data, centerline_polydata):
+    num_centerline_points = data["points"]["centerline"].shape[0]
+    # Create a VTK array directly to store node information
+    is_node = vtk.vtkIntArray()
+    is_node.SetNumberOfComponents(1)
+    is_node.SetNumberOfTuples(num_centerline_points)
+    is_node.SetName("nodes")
+    # Initialize array with zeros and update specific indices directly
+    for i in range(num_centerline_points):
+        is_node.SetValue(i, 0)  # Set all values to 0 initially
+    for idx in data["nodes"]["all_indices"]:
+        is_node.SetValue(idx, 1)  # Set specified indices to 1
+    is_node.SetValue(data["nodes"]["force_center_point_id"], 2)  # Set force center point to 2
+    # Add the "nodes" array directly to the VTK polydata
+    centerline_polydata.GetPointData().AddArray(is_node)
+    return centerline_polydata
+
+def add_node_data_to_centerline_polydata_affine_jonathan(data, centerline_polydata):
     num_centerline_points = data["points"]["centerline"].shape[0]
     is_node = np.zeros(num_centerline_points)
     is_node[data["nodes"]["all_indices"]] = 1
@@ -204,7 +284,74 @@ def get_affine_displacements_v2(data, a, b, eps, s, phi_type, mesh_type, surface
     
     return displacement
 
-def get_cross_section_ring_points(data, origin, normal, surface_polydata, num_ring_points, save_slice_to_file = False):
+def get_cross_section_ring_points_timer(origin, normal, surface_polydata, num_ring_points, save_slice_to_file=False):
+    start_time = time.time()
+
+    # Slice the polydata using VTK and convert to JAX-compatible array
+    start = time.time()
+    cross_sectional_slice_polydata = vtk_utils.slice_polydata(surface_polydata, origin, normal)
+    print(f"Time to slice polydata: {time.time() - start:.4f} seconds")
+    
+    start = time.time()
+    cross_section_points = jnp.array(v2n(cross_sectional_slice_polydata.GetPoints().GetData()))
+    print(f"Time to convert VTK points to JAX array: {time.time() - start:.4f} seconds")
+    
+    # Sort points in counter-clockwise (ccw) order
+    start = time.time()
+    ccw_sorted_cross_section_points = common.sort_ring_points_in_ccw(cross_section_points, normal)
+    print(f"Time to sort points in CCW order: {time.time() - start:.4f} seconds")
+
+    # Assertions to ensure correct shapes
+    num_cross_section_points = ccw_sorted_cross_section_points.shape[0]
+    assert num_cross_section_points > num_ring_points
+    assert ccw_sorted_cross_section_points.shape == (num_cross_section_points, 3)
+
+    # Expand dims for compatibility with downstream processing
+    start = time.time()
+    ccw_sorted_cross_section_points = jnp.expand_dims(ccw_sorted_cross_section_points, 2)
+    print(f"Time to expand dims of sorted points: {time.time() - start:.4f} seconds")
+    assert ccw_sorted_cross_section_points.shape == (num_cross_section_points, 3, 1)
+
+    # Select evenly spaced indices for ring points
+    start = time.time()
+    step = num_cross_section_points // num_ring_points
+    indices = jnp.arange(0, step * num_ring_points, step)
+    ccw_sorted_ring_points = ccw_sorted_cross_section_points[indices]
+    print(f"Time to select evenly spaced ring points: {time.time() - start:.4f} seconds")
+    assert ccw_sorted_ring_points.shape == (num_ring_points, 3, 1)
+    
+    # Log selected indices
+    print("ring point indices =", indices)
+
+    total_time = time.time() - start_time
+    print(f"Total execution time for get_cross_section_ring_points_timer: {total_time:.4f} seconds")
+
+    return ccw_sorted_cross_section_points, ccw_sorted_ring_points
+
+def get_cross_section_ring_points(origin, normal, surface_polydata, num_ring_points, save_slice_to_file=False):
+    # Slice the polydata using VTK and convert to JAX-compatible array
+    cross_sectional_slice_polydata = vtk_utils.slice_polydata(surface_polydata, origin, normal)
+    cross_section_points = jnp.array(v2n(cross_sectional_slice_polydata.GetPoints().GetData()))
+    # Sort points in counter-clockwise (ccw) order
+    ccw_sorted_cross_section_points = jx.jit(common.sort_ring_points_in_ccw)(cross_section_points, normal)
+    num_cross_section_points = ccw_sorted_cross_section_points.shape[0]
+    # Assertions to ensure correct shapes
+    assert num_cross_section_points > num_ring_points
+    assert ccw_sorted_cross_section_points.shape == (num_cross_section_points, 3)
+    # Expand dims for compatibility with downstream processing
+    ccw_sorted_cross_section_points = jnp.expand_dims(ccw_sorted_cross_section_points, 2)
+    assert ccw_sorted_cross_section_points.shape == (num_cross_section_points, 3, 1)
+    # Select evenly spaced indices for ring points
+    step = num_cross_section_points // num_ring_points
+    indices = jnp.arange(0, step * num_ring_points, step)
+    ccw_sorted_ring_points = ccw_sorted_cross_section_points[indices]
+    # Ensure the resulting shape
+    assert ccw_sorted_ring_points.shape == (num_ring_points, 3, 1)
+    print("ring point indices =", indices)
+    
+    return ccw_sorted_cross_section_points, ccw_sorted_ring_points
+
+def get_cross_section_ring_points_jonathan(data, origin, normal, surface_polydata, num_ring_points, save_slice_to_file = False):
     cross_sectional_slice_polydata = vtk_utils.slice_polydata(surface_polydata, origin, normal)
     cross_section_points = copy.deepcopy(v2n(cross_sectional_slice_polydata.GetPoints().GetData()))
     ccw_sorted_cross_section_points = common.sort_ring_points_in_ccw(cross_section_points, normal)
@@ -234,7 +381,217 @@ def get_cross_section_ring_points(data, origin, normal, surface_polydata, num_ri
     
     return ccw_sorted_cross_section_points, ccw_sorted_ring_points
 
-def get_ring_point_and_forces_v2(data, a, b, eps, origin, normal, surface_polydata, num_ring_points, new_cross_section_area, falloff_type):
+def get_ring_point_and_forces_v2(data, a, b, eps, origin, normal, surface_polydata, num_ring_points, new_cross_section_area, falloff_type, kelvinlets_translation_jit):
+    start_time = time.time()
+
+    # Ensure origin has the correct shape
+    assert origin.shape == (3,)
+    print(f"Initial setup time: {time.time() - start_time:.4f} seconds")
+    
+    # Get ring and cross-sectional points as JAX arrays
+    start = time.time()
+    cross_section_points, ring_points = get_cross_section_ring_points(origin, normal, surface_polydata, num_ring_points)
+    print(f"Time to get ring and cross-sectional points: {time.time() - start:.4f} seconds")
+    
+    # Assertions for ring points shape
+    assert ring_points.shape == (num_ring_points, 3, 1)
+    num_cross_section_points = cross_section_points.shape[0]
+    assert cross_section_points.shape == (num_cross_section_points, 3, 1)
+
+    # Initialize kappa matrix
+    start = time.time()
+    kappa = jnp.zeros((3 * num_ring_points, 3 * num_ring_points))
+    print(f"Time to initialize kappa matrix: {time.time() - start:.4f} seconds")
+
+    # Compute based on falloff type
+    start = time.time()
+    if falloff_type == "regular":
+        kk = kelvinlets_translation_jit(
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            a, b, eps
+        )
+    elif falloff_type == "laplacian":
+        kk = common.laplacian_kelvinlets_translation_v2_jit(
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            a, b, eps
+        )
+    elif falloff_type == "bilaplacian":
+        kk = common.bilaplacian_kelvinlets_translation_v2(
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            a, b, eps
+        )
+    else:
+        sys.exit(f"Error: falloff_type '{falloff_type}' is not recognized.")
+    print(f"Time to compute kk matrix based on falloff type '{falloff_type}': {time.time() - start:.4f} seconds")
+    
+    # Populate kappa matrix
+    start = time.time()
+    # for l in range(num_ring_points):
+    #     for i in range(num_ring_points):
+    #         kappa = kappa.at[3 * i : 3 * (i + 1), 3 * l : 3 * (l + 1)].set(kk[i, l, :, :])
+    # kappa = jnp.block([[kk[i, l, :, :] for l in range(num_ring_points)] for i in range(num_ring_points)])
+    kappa = kk
+   
+    print(f"Time to populate kappa matrix: {time.time() - start:.4f} seconds")
+
+    # Prepare closed ring of cross-sectional points for area scaling
+    start = time.time()
+    closed_cross_section_points = jnp.vstack([
+        cross_section_points[:, :, 0], cross_section_points[0, :, 0]
+    ])
+    print(f"Time to prepare closed cross-sectional points: {time.time() - start:.4f} seconds")
+
+    # Calculate centroid of cross-sectional points
+    start = time.time()
+    centroid = common.get_centroid(cross_section_points[:, :, 0])
+    assert centroid.shape == (1, 3)
+    centroid = centroid[0]
+    print(f"Time to calculate centroid: {time.time() - start:.4f} seconds")
+
+    # Define basis vectors in the ring plane
+    start = time.time()
+    e2 = normal / jnp.linalg.norm(normal)
+    e0 = closed_cross_section_points[0] - centroid
+    e0 /= jnp.linalg.norm(e0)
+    e1 = jnp.cross(e2, e0)
+    print(f"Time to define basis vectors in ring plane: {time.time() - start:.4f} seconds")
+
+    # Project closed ring points onto the 2D ring plane
+    start = time.time()
+    # closed_cross_section_points_2d = jnp.array([
+    #     [jnp.dot(closed_cross_section_points[ip] - centroid, e0), 
+    #      jnp.dot(closed_cross_section_points[ip] - centroid, e1)]
+    #     for ip in range(num_cross_section_points + 1)
+    # ])
+    # Step 1: Calculate relative positions to the centroid
+    relative_positions = closed_cross_section_points - centroid  # Shape: (num_cross_section_points + 1, 3)
+    # Step 2: Stack `e0` and `e1` to create a projection matrix of shape (3, 2)
+    projection_matrix = jnp.stack([e0, e1], axis=1)  # Shape: (3, 2)
+    # Step 3: Project all points onto the 2D plane using a single matrix multiplication
+    closed_cross_section_points_2d = relative_positions @ projection_matrix  # Shape: (num_cross_section_points + 1, 2)
+    print(f"Time to project closed ring points onto 2D plane: {time.time() - start:.4f} seconds")
+
+    # Calculate scaling factor to match the desired cross-sectional area
+    start = time.time()
+    scale = 0.9
+    # scale = ring_points_optimizer.find_scale_to_get_prescribed_area(closed_cross_section_points_2d, new_cross_section_area)
+    print(f"Time to calculate scaling factor: {time.time() - start:.4f} seconds")
+
+    # Scale ring points and adjust the centroid
+    start = time.time()
+    scaled_ring_points = scale * ring_points
+    center = common.get_centroid(scaled_ring_points[:, :, 0])
+    center = jnp.expand_dims(jnp.broadcast_to(center, (num_ring_points, 3)), 2)
+    true_center = jnp.expand_dims(jnp.broadcast_to(jnp.expand_dims(centroid, 0), (num_ring_points, 3)), 2)
+    scaled_ring_points += true_center - center
+    print(f"Time to scale and adjust ring points: {time.time() - start:.4f} seconds")
+
+    # Compute displacement vector `u_bar`
+    start = time.time()
+    u_bar = scaled_ring_points - ring_points
+    assert u_bar.shape == (num_ring_points, 3, 1)
+    u_bar = u_bar.reshape((3 * num_ring_points, 1))
+    print(f"Time to compute displacement vector u_bar: {time.time() - start:.4f} seconds")
+
+    # Solve for ring forces
+    start = time.time()
+    ring_forces = jnp.linalg.solve(kappa, u_bar)
+    assert ring_forces.shape == (3 * num_ring_points, 1)
+    print(f"Time to solve for ring forces: {time.time() - start:.4f} seconds")
+
+    total_time = time.time() - start_time
+    print(f"Total execution time for get_ring_point_and_forces_v2_timer: {total_time:.4f} seconds")
+
+    return ring_points, ring_forces
+
+# @profile_func
+def get_ring_point_and_forces_v2_no_timer(data, a, b, eps, origin, normal, surface_polydata, num_ring_points, new_cross_section_area, falloff_type, kelvinlets_translation_jit):
+    assert origin.shape == (3,)
+    # Get ring and cross-sectional points as JAX arrays
+    cross_section_points, ring_points = get_cross_section_ring_points(origin, normal, surface_polydata, num_ring_points)
+    assert ring_points.shape == (num_ring_points, 3, 1)
+    num_cross_section_points = cross_section_points.shape[0]
+    assert cross_section_points.shape == (num_cross_section_points, 3, 1)
+    # Initialize kappa matrix and compute based on falloff type
+    kappa = jnp.zeros((3 * num_ring_points, 3 * num_ring_points))
+    if falloff_type == "regular":
+        # kk = common.kelvinlets_translation_v2(
+        #     ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+        #     ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+        #     a, b, eps
+        # )
+        kk = kelvinlets_translation_jit(
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            a, b, eps
+        )
+    elif falloff_type == "laplacian":
+        kk = common.laplacian_kelvinlets_translation_v2_jit(
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            a, b, eps
+        )
+    elif falloff_type == "bilaplacian":
+        kk = common.bilaplacian_kelvinlets_translation_v2(
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0], 
+            a, b, eps
+        )
+    else:
+        sys.exit(f"Error: falloff_type '{falloff_type}' is not recognized.")
+    assert kk.shape == (num_ring_points, num_ring_points, 3, 3)
+    # Populate kappa matrix by expanding kk along the appropriate axes
+    # kappa = jnp.block([
+    #     [kk[i, j] if i == j else jnp.zeros((3, 3)) for j in range(num_ring_points)]
+    #     for i in range(num_ring_points)
+    # ]).reshape(3 * num_ring_points, 3 * num_ring_points)
+    for l in range(num_ring_points):
+        for i in range(num_ring_points):
+            kappa = kappa.at[3 * i : 3 * (i + 1), 3 * l : 3 * (l + 1)].set(kk[i, l, :, :])
+
+    # Prepare closed ring of cross-sectional points for area scaling
+    closed_cross_section_points = jnp.vstack([
+        cross_section_points[:, :, 0], cross_section_points[0, :, 0]
+    ])
+    # Calculate the centroid of the cross-sectional points
+    centroid = common.get_centroid(cross_section_points[:, :, 0])
+    assert centroid.shape == (1, 3)
+    centroid = centroid[0]
+    # Define basis vectors in the ring plane
+    e2 = normal / jnp.linalg.norm(normal)
+    e0 = closed_cross_section_points[0] - centroid
+    e0 /= jnp.linalg.norm(e0)
+    e1 = jnp.cross(e2, e0)
+    # Project closed ring points onto the 2D ring plane
+    closed_cross_section_points_2d = jnp.array([
+        [jnp.dot(closed_cross_section_points[ip] - centroid, e0), 
+         jnp.dot(closed_cross_section_points[ip] - centroid, e1)]
+        for ip in range(num_cross_section_points + 1)
+    ])
+    # Calculate scaling factor to match the desired cross-sectional area
+    scale = 0.9
+    # scale = ring_points_optimizer.find_scale_to_get_prescribed_area(closed_cross_section_points_2d, new_cross_section_area)
+    # Scale ring points and adjust the centroid
+    scaled_ring_points = scale * ring_points
+    # Calculate the centroid and broadcast once to the desired shape
+    center = common.get_centroid(scaled_ring_points[:, :, 0])
+    center = jnp.expand_dims(jnp.broadcast_to(center, (num_ring_points, 3)), 2)
+    true_center = jnp.expand_dims(jnp.broadcast_to(jnp.expand_dims(centroid, 0), (num_ring_points, 3)), 2)
+    scaled_ring_points += true_center - center
+    # Compute displacement vector `u_bar`
+    u_bar = scaled_ring_points - ring_points
+    assert u_bar.shape == (num_ring_points, 3, 1)
+    u_bar = u_bar.reshape((3 * num_ring_points, 1))
+    # Solve for ring forces
+    ring_forces = jnp.linalg.solve(kappa, u_bar)
+    assert ring_forces.shape == (3 * num_ring_points, 1)
+
+    return ring_points, ring_forces
+
+def get_ring_point_and_forces_v2_jonathan(data, a, b, eps, origin, normal, surface_polydata, num_ring_points, new_cross_section_area, falloff_type):
     assert(origin.shape == (3, ))
     cross_section_points, ring_points = get_cross_section_ring_points(data, origin, normal, surface_polydata, num_ring_points)
     assert(ring_points.shape == (num_ring_points, 3, 1))
@@ -294,7 +651,8 @@ def get_ring_point_and_forces_v2(data, a, b, eps, origin, normal, surface_polyda
         point_coordinate_relative = closed_cross_section_points[ip] - centroid
         closed_cross_section_points_2d[ip] = np.array([np.dot(point_coordinate_relative, e0), np.dot(point_coordinate_relative, e1)])
     
-    scale = ring_points_optimizer.find_scale_to_get_prescribed_area(closed_cross_section_points_2d, new_cross_section_area) # multiplicative scale that scales ring points, such that the area of the scaled closed ring points matches desired area, new_cross_section_area # todo: replace this code with the section below (because the scale predicted from the optimizer is just square root of the area ratio):
+    scale = 0.9
+    # scale = ring_points_optimizer.find_scale_to_get_prescribed_area(closed_cross_section_points_2d, new_cross_section_area) # multiplicative scale that scales ring points, such that the area of the scaled closed ring points matches desired area, new_cross_section_area # todo: replace this code with the section below (because the scale predicted from the optimizer is just square root of the area ratio):
     #       old_cross_section_area = ring_points_optimizer.get_area(closed_cross_section_points_2d)
     #       scale = np.sqrt(new_cross_section_area / old_cross_section_area)
     
@@ -312,7 +670,39 @@ def get_ring_point_and_forces_v2(data, a, b, eps, origin, normal, surface_polyda
     
     return ring_points, ring_forces
 
-def get_ring_displacements_v2(data, a, b, eps, mesh_type, ring_points, ring_forces, falloff_type):
+@profile_func # current bottleneck, time this!
+def get_ring_displacements_v2(data, a, b, eps, mesh_type, ring_points, ring_forces, falloff_type, kelvinlets_translation_jit):
+    # Validate mesh_type
+    valid_mesh_types = {"surface", "centerline"}
+    if not (mesh_type in valid_mesh_types or mesh_type.startswith("other_geometry_")):
+        raise ValueError(f"Error. mesh_type '{mesh_type}' is not valid.")
+    num_mesh_points = data["points"][mesh_type].shape[0]
+    num_ring_points = ring_points.shape[0]
+    # Select the correct kelvinlet function based on falloff_type
+    kelvinlet_func = {
+        "regular": kelvinlets_translation_jit,
+        "laplacian": common.laplacian_kelvinlets_translation_v2_jit,
+        "bilaplacian": common.bilaplacian_kelvinlets_translation_v2
+    }.get(falloff_type)
+    if kelvinlet_func is None:
+        raise ValueError(f"Error. falloff_type '{falloff_type}' is not recognized.")
+    # Extract mesh points and prepare for kelvinlet function
+    mesh_points = data["points"][mesh_type]
+    # Compute the kelvinlets using the selected function
+    kk = kelvinlet_func(
+        mesh_points[:, 0], mesh_points[:, 1], mesh_points[:, 2],
+        ring_points[:, 0, 0], ring_points[:, 1, 0], ring_points[:, 2, 0],
+        a, b, eps
+    )
+    # Reshape and transpose kk to create kelvinlet_matrix directly
+    kelvinlet_matrix = kk.transpose(0, 2, 1, 3).reshape(num_mesh_points, 3, 3 * num_ring_points)
+    # Calculate displacement using jnp.einsum for efficient matrix multiplication
+    displacement = jnp.einsum('ijk,kl->ij', kelvinlet_matrix, ring_forces)
+    
+    return displacement
+
+# @profile_func
+def get_ring_displacements_v2_np(data, a, b, eps, mesh_type, ring_points, ring_forces, falloff_type):
     # Validate mesh_type efficiently
     valid_mesh_types = {"surface", "centerline"}
     if not (mesh_type in valid_mesh_types or mesh_type.startswith("other_geometry_")):
@@ -324,7 +714,7 @@ def get_ring_displacements_v2(data, a, b, eps, mesh_type, ring_points, ring_forc
     # Select the correct kelvinlet function based on falloff_type
     kelvinlet_func = {
         "regular": common.kelvinlets_translation_v2,
-        "laplacian": common.laplacian_kelvinlets_translation_v2,
+        "laplacian": common.laplacian_kelvinlets_translation_v2_jit,
         "bilaplacian": common.bilaplacian_kelvinlets_translation_v2
     }.get(falloff_type)
 

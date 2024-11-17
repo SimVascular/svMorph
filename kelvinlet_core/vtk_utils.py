@@ -4,6 +4,7 @@ import vtk
 import numpy as np
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 from vtk.util.numpy_support import numpy_to_vtk as n2v
+import jax.numpy as jnp
 
 
 def write_polydata(polydata_file_name, polydata):
@@ -50,6 +51,18 @@ def get_closest_surface_point_to_centerline_point(data, centerline_polydata, sur
     print("closest_surface_point_id = ", closest_surface_point_id)
     return closest_surface_point_id
 
+def get_cross_sectional_area_of_triangulated_slice(triangulated_slice):
+    # Ensure the slice has points; otherwise, raise an exception
+    if not triangulated_slice.GetNumberOfPoints():
+        raise Exception('Empty slice')
+    # Set up VTK integrator to calculate the surface area
+    integrator = vtk.vtkIntegrateAttributes()
+    integrator.SetInputData(triangulated_slice)
+    integrator.Update()
+    # Access the calculated surface area directly from the VTK array
+    surface_area = integrator.GetOutput().GetCellData().GetArray('Area').GetValue(0)
+    return surface_area
+
 """
 references: 
     /home/jonathanpham/Documents/software/svMorph/svMorph/vtk_utils.py
@@ -60,7 +73,7 @@ Inputs:
 Returns:
     float cross_sectional_area
 """
-def get_cross_sectional_area_of_triangulated_slice(triangulated_slice):
+def get_cross_sectional_area_of_triangulated_slice_jonathan(triangulated_slice):
     integrator = vtk.vtkIntegrateAttributes()
     if not triangulated_slice.GetNumberOfPoints():
         raise Exception('Empty slice')
@@ -139,7 +152,7 @@ def update_centerline_polydata_areas(centerline_polydata, surface_polydata, poin
     centerline_polydata.GetPointData().AddArray(areas)
     return centerline_polydata
 
-def update_surface_polydata_normals(surface_polydata):
+def update_surface_polydata_normals_slow(surface_polydata):
     normals = vtk.vtkPolyDataNormals() # https://kitware.github.io/vtk-examples/site/Cxx/PolyData/SmoothPolyDataFilter/
     normals.ComputeCellNormalsOn()
     normals.SetInputData(surface_polydata)
@@ -148,6 +161,8 @@ def update_surface_polydata_normals(surface_polydata):
     normals.Update()
     surface_polydata.GetCellData().AddArray(normals.GetOutput().GetCellData().GetArray("Normals"))
     return surface_polydata
+
+# def update_surface_polydata_normals(surface_polydata):
     
 def compute_centerline_coordinates(centerline_polydata):
     num_centerline_points = centerline_polydata.GetNumberOfPoints()
@@ -164,6 +179,26 @@ def get_centerline_length(centerline_polydata):
     return total_length
 
 def get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, point_id):
+    point = jnp.array(centerline_polydata.GetPoint(point_id))  # Directly convert to JAX array
+    num_centerline_points = centerline_polydata.GetNumberOfPoints()
+    # Compute the normal vector based on the position of point_id in the sequence
+    if 0 < point_id < num_centerline_points - 1:
+        next_point = jnp.array(centerline_polydata.GetPoint(point_id + 1))
+        prev_point = jnp.array(centerline_polydata.GetPoint(point_id - 1))
+        normal = next_point - prev_point
+    elif point_id == num_centerline_points - 1:
+        # Last point, calculate using only previous point
+        prev_point = jnp.array(centerline_polydata.GetPoint(point_id - 1))
+        normal = point - prev_point
+    else:
+        # First point, calculate using only the next point
+        next_point = jnp.array(centerline_polydata.GetPoint(point_id + 1))
+        normal = next_point - point
+    # Normalize the normal vector
+    normal /= jnp.linalg.norm(normal)
+    return point, normal
+
+def get_coordinates_and_normal_at_point_on_centerline_jonathan(centerline_polydata, point_id):
     point = centerline_polydata.GetPoint(point_id)
     num_centerline_points = centerline_polydata.GetNumberOfPoints()
     if 0 < point_id and point_id < num_centerline_points - 1:
