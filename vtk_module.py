@@ -242,19 +242,92 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         force_center_point_id = self.selected_points[1]
         list_of_node_point_indices = self.selected_points
         # area_percent_change = 500
-        phi_type = "constant"
+        phi_type = 0 # phi_type = "constant"
         model = "test_aneurysm"
         affine_params = {"eps": {model: 1.0}, "scale": {model: 1.1}}
         mu = 1
         nu = 0.4
         num_time_steps = 25
         num_time_steps = 1
-        self.run_aneurysm(
+        self.run_aneurysm_timer(
         affine_params, model, self.centerline_filename, self.mesh_filename,centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, 
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
         self.update_mesh_viewer()
+
+    def run_aneurysm_timer(self, affine_params, model, centerline_polydata_input_file_name, 
+                    surface_polydata_input_file_name, centerline_polydata_output_file_name, 
+                    surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
+                    area_percent_change, num_time_steps, list_of_node_point_indices, 
+                    list_of_other_geometry_polydata_input_file_names, 
+                    list_of_other_geometry_polydata_output_file_names):
+
+        initial_start = time.time()
+        affine_type = "aneurysm"
+        brush_level = "uniscale"
+        extension = ".vtp"
+
+        a, b = common.get_a_b(mu, nu)
+        print(f"Time for setting affine parameters: {time.time() - initial_start:.4f} seconds")
         
+        start = time.time()
+        centerline_polydata = self.centerline
+        surface_polydata = self.mesh
+        surface_polydata_copy = vtk_utils.read_polydata_file(surface_polydata_input_file_name)
+        print(f"Time for reading surface polydata: {time.time() - start:.4f} seconds")
+        
+        start = time.time()
+        other_geometry_polydatas = [
+            vtk_utils.read_polydata_file(name) 
+            for name in list_of_other_geometry_polydata_input_file_names
+        ]
+        print(f"Time for reading other geometries: {time.time() - start:.4f} seconds")
+        
+        start = time.time()
+        data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        data = scaling.define_nodes_affine(data, list_of_node_point_indices)
+        data = scaling.assign_force_location_affine_v2(data, force_center_point_id)
+        print(f"Time for defining scaling and force location: {time.time() - start:.4f} seconds")
+        
+        start = time.time()
+        data_surface_copy = {"points": {"surface": copy.deepcopy(v2n(surface_polydata_copy.GetPoints().GetData()))}}
+        centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(data, centerline_polydata)
+        print(f"Time for setting initial centerline data: {time.time() - start:.4f} seconds")
+        
+        start = time.time()
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, data["nodes"]["force_center_point_id"])
+        current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        delta_radius = scaling.get_displacement_needed_for_prescribed_displacement(current_radius, area_percent_change, affine_type) / num_time_steps
+        print(f"Time for computing initial radius and displacement: {time.time() - start:.4f} seconds")
+        
+        step_start = time.time()
+        eps = affine_params["eps"][model] * current_radius
+        s = scaling.get_force_matrix_scale(affine_params["scale"][model] * current_radius / num_time_steps, a, b)
+
+        surface_displacements = scaling.get_affine_displacements_v2(data, a, b, eps, s, phi_type, 0, None) # 0 = "surface"
+
+        print(f"Time for get_force_matrix_scale_and affine displacements v2: {time.time() - step_start:.4f} seconds")
+        ###################################
+        displacements_start = time.time()
+        data_surface_copy = common.update_points_with_displacements(data_surface_copy, surface_displacements, "surface")
+        surface_polydata_copy = common.update_polydata_with_points(surface_polydata_copy, data_surface_copy, "surface")
+        tentative_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata_copy, origin, normal) / np.pi)
+        surface_displacements_norm = tentative_radius - current_radius
+        surface_mesh_scale_factor = delta_radius / surface_displacements_norm
+        surface_displacements *= surface_mesh_scale_factor
+        print(f"Time for displacement calculations (step 0): {time.time() - displacements_start:.4f} seconds")
+        ###################################
+        
+        update_start = time.time()
+        data = common.update_points_with_displacements(data, surface_displacements, "surface")
+        surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
+        
+        data_surface_copy = {"points": {"surface": copy.deepcopy(v2n(surface_polydata.GetPoints().GetData()))}}
+        surface_polydata_copy = common.update_polydata_with_points(surface_polydata_copy, data_surface_copy, "surface")
+        current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        print(f"Time for updating geometries (step 0): {time.time() - update_start:.4f} seconds")
+        print(f"Total time for step 0 (the only step): {time.time() - initial_start:.4f} seconds")
+
     def run_aneurysm(self, affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names):
         affine_type = "aneurysm"
         brush_level = "uniscale"
@@ -290,7 +363,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             eps = affine_params["eps"][model] * current_radius
             s = scaling.get_force_matrix_scale(affine_params["scale"][model] * current_radius / num_time_steps, a, b)
             
-            surface_displacements = scaling.get_affine_displacements_v2(data, a, b, eps, s, phi_type, "surface", None)
+            surface_displacements = scaling.get_affine_displacements_v2(data, a, b, eps, s, phi_type, 0, None) # 0 = "surface"
             
             ###################################
             # get what the resulting radius would be, to determine the approriate scaling factor to achieve the prescribed radius change
@@ -309,11 +382,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             
             surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
             # centerline_polydata = common.update_polydata_with_points(centerline_polydata, data, "centerline")
-            
-            for ig in range(len(other_geometry_polydatas)):
-                other_geometry_displacements = scaling.get_affine_displacements_v2(data, a, b, eps, s, phi_type, "other_geometry_" + str(ig), surface_mesh_scale_factor)
-                data = common.update_points_with_displacements(data, other_geometry_displacements, "other_geometry_" + str(ig))
-                other_geometry_polydatas[ig] = common.update_polydata_with_points(other_geometry_polydatas[ig], data, "other_geometry_" + str(ig))
             
             data_surface_copy = {"points" : {"surface" : copy.deepcopy(v2n(surface_polydata.GetPoints().GetData()))}}
             surface_polydata_copy = common.update_polydata_with_points(surface_polydata_copy, data_surface_copy, "surface")

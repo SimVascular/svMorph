@@ -38,6 +38,14 @@ def profile_func(func):
         return result
     return wrapper
 
+@jx.jit
+def compute_rotation_matrix(cartesian_axis_vector, centerline_axis_vector):
+    a_plus_b = cartesian_axis_vector + centerline_axis_vector
+    denominator = jnp.expand_dims(jnp.linalg.norm(a_plus_b, axis=1) ** 2, 2)
+    rotation_matrix = 2 * jnp.matmul(a_plus_b, jnp.transpose(a_plus_b, axes=(0, 2, 1))) / denominator
+    rotation_matrix -= jnp.eye(3)
+    return rotation_matrix
+
 def define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas):
     # Convert to JAX-compatible arrays by using jnp.array
     centerline_points = jnp.array(copy.deepcopy(v2n(centerline_polydata.GetPoints().GetData())))
@@ -140,6 +148,35 @@ def assign_force_location_affine_v2(data, point_id):
 def get_force_matrix_scale(scale, a, b):
     return scale * (2 / 5) / (2 * b - a)
 
+def kelvinlets_affine_v3(rv, a, b, eps, s):
+    # Ensure the input tensor has the correct dimensions
+    print(f"rv shape: {rv.shape}")
+    assert rv.ndim == 3
+    num_mesh_points, num_kelvinlet_points, ndims = rv.shape
+    assert ndims == 3
+
+    # Extract components of rv
+    rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+
+    # Compute re with epsilon added
+    re = jnp.sqrt(rx**2 + ry**2 + rz**2 + eps**2)
+    assert re.shape == (num_mesh_points, num_kelvinlet_points)
+
+    # Expand re and tile to match the dimensions of rv
+    re = jnp.expand_dims(re, 2)
+    re = jnp.tile(re, (1, 1, ndims))
+    assert re.shape == (num_mesh_points, num_kelvinlet_points, ndims)
+
+    # Compute powers of re for the displacement formula
+    re3 = re**3
+    re5 = re**5
+
+    # Calculate displacements
+    displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
+    assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
+
+    return displacements
+
 """
 Evaluate equation 16 of De Goes 2017
 
@@ -149,7 +186,7 @@ Inputs:
         where rv[i, j, 1] = y_i - y0_j
         where rv[i, j, 2] = z_i - z0_j
 """
-def kelvinlets_affine_v3(rv, a, b, eps, s):
+def kelvinlets_affine_v3_jonathan(rv, a, b, eps, s):
     # https://stackoverflow.com/a/22778484
     assert(rv.ndim == 3) # https://stackoverflow.com/a/21299842
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
@@ -168,10 +205,92 @@ def kelvinlets_affine_v3(rv, a, b, eps, s):
     assert(displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims))
     return displacements
 
+def get_rotation_matrix_v2(data, first_centerline_point_id, last_centerline_point_id, cartesian_axis, num_copies):
+    assert cartesian_axis in {"x", "y", "z"}
+    last_centerline_point_id += 1
+    num_pts = last_centerline_point_id - first_centerline_point_id
+
+    num_centerline_points = data["points"]["centerline"].shape[0]
+    assert num_centerline_points > 1
+
+    temp1 = jnp.zeros((num_centerline_points + 2, 3))
+    temp2 = jnp.zeros((num_centerline_points + 2, 3))
+    temp1 = temp1.at[:-2, :].set(data["points"]["centerline"])
+    temp1 = temp1.at[-2:, :].set(data["points"]["centerline"][-1, :])
+    temp2 = temp2.at[0:2, :].set(data["points"]["centerline"][0, :])
+    temp2 = temp2.at[2:, :].set(data["points"]["centerline"])
+
+    centerline_axis_vector = (temp1 - temp2)[1 + first_centerline_point_id : 1 + last_centerline_point_id]
+    centerline_axis_vector = jnp.expand_dims(centerline_axis_vector, 2)
+    centerline_axis_vector /= jnp.linalg.norm(centerline_axis_vector, axis=1, keepdims=True)
+
+    cartesian_axis_vector = jnp.array([{"x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}[cartesian_axis]]).reshape(1, 3, 1)
+    cartesian_axis_vector = jnp.tile(cartesian_axis_vector, (num_pts, 1, 1))
+
+    rotation_matrix = compute_rotation_matrix(cartesian_axis_vector, centerline_axis_vector)
+    rotation_matrix = jnp.tile(jnp.expand_dims(rotation_matrix, 0), (num_copies, 1, 1, 1))
+
+    return rotation_matrix, centerline_axis_vector
+
+def get_rotation_matrix_v2_slow(data, first_centerline_point_id, last_centerline_point_id, cartesian_axis, num_copies):
+    assert cartesian_axis in {"x", "y", "z"}
+
+    # Adjust last_centerline_point_id for inclusive slicing
+    last_centerline_point_id += 1
+    num_pts = last_centerline_point_id - first_centerline_point_id
+
+    num_centerline_points = data["points"]["centerline"].shape[0]
+    assert num_centerline_points > 1
+
+    # Create temporary arrays for forward and backward finite differences
+    temp1 = jnp.zeros((num_centerline_points + 2, 3))
+    temp2 = jnp.zeros((num_centerline_points + 2, 3))
+    temp1 = temp1.at[:-2, :].set(data["points"]["centerline"])
+    temp1 = temp1.at[-2:, :].set(data["points"]["centerline"][-1, :])
+    temp2 = temp2.at[0:2, :].set(data["points"]["centerline"][0, :])
+    temp2 = temp2.at[2:, :].set(data["points"]["centerline"])
+
+    # Compute centerline axis vectors
+    centerline_axis_vector = (temp1 - temp2)[1 + first_centerline_point_id : 1 + last_centerline_point_id]
+    centerline_axis_vector = jnp.expand_dims(centerline_axis_vector, 2)
+    assert centerline_axis_vector.shape == (num_pts, 3, 1)
+
+    # Normalize centerline axis vectors
+    centerline_axis_vector_norm = jnp.linalg.norm(centerline_axis_vector, axis=1, keepdims=True)
+    centerline_axis_vector /= centerline_axis_vector_norm
+
+    # Get the Cartesian axis vector
+    if cartesian_axis == "x":
+        cartesian_axis_vector = jnp.array([1, 0, 0]).reshape((1, 3, 1))
+    elif cartesian_axis == "y":
+        cartesian_axis_vector = jnp.array([0, 1, 0]).reshape((1, 3, 1))
+    elif cartesian_axis == "z":
+        cartesian_axis_vector = jnp.array([0, 0, 1]).reshape((1, 3, 1))
+    cartesian_axis_vector = jnp.tile(cartesian_axis_vector, (num_pts, 1, 1))
+    assert cartesian_axis_vector.shape == (num_pts, 3, 1)
+
+    # Compute the rotation matrices
+    a_plus_b = cartesian_axis_vector + centerline_axis_vector
+    denominator = jnp.expand_dims(jnp.linalg.norm(a_plus_b, axis=1) ** 2, 2)
+    rotation_matrix = 2 * jnp.matmul(a_plus_b, jnp.transpose(a_plus_b, axes=(0, 2, 1))) / denominator
+    assert rotation_matrix.shape == (num_pts, 3, 3)
+
+    # Subtract the identity matrix
+    identity = jnp.tile(jnp.eye(3), (num_pts, 1, 1))
+    rotation_matrix -= identity
+    assert rotation_matrix.shape == (num_pts, 3, 3)
+
+    # Repeat rotation matrices for the number of copies
+    rotation_matrix = jnp.expand_dims(rotation_matrix, 0)
+    rotation_matrix = jnp.tile(rotation_matrix, (num_copies, 1, 1, 1))
+    assert rotation_matrix.shape == (num_copies, num_pts, 3, 3)
+
+    return rotation_matrix, centerline_axis_vector
+
 """
 For each centerline point from first_centerline_point_id to last_centerline_point_id, get the rotation matrix needed to rotate a vector (a cartesian basis vector) from the cartesian coordinate system to the local centerline coordinate system (local system at the centerline point).
 """
-def get_rotation_matrix_v2(data, first_centerline_point_id, last_centerline_point_id, cartesian_axis, num_copies):
+def get_rotation_matrix_v2_jonathan(data, first_centerline_point_id, last_centerline_point_id, cartesian_axis, num_copies):
     assert(cartesian_axis == "x" or cartesian_axis == "y" or cartesian_axis == "z")
 
     last_centerline_point_id += 1 # for inclusivity in python array slicing
@@ -224,7 +343,122 @@ def get_rotation_matrix_v2(data, first_centerline_point_id, last_centerline_poin
 
     return rotation_matrix, centerline_axis_vector
 
+@jx.jit
+def get_affine_displacements_inner(data_points, centerline_points, rotation_matrix, xs, centers, a, b, eps, s, surface_mesh_scale_factor):
+    num_mesh_points = data_points.shape[0]
+    # Prepare xs and centers using broadcasting
+    
+    centers = jnp.tile(centers, (num_mesh_points, 1, 1))
+
+    # Compute rv in the local frame
+    rv = xs - centers
+    rv = jnp.expand_dims(rv, 3)
+    rv = jnp.matmul(jnp.transpose(rotation_matrix, axes=(0, 1, 3, 2)), rv)
+    rv = rv[:, :, :, 0]
+
+    # Compute Kelvinlet displacements
+    displacement_local = jnp.expand_dims(kelvinlets_affine_v3(rv, a, b, eps, s), 3)
+    displacement_global = jnp.matmul(rotation_matrix, displacement_local)
+    displacement_global = displacement_global[:, :, :, 0]
+
+    # Aggregate and normalize
+    displacement = jnp.sum(displacement_global, axis=1)
+
+    # Scale if required
+    if surface_mesh_scale_factor is not None:
+        displacement *= surface_mesh_scale_factor
+
+    return displacement
+
+# Helper function to preprocess data
 def get_affine_displacements_v2(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor):
+    # Resolve all_indices and force_center_point_id outside JIT
+    all_indices = data["nodes"]["all_indices"]
+    force_center_point_id = data["nodes"]["force_center_point_id"]
+    # index_of_force_center_point_id = all_indices.index(force_center_point_id)
+
+    if phi_type == "constant":
+        left_index = all_indices[0]
+        right_index = all_indices[2] + 1
+    else:  # phi_type == "point"
+        left_index = force_center_point_id
+        right_index = force_center_point_id + 1
+
+    # Prepare other data
+    data_points = data["points"]["surface"]
+    centerline_points = data["points"]["centerline"]
+    rotation_matrix, _ = get_rotation_matrix_v2(data, left_index, right_index - 1, "z", data_points.shape[0])
+    num_kelvinlet_points = int(right_index - left_index)
+    xs = jnp.expand_dims(data_points, 1)
+    xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
+    centers = jnp.expand_dims(centerline_points[left_index:right_index, :], 0)
+    # Call the JIT-compiled function
+    return get_affine_displacements_inner(
+        data_points, centerline_points, rotation_matrix, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+    ) / num_kelvinlet_points
+
+def get_affine_displacements_v2_no_timer(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor):
+    assert mesh_type in {"surface", "centerline"} or mesh_type.startswith("other_geometry_")
+    assert phi_type in {"point", "constant"}
+
+    if surface_mesh_scale_factor is not None:
+        assert mesh_type in {"centerline"} or mesh_type.startswith("other_geometry_")
+
+    num_mesh_points = data["points"][mesh_type].shape[0]
+    force_center_point_id = data["nodes"]["force_center_point_id"]
+    index_of_force_center_point_id = data["nodes"]["all_indices"].index(force_center_point_id)
+
+    if phi_type == "constant":
+        left_index = data["nodes"]["all_indices"][index_of_force_center_point_id - 1]
+        right_index = data["nodes"]["all_indices"][index_of_force_center_point_id + 1] + 1
+    else:  # phi_type == "point"
+        left_index = force_center_point_id
+        right_index = force_center_point_id + 1
+    num_kelvinlet_points = right_index - left_index
+
+    rotation_matrix, _ = get_rotation_matrix_v2(data, left_index, right_index - 1, "z", num_mesh_points)
+    assert rotation_matrix.shape == (num_mesh_points, num_kelvinlet_points, 3, 3)
+
+    # Rotate mesh points to local centerline frame
+    xs = jnp.expand_dims(data["points"][mesh_type], 1)
+    assert xs.shape == (num_mesh_points, 1, 3)
+    xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
+    assert xs.shape == (num_mesh_points, num_kelvinlet_points, 3)
+
+    centers = jnp.expand_dims(data["points"]["centerline"][left_index:right_index, :], 0)
+    assert centers.shape == (1, num_kelvinlet_points, 3)
+    centers = jnp.tile(centers, (num_mesh_points, 1, 1))
+    assert centers.shape == (num_mesh_points, num_kelvinlet_points, 3)
+
+    rv = jnp.expand_dims(xs - centers, 3)
+    rv = jnp.matmul(jnp.transpose(rotation_matrix, axes=(0, 1, 3, 2)), rv)
+    rv = rv[:, :, :, 0]
+    # xs = rv + centers  # This line is unused in the original logic.
+
+    # Compute displacements in the local centerline frame
+    displacement = jnp.expand_dims(kelvinlets_affine_v3(rv, a, b, eps, s), 3)
+    assert displacement.shape == (num_mesh_points, num_kelvinlet_points, 3, 1)
+
+    # Rotate displacements back to world space
+    displacement = jnp.matmul(rotation_matrix, displacement)
+    assert displacement.shape == (num_mesh_points, num_kelvinlet_points, 3, 1)
+    displacement = displacement[:, :, :, 0]
+    assert displacement.shape == (num_mesh_points, num_kelvinlet_points, 3)
+
+    # Sum and normalize displacements
+    displacement = jnp.sum(displacement, axis=1)
+    assert displacement.shape == (num_mesh_points, 3)
+    displacement /= num_kelvinlet_points
+
+    if mesh_type == "centerline" and phi_type == "point":
+        assert jnp.allclose(displacement[force_center_point_id, :], jnp.zeros(3))
+
+    if surface_mesh_scale_factor is not None:
+        displacement *= surface_mesh_scale_factor
+
+    return displacement
+
+def get_affine_displacements_v2_jonathan(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor):
 
     assert(mesh_type == "surface" or mesh_type == "centerline" or mesh_type[:15] == "other_geometry_")
     assert(phi_type == "point" or phi_type == "constant")
