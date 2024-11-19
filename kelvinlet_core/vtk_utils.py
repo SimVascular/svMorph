@@ -4,7 +4,9 @@ import vtk
 import numpy as np
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 from vtk.util.numpy_support import numpy_to_vtk as n2v
+import time
 import jax.numpy as jnp
+import jax as jx
 
 
 def write_polydata(polydata_file_name, polydata):
@@ -122,6 +124,141 @@ def slice_polydata(surface_polydata, origin, normal):
     contour = connectivity(cut, origin) # get the contour closest to the origin, since the cut_polydata() might result in multiple contours extracted
     return contour.GetOutput()
 
+# import matplotlib.pyplot as plt
+@jx.jit
+def estimate_radius(vertices, origin, normal, search_radius):
+    # Calculate distances from the origin to all vertices
+    distances = jnp.linalg.norm(vertices - origin, axis=1)
+    # Sort distances and corresponding vertices
+    sorted_indices = jnp.argsort(distances)
+    sorted_distances = distances[sorted_indices]
+    sorted_vertices = vertices[sorted_indices]
+    # Truncate entries that are bigger than the search radius
+    nearby_vertices = sorted_vertices[10:100]
+    assert nearby_vertices.shape[0] > 0, "No nearby points found"
+    # Normalize the normal vector
+    normal = normal / jnp.linalg.norm(normal)
+    # Project the nearby points onto the plane defined by the normal
+    x = nearby_vertices - origin
+    # Compute the projection of x onto the plane
+    projections = x - jnp.outer(jnp.dot(x, normal), normal)
+    projection_lengths = jnp.linalg.norm(projections, axis=1)
+    # Estimate the radius as the minimum of the projection lengths
+    estimated_radius = jnp.mean(projection_lengths)
+
+    return estimated_radius, sorted_indices[10:100]
+
+
+@jx.jit
+def estimate_radius_nearby(vertices, sorted_indices, origin, normal):
+    # Normalize the normal vector
+    normal = normal / jnp.linalg.norm(normal)
+    # Project the nearby points onto the plane defined by the normal
+    nearby_vertices = vertices[sorted_indices]
+    x = nearby_vertices - origin
+    # Compute the projection of x onto the plane
+    projections = x - jnp.outer(jnp.dot(x, normal), normal)
+    projection_lengths = jnp.linalg.norm(projections, axis=1)
+    # Estimate the radius as the minimum of the projection lengths
+    estimated_radius = jnp.mean(projection_lengths)
+
+    return estimated_radius
+
+def estimate_radius_no_jit(vertices, origin, normal, search_radius):
+    start_time = time.time()
+    # Calculate distances from the origin to all vertices
+    distances = jnp.linalg.norm(vertices - origin, axis=1)
+    mid_time_1 = time.time()
+    print(f"Distance calculation took {mid_time_1 - start_time:.6f} seconds")
+    # Filter vertices within the search radius
+    nearby_points = vertices[distances < search_radius]
+    assert nearby_points.shape[0] > 0, "No nearby points found"
+    print("nearby_points.shape[0] = ", nearby_points.shape[0])
+    mid_time_2 = time.time()
+    print(f"Filtering nearby points took {mid_time_2 - mid_time_1:.6f} seconds")
+    # Normalize the normal vector
+    normal = normal / jnp.linalg.norm(normal)
+    # Project the nearby points onto the plane defined by the normal
+    x = nearby_points - origin
+    # Compute the projection of x onto the plane
+    projections = x - jnp.outer(jnp.dot(x, normal), normal)
+    projection_lengths = jnp.linalg.norm(projections, axis=1)
+    mid_time_3 = time.time()
+    print(f"Projection calculation took {mid_time_3 - mid_time_2:.6f} seconds")
+    # Estimate the radius as the minimum of the projection lengths
+    filtered_lengths = projection_lengths
+    estimated_radius = jnp.min(filtered_lengths)
+    end_time = time.time()
+    print(f"Radius estimation took {end_time - mid_time_3:.6f} seconds")
+
+    return estimated_radius
+
+
+def estimate_radius_no_timer(vertices, origin, normal, search_radius):
+    # Calculate distances from the origin to all vertices
+    distances = jnp.linalg.norm(vertices - origin, axis=1)
+    # Filter vertices within the search radius
+    nearby_points = vertices[distances < search_radius]
+    assert nearby_points.shape[0] > 0, "No nearby points found"
+    print("nearby_points.shape[0] = ", nearby_points.shape[0])
+    # Normalize the normal vector
+    normal = normal / jnp.linalg.norm(normal)
+    # Project the nearby points onto the plane defined by the normal
+    x = nearby_points - origin
+    # Compute the projection of x onto the plane
+    projections = x - jnp.outer(jnp.dot(x, normal), normal)
+    projection_lengths = jnp.linalg.norm(projections, axis=1)
+    # # Sort the projection lengths
+    # sorted_lengths = jx.jit(jnp.sort)(projection_lengths)
+    # # Remove the bottom and top 10%
+    # num_points = len(sorted_lengths)
+    # lower_bound_index = int(num_points * 0.1)
+    # upper_bound_index = int(num_points * 0.9)
+    # filtered_lengths = sorted_lengths[lower_bound_index:upper_bound_index]
+    # Estimate the radius as the average of the filtered lengths
+    filtered_lengths = projection_lengths
+    # estimated_radius = jnp.mean(filtered_lengths)
+    estimated_radius = jnp.min(filtered_lengths)
+
+    return estimated_radius
+
+def estimate_radius_other_ideas(vertices, origin, normal, search_radius):
+    # Calculate distances from the origin to all vertices
+    distances = jnp.linalg.norm(vertices - origin, axis=1)
+    # Filter vertices within the search radius
+    nearby_points = vertices[distances < search_radius]
+    assert nearby_points.shape[0] > 0, "No nearby points found"
+    # Normalize the normal vector
+    normal = normal / jnp.linalg.norm(normal)
+    # Project the nearby points onto the plane defined by the normal
+    x = nearby_points - origin
+    # Compute the projection of x onto the plane
+    projections = x - jnp.outer(jnp.dot(x, normal), normal)
+    projection_lengths = jnp.linalg.norm(projections, axis=1)
+    # # Remove outliers using the IQR method
+    # Q1 = jnp.percentile(projection_lengths, 25)
+    # Q3 = jnp.percentile(projection_lengths, 75)
+    # IQR = Q3 - Q1
+    # lower_bound = Q1 - 1.5 * IQR
+    # upper_bound = Q3 + 1.5 * IQR
+    # filtered_lengths = projection_lengths[(projection_lengths >= lower_bound) & (projection_lengths <= upper_bound)]
+    # Estimate the radius as the average of the filtered lengths
+    # estimated_radius = jnp.mean(filtered_lengths)
+    # Create a histogram of projection lengths with bin width 0.05
+    # bin_width = 0.05
+    # bins = jnp.arange(0, jnp.max(projection_lengths) + bin_width, bin_width)
+    # histogram, bin_edges = jnp.histogram(projection_lengths, bins=bins)
+    # # Find the most frequent bin
+    # most_frequent_bin_index = jnp.argmax(histogram)
+    # estimated_radius = (bin_edges[most_frequent_bin_index] + bin_edges[most_frequent_bin_index + 1]) / 2
+    # # Plot the histogram
+    # plt.hist(projection_lengths, bins=bins)
+    # plt.xlabel('Projection Lengths')
+    # plt.ylabel('Frequency')
+    # plt.title('Histogram of Projection Lengths')
+    # plt.show()
+    return estimated_radius
+
 """
 references:
     /home/jonathanpham/Documents/software/svMorph/svMorph/vtk_utils.py
@@ -137,6 +274,16 @@ def get_triangulated_slice(surface_polydata, origin, normal):
     return triangulated_slice.GetOutput()
 
 def get_cross_sectional_area(surface_polydata, origin, normal):
+    start_time = time.time()
+    triangulated_slice = get_triangulated_slice(surface_polydata, origin, normal)
+    mid_time = time.time()
+    area = get_cross_sectional_area_of_triangulated_slice(triangulated_slice)
+    end_time = time.time()
+    print(f"get_triangulated_slice took {mid_time - start_time:.6f} seconds")
+    print(f"get_cross_sectional_area_of_triangulated_slice took {end_time - mid_time:.6f} seconds")
+    return area
+
+def get_cross_sectional_area_no_timer(surface_polydata, origin, normal):
     triangulated_slice = get_triangulated_slice(surface_polydata, origin, normal)
     area = get_cross_sectional_area_of_triangulated_slice(triangulated_slice)
     return area

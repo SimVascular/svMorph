@@ -1022,8 +1022,8 @@ def get_ring_displacements_v2_jonathan(data, a, b, eps, mesh_type, ring_points, 
     
     return displacement
 
-def get_displacement_needed_for_prescribed_displacement(radius_at_force_center_point_id, area_percent_change, affine_type):
-    radius = radius_at_force_center_point_id
+def get_displacement_needed_for_prescribed_displacement(radius, area_percent_change, affine_type):
+    # radius is radius at force center point id
     old_area = np.pi * radius ** 2
     new_area = old_area * area_percent_change / 100
     new_radius = np.sqrt(new_area / np.pi)

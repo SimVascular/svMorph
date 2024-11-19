@@ -249,11 +249,185 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         nu = 0.4
         num_time_steps = 25
         num_time_steps = 1
-        self.run_aneurysm_timer(
+        self.run_aneurysm_with_precribed_area_ratio(
         affine_params, model, self.centerline_filename, self.mesh_filename,centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, 
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
         self.update_mesh_viewer()
+
+    def run_aneurysm_fastest(self, affine_params, model, centerline_polydata_input_file_name, 
+                        surface_polydata_input_file_name, centerline_polydata_output_file_name, 
+                        surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
+                        area_percent_change, num_time_steps, node_point_indices, 
+                        other_geometry_input_files, other_geometry_output_files):
+        """
+        Run a single-step aneurysm deformation simulation, calculating and applying displacements 
+        to a surface mesh based on centerline and scaling parameters.
+
+        Parameters:
+            affine_params: Dictionary of affine scaling parameters.
+            model: Model identifier for affine_params.
+            centerline_polydata_input_file_name: File path for centerline polydata input.
+            surface_polydata_input_file_name: File path for surface polydata input.
+            centerline_polydata_output_file_name: File path for saving updated centerline polydata.
+            surface_polydata_output_file_name: File path for saving updated surface polydata.
+            mu, nu: Material parameters for affine scaling.
+            phi_type: Type of scaling (e.g., "constant" or "point").
+            force_center_point_id: Centerline point ID where the force is applied.
+            area_percent_change: Desired percentage change in cross-sectional area.
+            num_time_steps: Number of time steps for applying the deformation.
+            node_point_indices: List of node indices for displacement assignment.
+            other_geometry_input_files: List of additional geometry input file paths.
+            other_geometry_output_files: List of corresponding output file paths for additional geometry.
+        """
+        # --- Initialization and Parameter Setup ---
+        total_start_time = time.time()  # Start total timer
+        affine_type = "aneurysm"
+        a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+        print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
+        
+        # --- Load Polydata ---
+        load_start_time = time.time()
+        centerline_polydata = self.centerline  # Loaded from self attributes
+        surface_polydata = self.mesh
+        print(f"Time for reading surface polydata: {time.time() - load_start_time:.4f} seconds")
+
+        # --- Define Points and Nodes ---
+        setup_start_time = time.time()
+        other_geometry_polydatas = []  # Placeholder for additional geometries if needed
+        simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = scaling.define_nodes_affine(simulation_data, node_point_indices)
+        simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+        print(f"Time for defining scaling and force location: {time.time() - setup_start_time:.4f} seconds")
+        
+        # --- Initialize Centerline Data ---
+        init_centerline_start_time = time.time()
+        centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(simulation_data, centerline_polydata)
+        print(f"Time for setting initial centerline data: {time.time() - init_centerline_start_time:.4f} seconds")
+        
+        # --- Calculate Initial Displacements ---
+        calc_displacement_start_time = time.time()
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, simulation_data["nodes"]["force_center_point_id"])
+        original_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        delta_radius = scaling.get_displacement_needed_for_prescribed_displacement(original_radius, area_percent_change, affine_type) / num_time_steps
+        print(f"Time for computing initial radius and displacement: {time.time() - calc_displacement_start_time:.4f} seconds")
+        
+        # --- Compute Initial Force Matrix and Displacements ---
+        step_start_time = time.time()
+        eps = affine_params["eps"][model] * original_radius
+        force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius , a, b)
+        print(f"Computed Force matrix scale = {force_scale}")
+        surface_displacements = scaling.get_affine_displacements_v2(simulation_data, a, b, eps, force_scale, phi_type, 0, None)  # 0 = "surface"
+        print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
+        
+        # --- Scale Displacements to Match Desired Area ---
+        displacement_start_time = time.time()
+        simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
+        surface_polydata = common.update_polydata_with_points(surface_polydata, simulation_data, "surface")
+        tentative_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        # print(f"Area percent change: {area_percent_change}")
+        # print(f"delta_radius needed for prescribed area percent: {delta_radius}")
+        # print(f"Tentaive radius: {tentative_radius}")
+        # print(f"Original radius: {original_radius}")
+        
+        print(f"Total simulation time: {time.time() - total_start_time:.4f} seconds")
+
+    def run_aneurysm_with_precribed_area_ratio(self, affine_params, model, centerline_polydata_input_file_name, 
+                        surface_polydata_input_file_name, centerline_polydata_output_file_name, 
+                        surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
+                        area_percent_change, num_time_steps, node_point_indices, 
+                        other_geometry_input_files, other_geometry_output_files):
+        """
+        Run a single-step aneurysm deformation simulation, calculating and applying displacements 
+        to a surface mesh based on centerline and scaling parameters.
+
+        Parameters:
+            affine_params: Dictionary of affine scaling parameters.
+            model: Model identifier for affine_params.
+            centerline_polydata_input_file_name: File path for centerline polydata input.
+            surface_polydata_input_file_name: File path for surface polydata input.
+            centerline_polydata_output_file_name: File path for saving updated centerline polydata.
+            surface_polydata_output_file_name: File path for saving updated surface polydata.
+            mu, nu: Material parameters for affine scaling.
+            phi_type: Type of scaling (e.g., "constant" or "point").
+            force_center_point_id: Centerline point ID where the force is applied.
+            area_percent_change: Desired percentage change in cross-sectional area.
+            num_time_steps: Number of time steps for applying the deformation.
+            node_point_indices: List of node indices for displacement assignment.
+            other_geometry_input_files: List of additional geometry input file paths.
+            other_geometry_output_files: List of corresponding output file paths for additional geometry.
+        """
+        # --- Initialization and Parameter Setup ---
+        total_start_time = time.time()  # Start total timer
+        affine_type = "aneurysm"
+        a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+        print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
+        
+        # --- Load Polydata ---
+        load_start_time = time.time()
+        centerline_polydata = self.centerline  # Loaded from self attributes
+        surface_polydata = self.mesh
+        print(f"Time for reading surface polydata: {time.time() - load_start_time:.4f} seconds")
+
+        # --- Define Points and Nodes ---
+        setup_start_time = time.time()
+        other_geometry_polydatas = []  # Placeholder for additional geometries if needed
+        simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = scaling.define_nodes_affine(simulation_data, node_point_indices)
+        simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+        print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
+        
+        # --- Initialize Centerline Data ---
+        init_centerline_start_time = time.time()
+        centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(simulation_data, centerline_polydata)
+        print(f"Time for setting initial centerline data: {time.time() - init_centerline_start_time:.4f} seconds")
+        
+        # --- Calculate Initial Displacements --- CURENTLY the longest step 
+        calc_displacement_start_time = time.time()
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, simulation_data["nodes"]["force_center_point_id"])
+        print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
+        cross_section_time = time.time()
+        original_radius = 0.42
+        # original_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        vertices = simulation_data["points"]["surface"]
+        original_radius, sorted_indices = vtk_utils.estimate_radius(vertices, origin, normal, 1)
+        print(f"Cross sectional radius is estimated to be: {original_radius}")
+        print(f"Time for getting cross sectional radius: {time.time() - cross_section_time:.4f} seconds")
+        get_displacement_time = time.time()
+        delta_radius = scaling.get_displacement_needed_for_prescribed_displacement(original_radius, area_percent_change, affine_type) / num_time_steps
+        print(f"Time for computing initial radius and displacement: {time.time() - get_displacement_time:.4f} seconds")
+        
+        # --- Compute Initial Force Matrix and Displacements ---
+        step_start_time = time.time()
+        eps = affine_params["eps"][model] * original_radius
+        force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
+        surface_displacements = scaling.get_affine_displacements_v2(simulation_data, a, b, eps, force_scale, phi_type, 0, None)  # 0 = "surface"
+        print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
+        
+        # --- Scale Displacements to Match Desired Area ---
+        displacement_start_time = time.time()
+        simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
+        surface_polydata = common.update_polydata_with_points(surface_polydata, simulation_data, "surface")
+        tentative_radius = 0.43
+        # tentative_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        vertices = simulation_data["points"]["surface"]
+        tentative_radius = vtk_utils.estimate_radius_nearby(vertices, sorted_indices, origin, normal)
+        print(f"Area percent change: {area_percent_change}")
+        print(f"delta_radius needed for prescribed area percent: {delta_radius}")
+        print(f"Tentaive radius: {tentative_radius}")
+        print(f"Original radius: {original_radius}")
+        displacement_norm = tentative_radius - original_radius
+        surface_mesh_scale_factor = delta_radius / displacement_norm
+        surface_displacements = (surface_mesh_scale_factor - 1) * surface_displacements
+        print(f"Time for displacement scaling: {time.time() - displacement_start_time:.4f} seconds")
+
+        # --- Update Mesh Geometry ---
+        update_start_time = time.time()
+        simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
+        surface_polydata = common.update_polydata_with_points(surface_polydata, simulation_data, "surface")
+        # current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        print(f"Time for updating geometries: {time.time() - update_start_time:.4f} seconds")
+        print(f"Total simulation time: {time.time() - total_start_time:.4f} seconds")
 
     def run_aneurysm_timer(self, affine_params, model, centerline_polydata_input_file_name, 
                     surface_polydata_input_file_name, centerline_polydata_output_file_name, 
@@ -275,13 +449,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         surface_polydata = self.mesh
         surface_polydata_copy = vtk_utils.read_polydata_file(surface_polydata_input_file_name)
         print(f"Time for reading surface polydata: {time.time() - start:.4f} seconds")
-        
-        start = time.time()
-        other_geometry_polydatas = [
-            vtk_utils.read_polydata_file(name) 
-            for name in list_of_other_geometry_polydata_input_file_names
-        ]
-        print(f"Time for reading other geometries: {time.time() - start:.4f} seconds")
+        other_geometry_polydatas = []
         
         start = time.time()
         data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)

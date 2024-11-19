@@ -1,0 +1,22 @@
+{
+    "editor.semanticTokenColorCustomizations": {
+        "[One Dark Pro]": {
+            "enabled": true, // Enable semantic token customization for this theme
+            "rules": {
+                "variable.declaration": {
+                    "foreground": "#f4ffa2", // Local variables (red)
+                    "fontStyle": "" // Optional: Adjust font style if needed
+                },
+                "variable": {
+                    "foreground": "#ffffff", // Local variables (red)
+                    "fontStyle": "" // Optional: Adjust font style if needed
+                },
+                "parameter": {
+                    "foreground": "#ffffff", // Function parameters (white)
+                    "fontStyle": "bold" // Optional: Make parameters bold if desired
+                }
+            }
+        }
+    },
+    "oneDarkPro.bold": false
+}

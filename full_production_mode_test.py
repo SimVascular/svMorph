@@ -59,7 +59,7 @@ class MainWindow(QMainWindow):
         # Slider for aneurysm area increase
         self.area_slider = QSlider(Qt.Orientation.Horizontal)
         self.area_slider.setRange(100, 1000)
-        self.area_slider.setValue(500.0)
+        self.area_slider.setValue(105.0)
         self.controls_layout.addWidget(self.area_slider)
         # Display the slider value
         self.slider_value = QLineEdit()
