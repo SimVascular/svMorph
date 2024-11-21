@@ -154,6 +154,7 @@ def kelvinlets_affine_v3(rv, a, b, eps, s):
     assert rv.ndim == 3
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     assert ndims == 3
+    print(f"num_mesh_points: {num_mesh_points}, num_kelvinlet_points: {num_kelvinlet_points}, ndims: {ndims}")
 
     # Extract components of rv
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
@@ -164,8 +165,6 @@ def kelvinlets_affine_v3(rv, a, b, eps, s):
 
     # Expand re and tile to match the dimensions of rv
     re = jnp.expand_dims(re, 2)
-    re = jnp.tile(re, (1, 1, ndims))
-    assert re.shape == (num_mesh_points, num_kelvinlet_points, ndims)
 
     # Compute powers of re for the displacement formula
     re3 = re**3
@@ -353,17 +352,15 @@ def get_affine_displacements_inner(data_points, centerline_points, rotation_matr
     # Compute rv in the local frame
     rv = xs - centers
     rv = jnp.expand_dims(rv, 3)
-    rv = jnp.matmul(jnp.transpose(rotation_matrix, axes=(0, 1, 3, 2)), rv)
+    # rv = jnp.matmul(jnp.transpose(rotation_matrix, axes=(0, 1, 3, 2)), rv)
     rv = rv[:, :, :, 0]
-
     # Compute Kelvinlet displacements
     displacement_local = jnp.expand_dims(kelvinlets_affine_v3(rv, a, b, eps, s), 3)
-    displacement_global = jnp.matmul(rotation_matrix, displacement_local)
-    displacement_global = displacement_global[:, :, :, 0]
-
+    # displacement_global = jnp.matmul(rotation_matrix, displacement_local)
+    # displacement_global = displacement_global[:, :, :, 0]
+    displacement_global = displacement_local[:, :, :, 0]
     # Aggregate and normalize
     displacement = jnp.sum(displacement_global, axis=1)
-
     # Scale if required
     if surface_mesh_scale_factor is not None:
         displacement *= surface_mesh_scale_factor
@@ -389,13 +386,19 @@ def get_affine_displacements_v2(data, a, b, eps, s, phi_type, mesh_type, surface
     centerline_points = data["points"]["centerline"]
     rotation_matrix, _ = get_rotation_matrix_v2(data, left_index, right_index - 1, "z", data_points.shape[0])
     num_kelvinlet_points = int(right_index - left_index)
+    num_kelvinlet_points = 3
+    # print("left_index: ", left_index)
+    # print("right_index: ", right_index)
+    # print("all_indices: ", all_indices)
     xs = jnp.expand_dims(data_points, 1)
     xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
-    centers = jnp.expand_dims(centerline_points[left_index:right_index, :], 0)
+    # centers = jnp.expand_dims(centerline_points[left_index:right_index, :], 0)
+    centers = jnp.expand_dims(jnp.array([centerline_points[left_index], centerline_points[force_center_point_id], centerline_points[right_index - 1]]), 0)
     # Call the JIT-compiled function
-    return get_affine_displacements_inner(
+    displacement = get_affine_displacements_inner(
         data_points, centerline_points, rotation_matrix, xs, centers, a, b, eps, s, surface_mesh_scale_factor
     ) / num_kelvinlet_points
+    return displacement
 
 def get_affine_displacements_v2_no_timer(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor):
     assert mesh_type in {"surface", "centerline"} or mesh_type.startswith("other_geometry_")

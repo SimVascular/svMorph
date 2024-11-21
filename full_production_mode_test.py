@@ -45,14 +45,6 @@ class MainWindow(QMainWindow):
         # Controls
         self.controls_layout = QHBoxLayout()
 
-        # Import Buttons
-        self.import_mesh_button = QPushButton("Import Mesh")
-        self.import_mesh_button.clicked.connect(self.import_mesh)
-        self.controls_layout.addWidget(self.import_mesh_button)
-        self.import_centerline_button = QPushButton("Import Centerline")
-        self.import_centerline_button.clicked.connect(self.import_centerline)
-        self.controls_layout.addWidget(self.import_centerline_button)
-
         # Slider's label
         self.slider_label = QLabel("Area Percent Change:")
         self.controls_layout.addWidget(self.slider_label)
@@ -70,17 +62,17 @@ class MainWindow(QMainWindow):
         self.slider_value.textChanged.connect(lambda text: self.area_slider.setValue(float(text.replace("%", ""))))
         # Button for showing selectable nodes on the centerline
         self.show_nodes_button = QPushButton("Select Nodes")
+        self.show_nodes_button.setFixedWidth(120)
         self.controls_layout.addWidget(self.show_nodes_button)
         # Button for running the deformation
-        self.run_button = QPushButton("Create Aneurysm")
+        self.run_button = QPushButton("Aneurysm Apply")
+        self.run_button.setFixedWidth(120)
         self.controls_layout.addWidget(self.run_button)
         # Add controls layout to main layout
         self.layout.addLayout(self.controls_layout)
         self.frame.setLayout(self.layout)
         self.setCentralWidget(self.frame)
-        # Connect the button to the run_deformation method
         self.run_button.clicked.connect(self.run_deformation)
-        # Connect the button to the show_nodes method
         self.show_nodes_button.clicked.connect(self.display_centerline_nodes)
 
         # To add a second row of buttons, add another QHBoxLayout and add it to the main layout
@@ -112,7 +104,8 @@ class MainWindow(QMainWindow):
         self.num_ring_points_value.setFixedWidth(50)
         self.controls_layout2.addWidget(self.num_ring_points_value)
         
-        self.run_stenosis_button = QPushButton("Create Stenosis")
+        self.run_stenosis_button = QPushButton("Stenosis Apply")
+        self.run_stenosis_button.setFixedWidth(120)
         self.controls_layout2.addWidget(self.run_stenosis_button)
         self.layout.addLayout(self.controls_layout2)
         # Connect the slider and QLineEdit for stenosis area
@@ -124,10 +117,39 @@ class MainWindow(QMainWindow):
         # Connect the button to the run_stenosis method
         self.run_stenosis_button.clicked.connect(self.run_stenosis)
         
+        # To add a third row of buttons, add another QHBoxLayout and add it to the main layout
+        self.controls_layout3 = QHBoxLayout()
+        # Import Buttons
+        self.import_mesh_button = QPushButton("Import Mesh")
+        self.import_mesh_button.setFixedWidth(120)
+        self.import_mesh_button.clicked.connect(self.import_mesh)
+        self.controls_layout3.addWidget(self.import_mesh_button)
+        self.import_centerline_button = QPushButton("Import Centerline")
+        self.import_centerline_button.setFixedWidth(150)
+        self.import_centerline_button.clicked.connect(self.import_centerline)
+        self.controls_layout3.addWidget(self.import_centerline_button)
+        # Save Button
+        self.run_save_button = QPushButton("Save")
+        self.run_save_button.setFixedWidth(120)
+        # to make the button right aligned
+        self.controls_layout3.addStretch(1)
+        self.controls_layout3.addWidget(self.run_save_button)
+        self.layout.addLayout(self.controls_layout3)
+        self.run_save_button.clicked.connect(self.save_mesh)
+
         # VTK Setup
         self.vtk_interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
         self.vtk_handler = None
-        # VTKHandler("input/mesh-complete-exterior.vtp", "input/centerline.vtp")
+        # Pre-loaded Example mode for development
+        self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
+        self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        self.initialize_vtk_handler()
+
+    def save_mesh(self):
+        file_name, _ = QFileDialog.getSaveFileName(self, "Save Mesh", "mesh-name.vtp", "VTK Files (*.vtp)")
+        if file_name:
+            self.vtk_handler.save_mesh(file_name)
+            print(f"Saved mesh to {file_name}")
 
     def import_mesh(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Import Mesh", "", "VTK Files (*.vtp)")
@@ -181,7 +203,7 @@ class MainWindow(QMainWindow):
 
     def display_centerline_nodes(self):
         print("Please select three centerline nodes to generate aneurysm.")
-        self.style.display_vertices()
+        self.style.display_centerline_vertices()
     
 if __name__ == "__main__":
     app = QApplication(sys.argv)

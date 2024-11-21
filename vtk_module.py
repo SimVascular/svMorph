@@ -66,6 +66,9 @@ class VTKHandler:
     def get_interactor_style(self, interactor):
         return MouseInteractorStylePP(self.mesh, self.centerline, self.mesh_filename, self.centerline_filename, self.mesh_actor, interactor)
 
+    def save_mesh(self, filename):
+        write_vtp_file(self.mesh, filename)
+
 class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def __init__(self, mesh, centerline, mesh_filename, centerline_filename, mesh_actor, interactor, parent=None):
         super().__init__()
@@ -85,7 +88,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def on_key_press(self, obj, event):
         key = self.GetInteractor().GetKeySym()
         if key == 'h':
-            self.display_vertices()
+            self.display_centerline_vertices()
         elif key == 'd':
             self.deform_mesh()
         self.OnKeyPress()
@@ -106,10 +109,15 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             self.selected_points.append(pointID)
             sphere_center = pickedActor.GetMapper().GetInput().GetCenter()
             sphere_center_transformed = transform.TransformPoint(sphere_center)
-            self.place_highlight_sphere(sphere_center_transformed)
+            self.place_highlight_sphere(sphere_center_transformed, pointID)
+            if len(self.selected_points) > 3:
+                self.selected_points.pop(0)
+                # remove the oldest highlight sphere
+                self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.redHighlightActors[0])
+                self.redHighlightActors.pop(0)
 
         self.OnLeftButtonDown()
-
+        
     def place_visualization_sphere(self, position, pointID):
         sphere = vtkSphereSource()
         sphere.SetCenter(position)
@@ -122,12 +130,13 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         actor.SetMapper(mapper)
         actor.GetProperty().SetColor(0.0, 1.0, 0.0)
         actor.centerpointID = pointID
+        actor.sphereSource = sphere  
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.AddActor(actor)
         self.vertexVisualizationActors.append(actor)
 
-    def place_highlight_sphere(self, position):
+    def place_highlight_sphere(self, position, pointID):
         sphere = vtkSphereSource()
         sphere.SetCenter(position)
         sphere.SetRadius(0.06)
@@ -139,12 +148,15 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         actor.SetMapper(mapper)
         actor.GetProperty().SetColor(1.0, 0.0, 0.0)
         actor.GetProperty().SetOpacity(0.8)
+        actor.centerpointID = pointID
+        actor.sphereSource = sphere 
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.AddActor(actor)
         self.redHighlightActors.append(actor)
 
     def jit_warm_up(self):
+        return
         centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
         surface_polydata_output_file_name = "obtained_aneurysm_surface"
         selected_points = [380, 400, 420]
@@ -208,11 +220,11 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         data = common.update_points_with_displacements(data, surface_displacements, "surface")
         # surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
 
-    def display_vertices(self):
+    def display_centerline_vertices(self):
         points = self.centerline.GetPoints()
         transform = vtkTransform()
-        actor_matrix = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActors().GetLastActor().GetMatrix()
-        transform.SetMatrix(actor_matrix)
+        # actor_matrix = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActors().GetLastActor().GetMatrix()
+        actor_matrix = self.mesh_actor.GetMatrix()
 
         for i in range(points.GetData().GetNumberOfTuples()):
             point = [0.0, 0.0, 0.0]
@@ -224,11 +236,29 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
         self.jit_warm_up()
 
+    def update_centerline_vertices(self):
+        points = self.centerline.GetPoints()
+        transform = vtkTransform()
+        actor_matrix = self.mesh_actor.GetMatrix()
+        transform.SetMatrix(actor_matrix)
+
+        for i in range(points.GetData().GetNumberOfTuples()):
+            point = [0.0, 0.0, 0.0]
+            points.GetPoint(i, point)
+            transformed_point = transform.TransformPoint(point)
+            self.vertexVisualizationActors[i].sphereSource.SetCenter(transformed_point)
+        
+        for highlight_actor in self.redHighlightActors:
+            highlight_sphere = highlight_actor.sphereSource
+            point_ID = highlight_actor.centerpointID
+            new_center = self.centerline.GetPoint(point_ID)
+            highlight_sphere.SetCenter(new_center)
+
     def deform_mesh(self, area_percent_change):
         if len(self.selected_points) < 3:
             print("Please select at least 3 points along the centerline.")
             return
-        if len(self.selected_points) > 3:
+        if len(self.selected_points) > 3: #shouldnt happen now
             print("Using only the most recent 3 points picked.")
             self.selected_points = self.selected_points[-3:]
 
@@ -242,7 +272,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         force_center_point_id = self.selected_points[1]
         list_of_node_point_indices = self.selected_points
         # area_percent_change = 500
-        phi_type = 0 # phi_type = "constant"
+        phi_type = "constant"
         model = "test_aneurysm"
         affine_params = {"eps": {model: 1.0}, "scale": {model: 1.1}}
         mu = 1
@@ -250,7 +280,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         num_time_steps = 25
         num_time_steps = 1
         self.run_aneurysm_with_precribed_area_ratio(
-        affine_params, model, self.centerline_filename, self.mesh_filename,centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
+        affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, 
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
         self.update_mesh_viewer()
@@ -580,6 +610,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         list_of_other_geometry_polydata_output_file_names = []
         self.selected_points.sort()
         force_center_point_id = self.selected_points[1]
+        print(f"Selected points: {self.selected_points}")
         list_of_node_point_indices = [force_center_point_id]
         model="test_stenosis"
         affine_params = {"eps": {model: 1.0}}
@@ -592,7 +623,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, 
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian
         )
+        self.update_centerline_vertices()
         self.update_mesh_viewer()
+
     
     def run_stenosis_v5_timer(self, affine_params, model, centerline_polydata_input_file_name, surface_polydata_input_file_name, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, force_center_point_id, num_ring_points, area_percent_change, num_time_steps, list_of_node_point_indices, falloff_type, list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names, weight_regularized_laplacian):
         affine_type = "stenosis"
@@ -610,9 +643,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         print(f"Time to get a and b: {time.time() - start_time:.4f} seconds")
 
         # Read centerline and surface polydata files
-        centerline_polydata = vtk_utils.read_polydata_file(centerline_polydata_input_file_name)
-        centerline_polydata = self.centerline
         surface_polydata = self.mesh
+        centerline_polydata = self.centerline
 
         start = time.time()
         other_geometry_polydatas = []
@@ -686,6 +718,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             start = time.time()
             surface_displacements = scaling.get_ring_displacements_v2(data, a, b, eps, "surface", ring_points, ring_forces, falloff_type, kelvinlets_translation_jit_non_blocky)
             print(f"Time to calculate surface displacements (iteration {it}): {time.time() - start:.4f} seconds")
+            start = time.time()
+            centerline_displacement = scaling.get_ring_displacements_v2(data, a, b, eps, "centerline", ring_points, ring_forces, falloff_type, kelvinlets_translation_jit_non_blocky)
+            print(f"Time to calculate centerline displacements (iteration {it}): {time.time() - start:.4f} seconds")
 
             # Additional Laplacian calculation if required
             if falloff_type != "regular":
@@ -702,7 +737,11 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             start = time.time()
             data = common.update_points_with_displacements(data, surface_displacements, "surface")
             surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
-            print(f"Time to update points and polydata (iteration {it}): {time.time() - start:.4f} seconds")
+            print(f"Time to update surface points and polydata (iteration {it}): {time.time() - start:.4f} seconds")
+            start = time.time()
+            data = common.update_points_with_displacements(data, centerline_displacement, "centerline")
+            centerline_polydata = common.update_polydata_with_points(centerline_polydata, data, "centerline")
+            print(f"Time to update centerline polydata (iteration {it}): {time.time() - start:.4f} seconds")
 
         # Update normals
         start = time.time()
@@ -789,8 +828,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def update_mesh_viewer(self):
         # updated_mesh = load_vtp_file("obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp")
         # updated_centerline = load_vtp_file("obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp")
-        self.mesh_filename = "obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp"
-        self.centerline_filename = "obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp"
+        # self.mesh_filename = "obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp"
+        # self.centerline_filename = "obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp"
         
         # self.selected_points = []
         # ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
