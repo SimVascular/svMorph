@@ -25,6 +25,7 @@ from PyQt6.QtCore import Qt
 import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk_module import VTKHandler
+from PyQt6.QtCore import QTimer
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -137,12 +138,29 @@ class MainWindow(QMainWindow):
         self.layout.addLayout(self.controls_layout3)
         self.run_save_button.clicked.connect(self.save_mesh)
 
+        # Add continuous aneurysm apply button
+        self.continuous_run_button = QPushButton("Continuous Aneurysm Apply")
+        self.continuous_run_button.setFixedWidth(200)
+        self.controls_layout.addWidget(self.continuous_run_button)
+        # Timer for continuous deformation
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.run_deformation)
+        # Connect button press and release events
+        self.continuous_run_button.pressed.connect(self.start_continuous_deformation)
+        self.continuous_run_button.released.connect(self.stop_continuous_deformation)
+
         # VTK Setup
         self.vtk_interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
         self.vtk_handler = None
         # Pre-loaded Example mode for development
-        self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
+        # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
+        # self.centerline_file = "/home/bohanjeffli/Full_Centerlines.vtp"
+        self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
         self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        # self.mesh_file = "/home/bohanjeffli/Remeshed-200k-Stented-Truncated-PA.vtp"
+        # self.centerline_file = "/home/bohanjeffli/full_m_L_R_2Daughters_Centerlines.vtp"
+        # self.mesh_file = None
+        # self.centerline_file = None
         self.initialize_vtk_handler()
 
     def save_mesh(self):
@@ -204,9 +222,17 @@ class MainWindow(QMainWindow):
     def display_centerline_nodes(self):
         print("Please select three centerline nodes to generate aneurysm.")
         self.style.display_centerline_vertices()
+
+    def start_continuous_deformation(self):
+            self.timer.start(50)  # Run every 100 milliseconds
+
+    def stop_continuous_deformation(self):
+        self.timer.stop()
     
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+            

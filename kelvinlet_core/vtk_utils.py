@@ -325,6 +325,20 @@ def get_centerline_length(centerline_polydata):
     total_length = centerline_coordinate_array[-1]
     return total_length
 
+# @jx.jit
+def get_normal_at_centerline_point(centerline_jnp_array, point_id):
+    num_centerline_points = centerline_jnp_array.shape[0]
+    if 0 < point_id and point_id < num_centerline_points - 1:
+        normal = centerline_jnp_array[point_id + 1] - centerline_jnp_array[point_id - 1]
+    elif 0 < point_id:
+        assert(point_id == num_centerline_points - 1)
+        normal = centerline_jnp_array[point_id] - centerline_jnp_array[point_id - 1]
+    else:
+        assert(point_id == 0)
+        normal = centerline_jnp_array[point_id + 1] - centerline_jnp_array[point_id]
+    normal /= np.linalg.norm(normal)
+    return normal
+
 def get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, point_id):
     point = jnp.array(centerline_polydata.GetPoint(point_id))  # Directly convert to JAX array
     num_centerline_points = centerline_polydata.GetNumberOfPoints()
