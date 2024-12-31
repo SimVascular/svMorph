@@ -47,20 +47,21 @@ class MainWindow(QMainWindow):
         self.controls_layout = QHBoxLayout()
 
         # Slider's label
-        self.slider_label = QLabel("Area Percent Change:")
+        self.slider_label = QLabel("Force Scale:")
         self.controls_layout.addWidget(self.slider_label)
         # Slider for aneurysm area increase
         self.area_slider = QSlider(Qt.Orientation.Horizontal)
-        self.area_slider.setRange(100, 1000)
-        self.area_slider.setValue(105.0)
+        self.area_slider.setRange(-100, 100)  # Use a larger range to simulate float values
+        self.area_slider.setValue(15)
         self.controls_layout.addWidget(self.area_slider)
         # Display the slider value
         self.slider_value = QLineEdit()
-        self.slider_value.setText(f"{self.area_slider.value()}%")
+        self.slider_value.setText(f"{self.area_slider.value() / 100.0}")
         self.slider_value.setFixedWidth(50)
         self.controls_layout.addWidget(self.slider_value)
-        self.area_slider.valueChanged.connect(lambda value: self.slider_value.setText(f"{value}%"))
-        self.slider_value.textChanged.connect(lambda text: self.area_slider.setValue(float(text.replace("%", ""))))
+        self.area_slider.valueChanged.connect(lambda value: self.slider_value.setText(f"{value / 100.0}"))
+        self.slider_value.textChanged.connect(lambda text: self.area_slider.setValue(int(float(text) * 100)))
+
         # Button for showing selectable nodes on the centerline
         self.show_nodes_button = QPushButton("Select Nodes")
         self.show_nodes_button.setFixedWidth(120)
@@ -79,12 +80,12 @@ class MainWindow(QMainWindow):
         # To add a second row of buttons, add another QHBoxLayout and add it to the main layout
         self.controls_layout2 = QHBoxLayout()
         # Add stenosis controls
-        self.stenosis_slider_label = QLabel("Stenosis Area % Change:")
+        self.stenosis_slider_label = QLabel("Epsilon Negative Exponent:")
         self.controls_layout2.addWidget(self.stenosis_slider_label)
         
         self.stenosis_area_slider = QSlider(Qt.Orientation.Horizontal)
-        self.stenosis_area_slider.setRange(1, 100)
-        self.stenosis_area_slider.setValue(95)
+        self.stenosis_area_slider.setRange(-3, 6)
+        self.stenosis_area_slider.setValue(0)
         self.controls_layout2.addWidget(self.stenosis_area_slider)
         
         self.stenosis_slider_value = QLineEdit()
@@ -197,9 +198,13 @@ class MainWindow(QMainWindow):
         self.vtk_interactor.Start()
 
     def run_deformation(self):
-        area_percent_change = self.area_slider.value()
-        print(f"Running deformation with area percent change: {area_percent_change}")
-        self.style.deform_mesh(area_percent_change)
+        # area_percent_change = self.area_slider.value()
+        force_scale = - self.area_slider.value() / 100.0
+        # print(f"Running deformation with area percent change: {area_percent_change}")
+        print(f"Running aneurysm with force scale: {force_scale}")
+        epsilon = 10 ** (-self.stenosis_area_slider.value())
+        print(f"Running aneurysm with epsilon: {epsilon}")
+        self.style.deform_mesh(force_scale, epsilon)
         # self.vtk_handler.get_interactor_style(self.vtk_interactor).deform_mesh()
         # self.vtk_widget.GetRenderWindow().Render()
     

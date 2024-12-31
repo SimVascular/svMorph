@@ -265,7 +265,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             new_center = self.centerline.GetPoint(point_ID)
             highlight_sphere.SetCenter(new_center)
 
-    def deform_mesh(self, area_percent_change):
+    def deform_mesh(self, force_scale, epsilon):
         if len(self.selected_points) < 3:
             print("Please select at least 3 points along the centerline.")
             return
@@ -279,22 +279,21 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         list_of_other_geometry_polydata_input_file_names = []
         list_of_other_geometry_polydata_output_file_names = []
         # to make sure the selected points are in order regardless of picking order
-        self.selected_points.sort()
-        force_center_point_id = self.selected_points[1]
-        print("force_center_point_id: ", force_center_point_id)
-        list_of_node_point_indices = self.selected_points
+        ordred_selected_points = sorted(self.selected_points)
+        force_center_point_id = ordred_selected_points[1]
+        list_of_node_point_indices = ordred_selected_points
         # area_percent_change = 500
         phi_type = "constant"
         model = "test_aneurysm"
-        affine_params = {"eps": {model: 1.0}, "scale": {model: 1.1}}
         affine_params = {"eps": {model: 0.01}, "scale": {model: 1.1}}
+        affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
         mu = 1
         nu = 0.4
         num_time_steps = 25
         num_time_steps = 1
         self.run_aneurysm_with_precribed_delta_radius(
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
-        force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, 
+        force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, 
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
         self.update_mesh_viewer()
 
@@ -358,7 +357,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def run_aneurysm_with_precribed_delta_radius(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
-                        area_percent_change, num_time_steps, node_point_indices, 
+                        force_scale, num_time_steps, node_point_indices, 
                         other_geometry_input_files, other_geometry_output_files):
         # --- Initialization and Parameter Setup ---
         total_start_time = time.time()  # Start total timer
@@ -405,7 +404,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         step_start_time = time.time()
         eps = affine_params["eps"][model] * original_radius
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
-        force_scale = -0.25
+        # force_scale = -0.25
+        print("eps = ", eps, "force_scale = ", force_scale)
         surface_displacements = scaling.get_affine_displacements_point(simulation_data, a, b, eps, force_scale, phi_type, "surface", None, normal)  # 0 = "surface"
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         
