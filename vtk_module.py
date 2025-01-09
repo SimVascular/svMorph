@@ -1,7 +1,7 @@
 import vtkmodules.vtkRenderingOpenGL2
 from vtkmodules.vtkCommonColor import vtkNamedColors
 from vtkmodules.vtkCommonTransforms import vtkTransform
-from vtkmodules.vtkFiltersSources import vtkSphereSource
+from vtkmodules.vtkFiltersSources import vtkSphereSource, vtkCylinderSource
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import (
     vtkActor,
@@ -14,6 +14,7 @@ from vtkmodules.vtkIOXML import vtkXMLPolyDataReader, vtkXMLPolyDataWriter
 from kelvinlet_core import scaling
 from kelvinlet_core import vtk_utils
 from kelvinlet_core import common
+import calculate_radius_of_influence
 import numpy as np
 import copy
 from vtk.util.numpy_support import vtk_to_numpy as v2n
@@ -74,17 +75,17 @@ class VTKHandler:
     def get_renderer(self):
         return self.renderer
 
-    def get_interactor_style(self, interactor):
-        return MouseInteractorStylePP(self.mesh, self.centerline, self.mesh_filename, self.centerline_filename, self.mesh_actor, interactor)
+    def get_interactor_style(self):
+        return MouseInteractorStylePP(self.mesh, self.centerline, self.mesh_filename, self.centerline_filename, self.mesh_actor)
 
     def save_mesh(self, filename):
         write_vtp_file(self.mesh, filename)
 
 class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
-    def __init__(self, mesh, centerline, mesh_filename, centerline_filename, mesh_actor, interactor, parent=None):
+    def __init__(self, mesh, centerline, mesh_filename, centerline_filename, mesh_actor, parent=None):
         super().__init__()
         self.AddObserver("LeftButtonPressEvent", self.left_button_press_event)
-        self.AddObserver("KeyPressEvent", self.on_key_press)
+        self.AddObserver("KeyPressEvent", self.key_press_event)
         self.Points = vtkmodules.vtkCommonCore.vtkPoints()
         self.vertexVisualizationActors = []
         self.redHighlightActors = []
@@ -92,14 +93,15 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.centerline = centerline
         self.mesh_filename = mesh_filename
         self.centerline_filename = centerline_filename
-        self.interactor = interactor
         self.mesh_actor = mesh_actor
         self.selected_points = []
-
-    def on_key_press(self, obj, event):
+        self.radius_of_influence = 0.0
+        self.roiActors = []
+    
+    def key_press_event(self, obj, event):
         key = self.GetInteractor().GetKeySym()
         if key == 'h':
-            self.display_centerline_vertices()
+            self.toggle_roi_spheres()
         elif key == 'd':
             self.deform_mesh()
         self.OnKeyPress()
@@ -126,7 +128,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
                 # remove the oldest highlight sphere
                 self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.redHighlightActors[0])
                 self.redHighlightActors.pop(0)
-
+                self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.roiActors[0])
+                self.roiActors.pop(0)
         self.OnLeftButtonDown()
         
     def place_visualization_sphere(self, position, pointID):
@@ -165,6 +168,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.AddActor(actor)
         self.redHighlightActors.append(actor)
+
+        self.place_radius_of_influence_sphere(position, pointID)
 
     def jit_warm_up(self):
         return
@@ -231,6 +236,66 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         data = common.update_points_with_displacements(data, surface_displacements, "surface")
         # surface_polydata = common.update_polydata_with_points(surface_polydata, data, "surface")
 
+    def place_radius_of_influence_sphere(self, position, pointID):
+        sphere = vtkSphereSource()
+        sphere.SetCenter(position)
+        sphere.SetRadius(self.radius_of_influence)
+
+        mapper = vtkPolyDataMapper()
+        mapper.SetInputConnection(sphere.GetOutputPort())
+
+        actor = vtkmodules.vtkRenderingCore.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(0.9, 0.9, 0.9)
+        actor.GetProperty().SetOpacity(0.2)
+        actor.SetPickable(0)
+        actor.centerpointID = pointID
+        actor.sphereSource = sphere 
+
+        ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+        ren.AddActor(actor)
+        
+        self.roiActors.append(actor)
+
+    def place_radius_of_influence_cylinder(self, position, pointID):
+        cylinder = vtkCylinderSource()
+        cylinder.SetCenter(position)
+        cylinder.SetRadius(self.radius_of_influence)
+        cylinder.SetHeight(self.radius_of_influence*2)
+        # make the cylinder along the centerline direction
+        # cylinder.SetDirection(0, 0, 1)
+        cylinder.SetResolution(100)
+
+        mapper = vtkPolyDataMapper()
+        mapper.SetInputConnection(cylinder.GetOutputPort())
+
+        actor = vtkmodules.vtkRenderingCore.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(0.9, 0.9, 0.9)
+        actor.GetProperty().SetOpacity(0.2)
+        actor.SetPickable(0)
+        actor.centerpointID = pointID
+        actor.cylinderSource = cylinder 
+
+        ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+        ren.AddActor(actor)
+        
+        self.roiActors.append(actor)
+
+    def update_deformation_parameters(self, epsilon, force_scale):
+        a = 0.0795774715459
+        b = 0.0331572798108
+        self.radius_of_influence = calculate_radius_of_influence.get_radius_of_influence(a, b, epsilon, force_scale)
+        for roi_actor in self.roiActors:
+            roi_sphere = roi_actor.sphereSource
+            roi_sphere.SetRadius(self.radius_of_influence)
+        self.GetInteractor().GetRenderWindow().Render()
+            
+    def toggle_roi_spheres(self):
+        for roi_actor in self.roiActors:
+            roi_actor.SetVisibility(not roi_actor.GetVisibility())
+        self.GetInteractor().GetRenderWindow().Render()
+
     def display_centerline_vertices(self):
         points = self.centerline.GetPoints()
         transform = vtkTransform()
@@ -295,7 +360,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, 
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
-        self.update_mesh_viewer()
+        self.GetInteractor().GetRenderWindow().Render()
 
     def run_aneurysm_fastest(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 

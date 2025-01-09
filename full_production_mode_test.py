@@ -38,20 +38,19 @@ class MainWindow(QMainWindow):
         
         # Set the window size to be 800x600 pixels and position it at 100, 100
         self.setGeometry(100, 100, 1200, 900)
-        
+    
         # VTK Render Widget
         self.vtk_widget = QVTKRenderWindowInteractor(self.frame)
         self.layout.addWidget(self.vtk_widget)
         
         # Controls
         self.controls_layout = QHBoxLayout()
-
         # Slider's label
         self.slider_label = QLabel("Force Scale:")
         self.controls_layout.addWidget(self.slider_label)
         # Slider for aneurysm area increase
         self.area_slider = QSlider(Qt.Orientation.Horizontal)
-        self.area_slider.setRange(-100, 100)  # Use a larger range to simulate float values
+        self.area_slider.setRange(-1000, 1000)  # Use a larger range to simulate float values
         self.area_slider.setValue(15)
         self.controls_layout.addWidget(self.area_slider)
         # Display the slider value
@@ -59,8 +58,8 @@ class MainWindow(QMainWindow):
         self.slider_value.setText(f"{self.area_slider.value() / 100.0}")
         self.slider_value.setFixedWidth(50)
         self.controls_layout.addWidget(self.slider_value)
-        self.area_slider.valueChanged.connect(lambda value: self.slider_value.setText(f"{value / 100.0}"))
-        self.slider_value.textChanged.connect(lambda text: self.area_slider.setValue(int(float(text) * 100)))
+        self.area_slider.valueChanged.connect(lambda value: [self.slider_value.setText(f"{value / 100.0}"), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)])
+        self.slider_value.textChanged.connect(lambda text: [self.area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)])
 
         # Button for showing selectable nodes on the centerline
         self.show_nodes_button = QPushButton("Select Nodes")
@@ -84,13 +83,15 @@ class MainWindow(QMainWindow):
         self.controls_layout2.addWidget(self.stenosis_slider_label)
         
         self.stenosis_area_slider = QSlider(Qt.Orientation.Horizontal)
-        self.stenosis_area_slider.setRange(-3, 6)
-        self.stenosis_area_slider.setValue(0)
+        # self.stenosis_area_slider.setRange(-3, 6)
+        self.stenosis_area_slider.setRange(0, 500)
+        self.stenosis_area_slider.setValue(100)
         self.controls_layout2.addWidget(self.stenosis_area_slider)
-        
         self.stenosis_slider_value = QLineEdit()
-        self.stenosis_slider_value.setText(f"{self.stenosis_area_slider.value()}")
+        self.stenosis_slider_value.setText(f"{self.stenosis_area_slider.value() / 100.0}")
         self.stenosis_slider_value.setFixedWidth(50)
+        self.stenosis_area_slider.valueChanged.connect(lambda value: [self.stenosis_slider_value.setText(f"{value / 100.0}"), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)])
+        self.stenosis_slider_value.textChanged.connect(lambda text: [self.stenosis_area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)])
         self.controls_layout2.addWidget(self.stenosis_slider_value)
         
         self.num_ring_points_label = QLabel("Num Ring Points:")
@@ -111,8 +112,8 @@ class MainWindow(QMainWindow):
         self.controls_layout2.addWidget(self.run_stenosis_button)
         self.layout.addLayout(self.controls_layout2)
         # Connect the slider and QLineEdit for stenosis area
-        self.stenosis_area_slider.valueChanged.connect(lambda value: self.stenosis_slider_value.setText(f"{value}"))
-        self.stenosis_slider_value.textChanged.connect(lambda text: self.stenosis_area_slider.setValue(int(text)))
+        # self.stenosis_area_slider.valueChanged.connect(lambda value: self.stenosis_slider_value.setText(f"{value}"))
+        # self.stenosis_slider_value.textChanged.connect(lambda text: self.stenosis_area_slider.setValue(int(text)))
         # Connect the slider and QLineEdit for num ring points
         self.num_ring_points_slider.valueChanged.connect(lambda value: self.num_ring_points_value.setText(f"{value}"))
         self.num_ring_points_value.textChanged.connect(lambda text: self.num_ring_points_slider.setValue(int(text)))
@@ -154,15 +155,24 @@ class MainWindow(QMainWindow):
         self.vtk_interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
         self.vtk_handler = None
         # Pre-loaded Example mode for development
+        ######################## DEMO 2 ########################
         # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
+        # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
         # self.centerline_file = "/home/bohanjeffli/Full_Centerlines.vtp"
-        self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
-        self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        #######################################################
+        ######################## DEMO 1 ########################
+        #self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
+        #self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        #######################################################
+        # self.mesh_file = "/home/bohanjeffli/ImageToStl.com_9x9_square_grid_verbose.vtp"
+        # self.centerline_file = "/home/bohanjeffli/ImageToStl.com_midline_polyline.vtp"
+        ########################################################
         # self.mesh_file = "/home/bohanjeffli/Remeshed-200k-Stented-Truncated-PA.vtp"
         # self.centerline_file = "/home/bohanjeffli/full_m_L_R_2Daughters_Centerlines.vtp"
-        # self.mesh_file = None
-        # self.centerline_file = None
-        self.initialize_vtk_handler()
+        ########################################################
+        self.mesh_file = None
+        self.centerline_file = None
+        # self.initialize_vtk_handler()
 
     def save_mesh(self):
         file_name, _ = QFileDialog.getSaveFileName(self, "Save Mesh", "mesh-name.vtp", "VTK Files (*.vtp)")
@@ -174,36 +184,45 @@ class MainWindow(QMainWindow):
         file_name, _ = QFileDialog.getOpenFileName(self, "Import Mesh", "", "VTK Files (*.vtp)")
         if file_name:
             self.mesh_file = file_name
-            if hasattr(self, 'centerline_file'):
+            if self.centerline_file:
                 self.initialize_vtk_handler()
 
     def import_centerline(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Import Centerline", "", "VTK Files (*.vtp)")
         if file_name:
             self.centerline_file = file_name
-            if hasattr(self, 'mesh_file'):
+            if self.mesh_file:
                 self.initialize_vtk_handler()
 
     def initialize_vtk_handler(self):
         self.vtk_handler = VTKHandler(self.mesh_file, self.centerline_file)
+
         self.ren = self.vtk_handler.get_renderer()
         self.vtk_widget.GetRenderWindow().AddRenderer(self.ren)
 
-        self.style = self.vtk_handler.get_interactor_style(self.vtk_interactor)
+        self.style = self.vtk_handler.get_interactor_style()
         self.vtk_interactor.SetInteractorStyle(self.style)
-
-        # self.vtk_widget.GetRenderWindow().Render()
+        self.vtk_interactor.SetRenderWindow(self.vtk_widget.GetRenderWindow())
+        self.vtk_widget.GetRenderWindow().Render()
 
         self.vtk_interactor.Initialize()
         self.vtk_interactor.Start()
+
+        self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)
+
+    def keyPressEvent(self, event):
+        # when buttons are pressed focus shifts to PyQt window so key press events are not captured by VTK and needed to be handled here
+        if event.key() == Qt.Key.Key_H:
+            self.style.toggle_roi_spheres()
 
     def run_deformation(self):
         # area_percent_change = self.area_slider.value()
         force_scale = - self.area_slider.value() / 100.0
         # print(f"Running deformation with area percent change: {area_percent_change}")
-        print(f"Running aneurysm with force scale: {force_scale}")
-        epsilon = 10 ** (-self.stenosis_area_slider.value())
-        print(f"Running aneurysm with epsilon: {epsilon}")
+        print(f"Running stent with force scale: {force_scale}")
+        # epsilon = 10 ** (-self.stenosis_area_slider.value()) # slider value 0 or 1 works well here
+        epsilon = self.stenosis_area_slider.value() / 100.0
+        print(f"Running stent with epsilon: {epsilon}")
         self.style.deform_mesh(force_scale, epsilon)
         # self.vtk_handler.get_interactor_style(self.vtk_interactor).deform_mesh()
         # self.vtk_widget.GetRenderWindow().Render()
@@ -226,6 +245,8 @@ class MainWindow(QMainWindow):
 
     def display_centerline_nodes(self):
         print("Please select three centerline nodes to generate aneurysm.")
+        force_scale = - self.area_slider.value() / 100.0
+        epsilon = self.stenosis_area_slider.value() / 100.0
         self.style.display_centerline_vertices()
 
     def start_continuous_deformation(self):
