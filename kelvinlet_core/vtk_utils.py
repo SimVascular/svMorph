@@ -325,6 +325,31 @@ def get_centerline_length(centerline_polydata):
     total_length = centerline_coordinate_array[-1]
     return total_length
 
+def get_centerline_tangents(centerline_polydata):
+    num_centerline_points = centerline_polydata.GetNumberOfPoints()
+    tangents = jnp.zeros((num_centerline_points, 3))
+    for point_id in range(1, num_centerline_points - 1):
+        tangents = tangents.at[point_id].set(jnp.array(centerline_polydata.GetPoint(point_id + 1)) - jnp.array(centerline_polydata.GetPoint(point_id - 1)))
+        tangents = tangents.at[point_id].set(tangents[point_id] / jnp.linalg.norm(tangents[point_id]))
+    tangents = tangents.at[0].set(jnp.array(centerline_polydata.GetPoint(1)) - jnp.array(centerline_polydata.GetPoint(0)))
+    tangents = tangents.at[0].set(tangents[0] / jnp.linalg.norm(tangents[0]))
+    tangents = tangents.at[-1].set(jnp.array(centerline_polydata.GetPoint(-1))
+     - jnp.array(centerline_polydata.GetPoint(-2)))
+    tangents = tangents.at[-1].set(tangents[-1] / jnp.linalg.norm(tangents[-1]))
+    return tangents
+
+def get_centerline_tangents_np(centerline_polydata):
+    num_centerline_points = centerline_polydata.GetNumberOfPoints()
+    tangents = np.zeros((num_centerline_points, 3))
+    for point_id in range(1, num_centerline_points - 1):
+        tangents[point_id] = np.array(centerline_polydata.GetPoint(point_id + 1)) - np.array(centerline_polydata.GetPoint(point_id - 1))
+        tangents[point_id] /= np.linalg.norm(tangents[point_id])
+    tangents[0] = np.array(centerline_polydata.GetPoint(1)) - np.array(centerline_polydata.GetPoint(0))
+    tangents[0] /= np.linalg.norm(tangents[0])
+    tangents[-1] = np.array(centerline_polydata.GetPoint(num_centerline_points - 1)) - np.array(centerline_polydata.GetPoint(num_centerline_points - 2))
+    tangents[-1] /= np.linalg.norm(tangents[-1])
+    return tangents
+
 # @jx.jit
 def get_normal_at_centerline_point(centerline_jnp_array, point_id):
     num_centerline_points = centerline_jnp_array.shape[0]

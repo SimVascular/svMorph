@@ -86,25 +86,46 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         super().__init__()
         self.AddObserver("LeftButtonPressEvent", self.left_button_press_event)
         self.AddObserver("KeyPressEvent", self.key_press_event)
+        self.AddObserver("KeyReleaseEvent", self.key_release_event)
+        self.AddObserver("TimerEvent", self.timer_callback)
         self.Points = vtkmodules.vtkCommonCore.vtkPoints()
         self.vertexVisualizationActors = []
         self.redHighlightActors = []
         self.mesh = mesh
         self.centerline = centerline
+        start_time = time.time()
+        self.centerline_tangents = vtk_utils.get_centerline_tangents_np(centerline)
+        print(f"Time to get centerline tangents: {time.time() - start_time:.4f} seconds")
+        # print("centerline length: ", centerline.GetNumberOfPoints())
+        # print("centerline tangents length: ", len(self.centerline_tangents))
+        # print("a few of the entries of centerline tangents: ", self.centerline_tangents[:5])
         self.mesh_filename = mesh_filename
         self.centerline_filename = centerline_filename
         self.mesh_actor = mesh_actor
         self.selected_points = []
+        self.epsilon = 0.2
+        self.force_scale = -0.2
         self.radius_of_influence = 0.0
+        self.stent_unit_section_halflength = 0.2
         self.roiActors = []
+        self.num_kelvinlet_points = 1 # originally 3
     
     def key_press_event(self, obj, event):
         key = self.GetInteractor().GetKeySym()
         if key == 'h':
             self.toggle_roi_spheres()
         elif key == 'd':
-            self.deform_mesh()
+            self.timer_id = self.GetInteractor().CreateRepeatingTimer(100)
         self.OnKeyPress()
+
+    def timer_callback(self, obj, event):
+        self.deform_mesh_sequential(self.epsilon, self.force_scale)
+
+    def key_release_event(self, obj, event):
+        key = self.GetInteractor().GetKeySym()
+        if key == 'd':
+            self.GetInteractor().DestroyTimer(self.timer_id)
+        self.OnKeyRelease()
 
     def left_button_press_event(self, obj, event):
         click_pos = self.GetInteractor().GetEventPosition()
@@ -123,7 +144,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             sphere_center = pickedActor.GetMapper().GetInput().GetCenter()
             sphere_center_transformed = transform.TransformPoint(sphere_center)
             self.place_highlight_sphere(sphere_center_transformed, pointID)
-            if len(self.selected_points) > 3:
+            if len(self.selected_points) > self.num_kelvinlet_points:
                 self.selected_points.pop(0)
                 # remove the oldest highlight sphere
                 self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.redHighlightActors[0])
@@ -169,7 +190,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         ren.AddActor(actor)
         self.redHighlightActors.append(actor)
 
-        self.place_radius_of_influence_sphere(position, pointID)
+        # self.place_radius_of_influence_sphere(position, pointID)
+        self.place_radius_of_influence_cylinder(position, pointID)
 
     def jit_warm_up(self):
         return
@@ -259,15 +281,31 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
     def place_radius_of_influence_cylinder(self, position, pointID):
         cylinder = vtkCylinderSource()
-        cylinder.SetCenter(position)
+        # cylinder.SetCenter(position)
         cylinder.SetRadius(self.radius_of_influence)
-        cylinder.SetHeight(self.radius_of_influence*2)
-        # make the cylinder along the centerline direction
-        # cylinder.SetDirection(0, 0, 1)
+        cylinder.SetHeight(2 * self.stent_unit_section_halflength)
         cylinder.SetResolution(100)
 
+        # compute the rotation
+        default_axis = np.array([0, 1, 0])
+        tangent = self.centerline_tangents[pointID]
+        rotation_axis = np.cross(default_axis, tangent)
+        angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
+        print(f"tangent: {tangent}, orientation: {rotation_axis}, angle: {angle}")
+
+        # Create a transform to align the cylinder with the vector (1, 2, 3)
+        transform = vtkTransform()
+        transform.Translate(position)  # Translate to origin
+        transform.RotateWXYZ(angle, rotation_axis)  # Rotate about the origin
+        
+
+        transform_filter = vtkmodules.vtkFiltersGeneral.vtkTransformPolyDataFilter()
+        transform_filter.SetInputConnection(cylinder.GetOutputPort())
+        transform_filter.SetTransform(transform)
+        transform_filter.Update()
+
         mapper = vtkPolyDataMapper()
-        mapper.SetInputConnection(cylinder.GetOutputPort())
+        mapper.SetInputConnection(transform_filter.GetOutputPort())
 
         actor = vtkmodules.vtkRenderingCore.vtkActor()
         actor.SetMapper(mapper)
@@ -285,6 +323,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def update_deformation_parameters(self, epsilon, force_scale):
         a = 0.0795774715459
         b = 0.0331572798108
+        self.epsilon = epsilon
+        self.force_scale = force_scale
         self.radius_of_influence = calculate_radius_of_influence.get_radius_of_influence(a, b, epsilon, force_scale)
         for roi_actor in self.roiActors:
             roi_sphere = roi_actor.sphereSource
@@ -330,13 +370,13 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             new_center = self.centerline.GetPoint(point_ID)
             highlight_sphere.SetCenter(new_center)
 
-    def deform_mesh(self, force_scale, epsilon):
-        if len(self.selected_points) < 3:
+    def deform_mesh(self, epsilon, force_scale):
+        if len(self.selected_points) < self.num_kelvinlet_points:
             print("Please select at least 3 points along the centerline.")
             return
-        if len(self.selected_points) > 3: #shouldnt happen now
-            print("Using only the most recent 3 points picked.")
-            self.selected_points = self.selected_points[-3:]
+        if len(self.selected_points) > self.num_kelvinlet_points: #shouldnt happen now
+            print("Using only the most recent k points picked.")
+            self.selected_points = self.selected_points[-self.num_kelvinlet_points:]
 
         # create_aneurysm(self.mesh_filename, self.centerline_filename, self.selected_points, area_percent_change)
         centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
@@ -345,7 +385,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         list_of_other_geometry_polydata_output_file_names = []
         # to make sure the selected points are in order regardless of picking order
         ordred_selected_points = sorted(self.selected_points)
-        force_center_point_id = ordred_selected_points[1]
+        force_center_point_id = ordred_selected_points[self.num_kelvinlet_points // 2]
         list_of_node_point_indices = ordred_selected_points
         # area_percent_change = 500
         phi_type = "constant"
@@ -354,9 +394,33 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
         mu = 1
         nu = 0.4
-        num_time_steps = 25
         num_time_steps = 1
         self.run_aneurysm_with_precribed_delta_radius(
+        affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
+        force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, 
+        list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
+        self.GetInteractor().GetRenderWindow().Render()
+    
+    def deform_mesh_sequential(self, epsilon, force_scale):
+        if len(self.selected_points) < 1:
+            print("Please select the center of the stent along the centerline.")
+            return
+
+        centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
+        surface_polydata_output_file_name = "obtained_aneurysm_surface"
+        list_of_other_geometry_polydata_input_file_names = []
+        list_of_other_geometry_polydata_output_file_names = []
+        # to make sure the selected points are in order regardless of picking order
+        force_center_point_id = self.selected_points[0]
+        list_of_node_point_indices = self.selected_points
+        # area_percent_change = 500
+        phi_type = "point"
+        model = "test_aneurysm"
+        affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
+        mu = 1
+        nu = 0.4
+        num_time_steps = 1
+        self.run_aneyrusm_sequential(
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, 
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
@@ -418,6 +482,66 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # print(f"Original radius: {original_radius}")
         
         print(f"Total simulation time: {time.time() - total_start_time:.4f} seconds")
+
+    def run_aneyrusm_sequential(self, affine_params, model, centerline_polydata_input_file_name, 
+                        surface_polydata_input_file_name, centerline_polydata_output_file_name, 
+                        surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
+                        force_scale, num_time_steps, node_point_indices, 
+                        other_geometry_input_files, other_geometry_output_files):
+        # --- Initialization and Parameter Setup ---
+        total_start_time = time.time()  # Start total timer
+        affine_type = "aneurysm"
+        a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+        print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
+        # --- Load Polydata ---
+        load_start_time = time.time()
+        centerline_polydata = self.centerline  # Loaded from self attributes
+        surface_polydata = self.mesh
+        print(f"Time for reading surface polydata: {time.time() - load_start_time:.4f} seconds")
+
+        # --- Define Points and Nodes ---
+        setup_start_time = time.time()
+        other_geometry_polydatas = []  # Placeholder for additional geometries if needed
+        simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = scaling.define_nodes_affine(simulation_data, node_point_indices)
+        simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+        print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
+        
+        # --- Initialize Centerline Data ---
+        init_centerline_start_time = time.time()
+        centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(simulation_data, centerline_polydata)
+        print(f"Time for setting initial centerline data: {time.time() - init_centerline_start_time:.4f} seconds")
+        
+        # --- Calculate Initial Displacements --- CURENTLY the longest step 
+        calc_displacement_start_time = time.time()
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, simulation_data["nodes"]["force_center_point_id"])
+        print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
+        cross_section_time = time.time()
+        original_radius = 0.42
+        # original_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        # vertices = simulation_data["points"]["surface"]
+        # original_radius, sorted_indices = vtk_utils.estimate_radius(vertices, origin, normal, 1)
+        print(f"Cross sectional radius is estimated to be: {original_radius}")
+        print(f"Time for getting cross sectional radius: {time.time() - cross_section_time:.4f} seconds")
+        get_displacement_time = time.time()
+        print(f"Time for computing initial radius and displacement: {time.time() - get_displacement_time:.4f} seconds")
+        
+        # --- Compute Initial Force Matrix and Displacements ---
+        step_start_time = time.time()
+        eps = affine_params["eps"][model] * original_radius
+        # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
+        print("eps = ", eps, "force_scale = ", force_scale)
+        surface_displacements = scaling.get_displacements(simulation_data, a, b, eps, force_scale, None, normal)
+        print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
+        
+        # --- Scale Displacements to Match Desired Area ---
+        displacement_start_time = time.time()
+        simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
+        surface_polydata = common.update_polydata_with_points(surface_polydata, simulation_data, "surface")
+        print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
+        total_simulation_time = time.time() - total_start_time
+        print(f"Total simulation time: {total_simulation_time:.4f} seconds")
+        print(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
 
     def run_aneurysm_with_precribed_delta_radius(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 

@@ -51,7 +51,7 @@ class MainWindow(QMainWindow):
         # Slider for aneurysm area increase
         self.area_slider = QSlider(Qt.Orientation.Horizontal)
         self.area_slider.setRange(-1000, 1000)  # Use a larger range to simulate float values
-        self.area_slider.setValue(15)
+        self.area_slider.setValue(20)
         self.controls_layout.addWidget(self.area_slider)
         # Display the slider value
         self.slider_value = QLineEdit()
@@ -85,7 +85,7 @@ class MainWindow(QMainWindow):
         self.stenosis_area_slider = QSlider(Qt.Orientation.Horizontal)
         # self.stenosis_area_slider.setRange(-3, 6)
         self.stenosis_area_slider.setRange(0, 500)
-        self.stenosis_area_slider.setValue(100)
+        self.stenosis_area_slider.setValue(20)
         self.controls_layout2.addWidget(self.stenosis_area_slider)
         self.stenosis_slider_value = QLineEdit()
         self.stenosis_slider_value.setText(f"{self.stenosis_area_slider.value() / 100.0}")
@@ -161,8 +161,9 @@ class MainWindow(QMainWindow):
         # self.centerline_file = "/home/bohanjeffli/Full_Centerlines.vtp"
         #######################################################
         ######################## DEMO 1 ########################
-        #self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
-        #self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
+        self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
+        self.centerline_file = "/home/bohanjeffli/centerline.vtp"
         #######################################################
         # self.mesh_file = "/home/bohanjeffli/ImageToStl.com_9x9_square_grid_verbose.vtp"
         # self.centerline_file = "/home/bohanjeffli/ImageToStl.com_midline_polyline.vtp"
@@ -170,9 +171,9 @@ class MainWindow(QMainWindow):
         # self.mesh_file = "/home/bohanjeffli/Remeshed-200k-Stented-Truncated-PA.vtp"
         # self.centerline_file = "/home/bohanjeffli/full_m_L_R_2Daughters_Centerlines.vtp"
         ########################################################
-        self.mesh_file = None
-        self.centerline_file = None
-        # self.initialize_vtk_handler()
+        # self.mesh_file = None
+        # self.centerline_file = None
+        self.initialize_vtk_handler()
 
     def save_mesh(self):
         file_name, _ = QFileDialog.getSaveFileName(self, "Save Mesh", "mesh-name.vtp", "VTK Files (*.vtp)")
@@ -198,6 +199,7 @@ class MainWindow(QMainWindow):
         self.vtk_handler = VTKHandler(self.mesh_file, self.centerline_file)
 
         self.ren = self.vtk_handler.get_renderer()
+        self.ren.SetBackground(1, 1, 1)
         self.vtk_widget.GetRenderWindow().AddRenderer(self.ren)
 
         self.style = self.vtk_handler.get_interactor_style()
@@ -214,6 +216,9 @@ class MainWindow(QMainWindow):
         # when buttons are pressed focus shifts to PyQt window so key press events are not captured by VTK and needed to be handled here
         if event.key() == Qt.Key.Key_H:
             self.style.toggle_roi_spheres()
+        elif event.key() == Qt.Key.Key_D:
+            # self.start_continuous_deformation()
+            pass
 
     def run_deformation(self):
         # area_percent_change = self.area_slider.value()
@@ -223,8 +228,8 @@ class MainWindow(QMainWindow):
         # epsilon = 10 ** (-self.stenosis_area_slider.value()) # slider value 0 or 1 works well here
         epsilon = self.stenosis_area_slider.value() / 100.0
         print(f"Running stent with epsilon: {epsilon}")
-        self.style.deform_mesh(force_scale, epsilon)
-        # self.vtk_handler.get_interactor_style(self.vtk_interactor).deform_mesh()
+        # self.style.deform_mesh(epsilon, force_scale)
+        self.style.deform_mesh_sequential(epsilon, force_scale)
         # self.vtk_widget.GetRenderWindow().Render()
     
     # @profile_func
@@ -250,7 +255,7 @@ class MainWindow(QMainWindow):
         self.style.display_centerline_vertices()
 
     def start_continuous_deformation(self):
-            self.timer.start(50)  # Run every 100 milliseconds
+            self.timer.start(50)  # Run every 50 milliseconds
 
     def stop_continuous_deformation(self):
         self.timer.stop()

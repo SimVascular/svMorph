@@ -17,11 +17,11 @@ def get_radius_of_influence(a, b, eps, s):
         # s = -0.15
         return polynomial_inner(r, a, b, eps, s)
     # Use root_scalar to find a root, with an initial guess or range
-    if polynomial(0) * polynomial(5) > 0:
+    if polynomial(1e-6) * polynomial(5) > 0:
         print("f(a) and f(b) have the same sign. No root found.")
         return 0
 
-    result = root_scalar(polynomial, bracket=[0, 5], method='brentq')
+    result = root_scalar(polynomial, bracket=[1e-6, 5], method='brentq')
 
     # Display the root
     if result.converged:
