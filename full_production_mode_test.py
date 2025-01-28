@@ -42,6 +42,10 @@ class MainWindow(QMainWindow):
         # VTK Render Widget
         self.vtk_widget = QVTKRenderWindowInteractor(self.frame)
         self.layout.addWidget(self.vtk_widget)
+
+        # Timer for continuous deformation and animated deformation
+        self.timer = QTimer(self)
+        self.animation_timer = QTimer(self)
         
         # Controls
         self.controls_layout = QHBoxLayout()
@@ -119,33 +123,53 @@ class MainWindow(QMainWindow):
         self.num_ring_points_value.textChanged.connect(lambda text: self.num_ring_points_slider.setValue(int(text)))
         # Connect the button to the run_stenosis method
         self.run_stenosis_button.clicked.connect(self.run_stenosis)
-        
-        # To add a third row of buttons, add another QHBoxLayout and add it to the main layout
-        self.controls_layout3 = QHBoxLayout()
+
+        # Third row of buttons
+        # self.controls_layout3 = QHBoxLayout()
+        # self.animated_aneurysm_button = QPushButton("Animated Aneurysm Apply")
+        # self.animated_aneurysm_button.setFixedWidth(200)
+        # self.controls_layout3.addStretch(1)
+        # self.controls_layout3.addWidget(self.animated_aneurysm_button)
+        # self.layout.addLayout(self.controls_layout3)
+        # self.animated_aneurysm_button.clicked.connect(self.run_deformation)
+
+        # To add a fourth row of buttons, add another QHBoxLayout and add it to the main layout
+        self.controls_layout4 = QHBoxLayout()
         # Import Buttons
         self.import_mesh_button = QPushButton("Import Mesh")
         self.import_mesh_button.setFixedWidth(120)
         self.import_mesh_button.clicked.connect(self.import_mesh)
-        self.controls_layout3.addWidget(self.import_mesh_button)
+        self.controls_layout4.addWidget(self.import_mesh_button)
         self.import_centerline_button = QPushButton("Import Centerline")
         self.import_centerline_button.setFixedWidth(150)
         self.import_centerline_button.clicked.connect(self.import_centerline)
-        self.controls_layout3.addWidget(self.import_centerline_button)
+        self.controls_layout4.addWidget(self.import_centerline_button)
         # Save Button
         self.run_save_button = QPushButton("Save")
         self.run_save_button.setFixedWidth(120)
         # to make the button right aligned
-        self.controls_layout3.addStretch(1)
-        self.controls_layout3.addWidget(self.run_save_button)
-        self.layout.addLayout(self.controls_layout3)
+        self.controls_layout4.addStretch(1)
+        self.controls_layout4.addWidget(self.run_save_button)
+        self.layout.addLayout(self.controls_layout4)
         self.run_save_button.clicked.connect(self.save_mesh)
+        # Reverse animation direction button
+        self.reverse_animation_button = QPushButton("Reverse Direction")
+        self.reverse_animation_button.setFixedWidth(130)
+        self.controls_layout4.addWidget(self.reverse_animation_button)
+        self.reverse_animation_button.clicked.connect(self.reverse_animation_direction)
+        # Animated Aneurysm Apply Button
+        self.animated_aneurysm_button = QPushButton("Animated Aneurysm Apply")
+        self.animated_aneurysm_button.setFixedWidth(200)
+        self.controls_layout4.addWidget(self.animated_aneurysm_button)
+        self.animation_timer.timeout.connect(self.update_selected_point)
+        self.animated_aneurysm_button.pressed.connect(self.start_animated_deformation)
+        self.animated_aneurysm_button.released.connect(self.stop_animated_deformation)
 
         # Add continuous aneurysm apply button
         self.continuous_run_button = QPushButton("Continuous Aneurysm Apply")
         self.continuous_run_button.setFixedWidth(200)
         self.controls_layout.addWidget(self.continuous_run_button)
         # Timer for continuous deformation
-        self.timer = QTimer(self)
         self.timer.timeout.connect(self.run_deformation)
         # Connect button press and release events
         self.continuous_run_button.pressed.connect(self.start_continuous_deformation)
@@ -159,7 +183,6 @@ class MainWindow(QMainWindow):
         # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
         # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
         # self.centerline_file = "/home/bohanjeffli/Full_Centerlines.vtp"
-        #######################################################
         ######################## DEMO 1 ########################
         # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
         self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
@@ -215,7 +238,7 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, event):
         # when buttons are pressed focus shifts to PyQt window so key press events are not captured by VTK and needed to be handled here
         if event.key() == Qt.Key.Key_H:
-            self.style.toggle_roi_spheres()
+            self.style.toggle_roi_cylinder()
         elif event.key() == Qt.Key.Key_D:
             # self.start_continuous_deformation()
             pass
@@ -232,6 +255,17 @@ class MainWindow(QMainWindow):
         self.style.deform_mesh_sequential(epsilon, force_scale)
         # self.vtk_widget.GetRenderWindow().Render()
     
+    def update_selected_point(self):
+        # every 1 second, shift the selected force center to the next centerline node by incrementing or decrementing the index
+        self.style.update_selected_point()
+
+    def reverse_animation_direction(self):
+        if self.reverse_animation_button.styleSheet() == "background-color: #d84005;":
+            self.reverse_animation_button.setStyleSheet("background-color: white")
+        else:
+            self.reverse_animation_button.setStyleSheet("background-color: #d84005;")
+        self.style.reverse_animation_direction()
+
     # @profile_func
     def run_stenosis(self):
         if self.vtk_handler is None:
@@ -255,11 +289,19 @@ class MainWindow(QMainWindow):
         self.style.display_centerline_vertices()
 
     def start_continuous_deformation(self):
-            self.timer.start(50)  # Run every 50 milliseconds
+        self.timer.start(50)  # Run every 50 milliseconds
+
+    def start_animated_deformation(self):
+        self.timer.start(50)
+        self.animation_timer.start(100)
 
     def stop_continuous_deformation(self):
         self.timer.stop()
-    
+
+    def stop_animated_deformation(self):
+        self.timer.stop()
+        self.animation_timer.stop()
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()

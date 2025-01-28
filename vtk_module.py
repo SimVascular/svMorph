@@ -60,8 +60,8 @@ class VTKHandler:
 
         self.mesh_actor = vtkActor()
         self.mesh_actor.SetMapper(self.mesh_mapper)
-        self.mesh_actor.GetProperty().SetColor(0.8, 1.0, 1.0)
-        self.mesh_actor.GetProperty().SetOpacity(0.6)
+        # self.mesh_actor.GetProperty().SetColor(1.0, 0.8, 0.8)
+        # self.mesh_actor.GetProperty().SetOpacity(0.6)
         self.mesh_actor.SetPickable(0)
 
         self.centerline_actor = vtkActor()
@@ -76,13 +76,13 @@ class VTKHandler:
         return self.renderer
 
     def get_interactor_style(self):
-        return MouseInteractorStylePP(self.mesh, self.centerline, self.mesh_filename, self.centerline_filename, self.mesh_actor)
+        return MouseInteractorStylePP(self.mesh, self.centerline, self.mesh_filename, self.centerline_filename, self.mesh_actor, self.centerline_actor)
 
     def save_mesh(self, filename):
         write_vtp_file(self.mesh, filename)
 
 class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
-    def __init__(self, mesh, centerline, mesh_filename, centerline_filename, mesh_actor, parent=None):
+    def __init__(self, mesh, centerline, mesh_filename, centerline_filename, mesh_actor, centerline_actor, parent=None):
         super().__init__()
         self.AddObserver("LeftButtonPressEvent", self.left_button_press_event)
         self.AddObserver("KeyPressEvent", self.key_press_event)
@@ -102,18 +102,20 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.mesh_filename = mesh_filename
         self.centerline_filename = centerline_filename
         self.mesh_actor = mesh_actor
+        self.centerline_actor = centerline_actor
         self.selected_points = []
         self.epsilon = 0.2
         self.force_scale = -0.2
         self.radius_of_influence = 0.0
         self.stent_unit_section_halflength = 0.2
         self.roiActors = []
+        self.animation_direction = 1
         self.num_kelvinlet_points = 1 # originally 3
     
     def key_press_event(self, obj, event):
         key = self.GetInteractor().GetKeySym()
         if key == 'h':
-            self.toggle_roi_spheres()
+            self.toggle_roi_cylinder()
         elif key == 'd':
             self.timer_id = self.GetInteractor().CreateRepeatingTimer(100)
         self.OnKeyPress()
@@ -291,7 +293,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         tangent = self.centerline_tangents[pointID]
         rotation_axis = np.cross(default_axis, tangent)
         angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
-        print(f"tangent: {tangent}, orientation: {rotation_axis}, angle: {angle}")
+        # print(f"tangent: {tangent}, orientation: {rotation_axis}, angle: {angle}")
 
         # Create a transform to align the cylinder with the vector (1, 2, 3)
         transform = vtkTransform()
@@ -320,37 +322,75 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         self.roiActors.append(actor)
 
+    def update_highlight_sphere_position(self, pointID):
+        visualization_sphere_actor = self.vertexVisualizationActors[pointID]
+        sphere_center = visualization_sphere_actor.GetMapper().GetInput().GetCenter()
+        # sphere_center_transformed = transform.TransformPoint(sphere_center)
+        
+        highlight_actor = self.redHighlightActors[0]
+        highlight_sphere = highlight_actor.sphereSource
+        highlight_sphere.SetCenter(sphere_center)
+
+        # self.place_radius_of_influence_sphere(position, pointID)
+        if pointID % 10 == 0:
+            self.place_radius_of_influence_cylinder(sphere_center, pointID)
+        
+
     def update_deformation_parameters(self, epsilon, force_scale):
         a = 0.0795774715459
         b = 0.0331572798108
         self.epsilon = epsilon
         self.force_scale = force_scale
         self.radius_of_influence = calculate_radius_of_influence.get_radius_of_influence(a, b, epsilon, force_scale)
+        print(f"Updated epsilon: {epsilon}, force_scale: {force_scale}, radius_of_influence: {self.radius_of_influence}")
         for roi_actor in self.roiActors:
-            roi_sphere = roi_actor.sphereSource
-            roi_sphere.SetRadius(self.radius_of_influence)
+            roi_cylinder = roi_actor.cylinderSource
+            roi_cylinder.SetRadius(self.radius_of_influence)
         self.GetInteractor().GetRenderWindow().Render()
             
-    def toggle_roi_spheres(self):
+    def update_selected_point(self):
+        if len(self.selected_points) == 0:
+            return
+        self.selected_points[0] += self.animation_direction
+        if self.selected_points[0] >= self.centerline.GetNumberOfPoints():
+            self.selected_points[0] = 0
+        elif self.selected_points[0] < 0:
+            self.selected_points[0] = self.centerline.GetNumberOfPoints() - 1
+        self.update_highlight_sphere_position(self.selected_points[0])
+    
+    def reverse_animation_direction(self):
+        self.animation_direction *= -1
+
+    def toggle_roi_cylinder(self):
         for roi_actor in self.roiActors:
             roi_actor.SetVisibility(not roi_actor.GetVisibility())
         self.GetInteractor().GetRenderWindow().Render()
 
-    def display_centerline_vertices(self):
-        points = self.centerline.GetPoints()
-        transform = vtkTransform()
-        # actor_matrix = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActors().GetLastActor().GetMatrix()
-        actor_matrix = self.mesh_actor.GetMatrix()
+    # def display_centerline_vertices(self):
+    #     points = self.centerline.GetPoints()
+    #     transform = vtkTransform()
+    #     # actor_matrix = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActors().GetLastActor().GetMatrix()
+    #     actor_matrix = self.mesh_actor.GetMatrix()
 
+    #     for i in range(points.GetData().GetNumberOfTuples()):
+    #         point = [0.0, 0.0, 0.0]
+    #         points.GetPoint(i, point)
+    #         transformed_point = transform.TransformPoint(point)
+    #         self.place_visualization_sphere(transformed_point, i)
+
+    #     self.mesh_actor.GetProperty().SetOpacity(0.3)
+    #     self.GetInteractor().GetRenderWindow().Render()
+    #     self.jit_warm_up()
+
+    def display_centerline_vertices(self):
+        points = self.centerline_actor.GetMapper().GetInput().GetPoints()
         for i in range(points.GetData().GetNumberOfTuples()):
             point = [0.0, 0.0, 0.0]
             points.GetPoint(i, point)
-            transformed_point = transform.TransformPoint(point)
-            self.place_visualization_sphere(transformed_point, i)
-
+            self.place_visualization_sphere(point, i)
+        
         self.mesh_actor.GetProperty().SetOpacity(0.3)
         self.GetInteractor().GetRenderWindow().Render()
-        self.jit_warm_up()
 
     def update_centerline_vertices(self):
         points = self.centerline.GetPoints()
