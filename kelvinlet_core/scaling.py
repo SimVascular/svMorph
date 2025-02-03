@@ -169,7 +169,7 @@ def get_force_matrix_scale(scale, a, b):
 
 def linear_heaviside(x):
     # abs_x = jnp.abs(x)
-    return 0.5 * (1 + jnp.tanh(10*(jnp.abs(x)-0.2))) * x
+    return 0.5 * (1 + jnp.tanh(300*(jnp.abs(x)-0.2))) * x
 
 def kelvinlets_affine_laplacian(rv, a, b, eps, s):
     # Ensure the input tensor has the correct dimensions

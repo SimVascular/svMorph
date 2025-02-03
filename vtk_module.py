@@ -61,7 +61,7 @@ class VTKHandler:
         self.mesh_actor = vtkActor()
         self.mesh_actor.SetMapper(self.mesh_mapper)
         # self.mesh_actor.GetProperty().SetColor(1.0, 0.8, 0.8)
-        # self.mesh_actor.GetProperty().SetOpacity(0.6)
+        self.mesh_actor.GetProperty().SetOpacity(0.8)
         self.mesh_actor.SetPickable(0)
 
         self.centerline_actor = vtkActor()
@@ -104,6 +104,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.mesh_actor = mesh_actor
         self.centerline_actor = centerline_actor
         self.selected_points = []
+        self.force_center_idx = 0
         self.epsilon = 0.2
         self.force_scale = -0.2
         self.radius_of_influence = 0.0
@@ -111,6 +112,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.roiActors = []
         self.animation_direction = 1
         self.num_kelvinlet_points = 1 # originally 3
+        self.interleave_mode = False
+        self.operation_count = 0
     
     def key_press_event(self, obj, event):
         key = self.GetInteractor().GetKeySym()
@@ -322,19 +325,20 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         self.roiActors.append(actor)
 
-    def update_highlight_sphere_position(self, pointID):
+    def update_highlight_sphere_position(self, idx):
+        pointID = self.selected_points[idx]
         visualization_sphere_actor = self.vertexVisualizationActors[pointID]
         sphere_center = visualization_sphere_actor.GetMapper().GetInput().GetCenter()
         # sphere_center_transformed = transform.TransformPoint(sphere_center)
         
-        highlight_actor = self.redHighlightActors[0]
+        highlight_actor = self.redHighlightActors[idx]
         highlight_sphere = highlight_actor.sphereSource
         highlight_sphere.SetCenter(sphere_center)
 
         # self.place_radius_of_influence_sphere(position, pointID)
-        if pointID % 10 == 0:
+        self.operation_count += 1
+        if self.operation_count % 5 == 0:
             self.place_radius_of_influence_cylinder(sphere_center, pointID)
-        
 
     def update_deformation_parameters(self, epsilon, force_scale):
         a = 0.0795774715459
@@ -356,15 +360,37 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             self.selected_points[0] = 0
         elif self.selected_points[0] < 0:
             self.selected_points[0] = self.centerline.GetNumberOfPoints() - 1
-        self.update_highlight_sphere_position(self.selected_points[0])
+        self.update_highlight_sphere_position(0)
     
+    def interleave_update_selected_points(self):
+        if len(self.selected_points) == 0:
+            return
+        
+        self.update_force_center_idx()
+        self.selected_points[self.force_center_idx] += self.animation_direction * 2
+        self.reverse_animation_direction()
+        
+        if self.selected_points[self.force_center_idx] >= self.centerline.GetNumberOfPoints():
+            self.selected_points[self.force_center_idx] = 0
+        elif self.selected_points[self.force_center_idx] < 0:
+            self.selected_points[self.force_center_idx] = self.centerline.GetNumberOfPoints() - 1
+        
+        self.update_highlight_sphere_position(self.force_center_idx)
+
     def reverse_animation_direction(self):
         self.animation_direction *= -1
+
+    def update_force_center_idx(self):
+        self.force_center_idx = (self.animation_direction - 1) // 2
 
     def toggle_roi_cylinder(self):
         for roi_actor in self.roiActors:
             roi_actor.SetVisibility(not roi_actor.GetVisibility())
         self.GetInteractor().GetRenderWindow().Render()
+
+    def toggle_interleave_mode(self):
+        self.interleave_mode = not self.interleave_mode
+        self.num_kelvinlet_points = 2 if self.interleave_mode else 1
 
     # def display_centerline_vertices(self):
     #     points = self.centerline.GetPoints()
@@ -451,14 +477,14 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         list_of_other_geometry_polydata_input_file_names = []
         list_of_other_geometry_polydata_output_file_names = []
         # to make sure the selected points are in order regardless of picking order
-        force_center_point_id = self.selected_points[0]
+        force_center_point_id = self.selected_points[self.force_center_idx]
         list_of_node_point_indices = self.selected_points
         # area_percent_change = 500
         phi_type = "point"
         model = "test_aneurysm"
         affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
         mu = 1
-        nu = 0.4
+        nu = 0.2 # (0, 0.5), 0.4 originally
         num_time_steps = 1
         self.run_aneyrusm_sequential(
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
@@ -531,6 +557,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # --- Initialization and Parameter Setup ---
         total_start_time = time.time()  # Start total timer
         affine_type = "aneurysm"
+        # nu = 0.1
         a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
         print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
         # --- Load Polydata ---

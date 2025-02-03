@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
         self.slider_value.textChanged.connect(lambda text: [self.area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)])
 
         # Button for showing selectable nodes on the centerline
-        self.show_nodes_button = QPushButton("Select Nodes")
+        self.show_nodes_button = QPushButton("Select Point")
         self.show_nodes_button.setFixedWidth(120)
         self.controls_layout.addWidget(self.show_nodes_button)
         # Button for running the deformation
@@ -152,6 +152,11 @@ class MainWindow(QMainWindow):
         self.controls_layout4.addWidget(self.run_save_button)
         self.layout.addLayout(self.controls_layout4)
         self.run_save_button.clicked.connect(self.save_mesh)
+        # Button to toggle interleave mode
+        self.toggle_interleave_mode_button = QPushButton("Interleave Mode")
+        self.toggle_interleave_mode_button.setFixedWidth(130)
+        self.controls_layout4.addWidget(self.toggle_interleave_mode_button)
+        self.toggle_interleave_mode_button.clicked.connect(self.toggle_interleave_mode)
         # Reverse animation direction button
         self.reverse_animation_button = QPushButton("Reverse Direction")
         self.reverse_animation_button.setFixedWidth(130)
@@ -259,6 +264,9 @@ class MainWindow(QMainWindow):
         # every 1 second, shift the selected force center to the next centerline node by incrementing or decrementing the index
         self.style.update_selected_point()
 
+    def interleave_update_selected_points(self):
+        self.style.interleave_update_selected_points()
+
     def reverse_animation_direction(self):
         if self.reverse_animation_button.styleSheet() == "background-color: #d84005;":
             self.reverse_animation_button.setStyleSheet("background-color: white")
@@ -281,6 +289,18 @@ class MainWindow(QMainWindow):
         # self.vtk_widget.GetRenderWindow().Render()
         # self.ren.Render()
 
+    def toggle_interleave_mode(self):
+        if self.toggle_interleave_mode_button.styleSheet() == "background-color: #d84005;":
+            self.toggle_interleave_mode_button.setStyleSheet("background-color: white")
+        else:
+            self.toggle_interleave_mode_button.setStyleSheet("background-color: #d84005;")
+        if self.style.interleave_mode:
+            self.animation_timer.timeout.disconnect(self.interleave_update_selected_points)
+            self.animation_timer.timeout.connect(self.update_selected_point)
+        else:
+            self.animation_timer.timeout.disconnect(self.update_selected_point)
+            self.animation_timer.timeout.connect(self.interleave_update_selected_points)
+        self.style.toggle_interleave_mode()
 
     def display_centerline_nodes(self):
         print("Please select three centerline nodes to generate aneurysm.")
