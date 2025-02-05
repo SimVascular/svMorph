@@ -58,6 +58,7 @@ def compute_householder_matrices(cross_section_normals):
     # print("householder_matrices=", householder_matrices)
     # print("to check each householder matrix is orthogonal, we need to check if the dot product of each householder matrix with its transpose is the identity matrix")
     # print("dot product of each householder matrix with its transpose=", jnp.einsum('ijk,ikl->ijl', householder_matrices, jnp.transpose(householder_matrices, axes=(0, 2, 1))))
+    # assert jnp.allclose(jnp.einsum('ijk,ikl->ijl', householder_matrices, jnp.transpose(householder_matrices, axes=(0, 2, 1))), jnp.eye(3), atol=1e-3)
     return householder_matrices
 
 @jx.jit
@@ -168,15 +169,27 @@ def get_force_matrix_scale(scale, a, b):
     return scale * (2 / 5) / (2 * b - a)
 
 def linear_heaviside(x):
-    # abs_x = jnp.abs(x)
-    return 0.5 * (1 + jnp.tanh(300*(jnp.abs(x)-0.2))) * x
+    alpha = 300
+    w = 0.2
+    return 0.5 * (1 + jnp.tanh(alpha*(jnp.abs(x)-w))) * x
+
+def regularize_origin(r):
+    h = 100
+    gamma_origin = 70
+    r_0 = 0.2
+    return h * (1 - 1 / (1 + jnp.exp(-gamma_origin * (r - r_0))))
+
+def regularize_radius(r):
+    gamma_singularity = 0.001
+    r_1 = 0.5
+    return regularize_origin(r) + r + jnp.sqrt((r - r_1)**2 + gamma_singularity**2) / 2
 
 def kelvinlets_affine_laplacian(rv, a, b, eps, s):
     # Ensure the input tensor has the correct dimensions
     print(f"rv shape: {rv.shape}")
-    assert rv.ndim == 3
+    # assert rv.ndim == 3
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
-    assert ndims == 3
+    # assert ndims == 3
     print(f"num_mesh_points: {num_mesh_points}, num_kelvinlet_points: {num_kelvinlet_points}, ndims: {ndims}")
 
     # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
@@ -185,23 +198,27 @@ def kelvinlets_affine_laplacian(rv, a, b, eps, s):
     rz = linear_heaviside(rz)
     rv = rv.at[:, :, 2].set(rz)
     # Compute re with epsilon added
-    re = jnp.sqrt(rx**2 + ry**2 + rz**2 + eps**2)
     r = jnp.sqrt(rx**2 + ry**2 + rz**2)
-    assert re.shape == (num_mesh_points, num_kelvinlet_points)
+    r = regularize_radius(r)
+    print("r[21611:21613]", r[21611:21613])
+    r2 = r**2
+    re = jnp.sqrt(r2 + eps**2)
+    # assert re.shape == (num_mesh_points, num_kelvinlet_points)
     # Expand re and tile to match the dimensions of rv
     re = jnp.expand_dims(re, 2)
-    r = jnp.expand_dims(r, 2)
+    # r = jnp.expand_dims(r, 2)
+    r2 = jnp.expand_dims(r2, 2)
     # Compute powers of re for the displacement formula
     re2 = re**2
     re7 = re**7
     re9 = re**9
-    r2 = r**2
     # Calculate displacements
     # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
     # displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
     # displacements = ((-105*a*eps**4 / (2*re9)) - (b*(4*re2 - 5*(5*eps**2+2*r2))/re7) + (3*b*(4*re2-7*(7*eps**2+2*r2))*r2/re9) + (12*b*(7*eps**2+2*r2)/re7)) * s * rv
     displacements = ((b*(109*eps**2+34*r2-4*re2)/re7) + ((3*b*(4*re2-49*eps**2-14*r2)*r2 - 52.5*a*eps**4)/re9)) * s * rv
-    assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
+    # assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
+    # print("displacements[21611:21613]", displacements[21611:21613])
     return displacements
 
 def kelvinlets_affine_v3(rv, a, b, eps, s):
@@ -407,9 +424,6 @@ def get_affine_laplacian_displacements_inner(data_points, rotation_matrices, xs,
     # Compute Kelvinlet displacements
     displacement_local = kelvinlets_affine_laplacian(centerline_aligned_rv, a, b, eps, s)
     displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
-    # rv has shape (N, num_kelvinlet_points, 3)
-    # rotation_matrices has shape (num_kelvinlet_points, 3, 3)
-    # print("rotation matrix = ", rotation_matrices)
     # Aggregate and normalize
     displacement = jnp.sum(displacement_global, axis=1)
     # Scale if required
@@ -559,13 +573,24 @@ def get_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_cente
     kelvinlet_points_normals = jnp.array([force_center_normal])
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
     # Call the JIT-compiled function
-    displacement = get_affine_laplacian_displacements_inner(
+    displacements = get_affine_laplacian_displacements_inner(
         data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
     )
+    # print("displacement: ", displacements)
+    # print("to see which entry of displacement has a large numerical entry: ")
+    # large_entries = jnp.where(jnp.abs(displacements) > 1)
+    # print("large entries: ", large_entries)
+    # print("the magnitude of the displacement is: ", jnp.linalg.norm(displacements))
     # displacement = get_affine_displacements_inner(
     #     data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
     # ) / num_kelvinlet_points
-    return displacement
+    # xs = jnp.expand_dims(centerline_points, 1)
+    # xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
+    # print("centerline xs shape: ", xs.shape)
+    # centerline_displacements = get_affine_displacements_inner(
+    #     centerline_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+    # )
+    return displacements#, centerline_displacements
 
 def get_affine_displacements_v2_no_timer(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor):
     assert mesh_type in {"surface", "centerline"} or mesh_type.startswith("other_geometry_")

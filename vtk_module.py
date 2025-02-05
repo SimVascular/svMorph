@@ -2,10 +2,12 @@ import vtkmodules.vtkRenderingOpenGL2
 from vtkmodules.vtkCommonColor import vtkNamedColors
 from vtkmodules.vtkCommonTransforms import vtkTransform
 from vtkmodules.vtkFiltersSources import vtkSphereSource, vtkCylinderSource
+from vtkmodules.vtkFiltersCore import vtkGlyph3D
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import (
     vtkActor,
     vtkPolyDataMapper,
+    vtkPointPicker,
     vtkRenderWindowInteractor,
     vtkRenderer,
     vtkPropPicker
@@ -66,6 +68,7 @@ class VTKHandler:
 
         self.centerline_actor = vtkActor()
         self.centerline_actor.SetMapper(self.centerline_mapper)
+        self.centerline_actor.SetPickable(0)
 
         self.renderer = vtkRenderer()
         self.renderer.AddActor(self.mesh_actor)
@@ -105,14 +108,15 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.centerline_actor = centerline_actor
         self.selected_points = []
         self.force_center_idx = 0
+        self.glyph_actor = None
         self.epsilon = 0.2
         self.force_scale = -0.2
         self.radius_of_influence = 0.0
         self.stent_unit_section_halflength = 0.2
         self.roiActors = []
         self.animation_direction = 1
-        self.num_kelvinlet_points = 1 # originally 3
-        self.interleave_mode = False
+        self.num_kelvinlet_points = 2 # originally 3
+        self.interleave_mode = True
         self.operation_count = 0
     
     def key_press_event(self, obj, event):
@@ -132,49 +136,106 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             self.GetInteractor().DestroyTimer(self.timer_id)
         self.OnKeyRelease()
 
+    # def left_button_press_event(self, obj, event):
+    #     click_pos = self.GetInteractor().GetEventPosition()
+    #     picker = self.GetInteractor().GetPicker()
+    #     picker.Pick(click_pos[0], click_pos[1], 0, self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer())
+    #     pickedActor = picker.GetActor()
+
+    #     transform = vtkTransform()
+    #     actor_matrix = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActors().GetLastActor().GetMatrix()
+    #     transform.SetMatrix(actor_matrix)
+
+    #     if pickedActor in self.vertexVisualizationActors:
+    #         print(f"Picked actor centerpointID: {pickedActor.centerpointID}")
+    #         pointID = pickedActor.centerpointID
+    #         self.selected_points.append(pointID)
+    #         sphere_center = pickedActor.GetMapper().GetInput().GetCenter()
+    #         sphere_center_transformed = transform.TransformPoint(sphere_center)
+    #         self.place_highlight_sphere(sphere_center_transformed, pointID)
+    #         if len(self.selected_points) > self.num_kelvinlet_points:
+    #             self.selected_points.pop(0)
+    #             # remove the oldest highlight sphere
+    #             self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.redHighlightActors[0])
+    #             self.redHighlightActors.pop(0)
+    #             self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.roiActors[0])
+    #             self.roiActors.pop(0)
+    #     self.OnLeftButtonDown()
+
     def left_button_press_event(self, obj, event):
         click_pos = self.GetInteractor().GetEventPosition()
-        picker = self.GetInteractor().GetPicker()
-        picker.Pick(click_pos[0], click_pos[1], 0, self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer())
-        pickedActor = picker.GetActor()
+        renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
 
-        transform = vtkTransform()
-        actor_matrix = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActors().GetLastActor().GetMatrix()
-        transform.SetMatrix(actor_matrix)
+        picker = vtkPointPicker()
+        picker.SetTolerance(0.01)
+        picker.PickFromListOn()
+        picker.AddPickList(self.centerline_actor)
+        picker.Pick(click_pos[0], click_pos[1], 0, renderer)
+        pointID = picker.GetPointId()
 
-        if pickedActor in self.vertexVisualizationActors:
-            print(f"Picked actor centerpointID: {pickedActor.centerpointID}")
-            pointID = pickedActor.centerpointID
+        if pointID >= 0:
             self.selected_points.append(pointID)
-            sphere_center = pickedActor.GetMapper().GetInput().GetCenter()
-            sphere_center_transformed = transform.TransformPoint(sphere_center)
-            self.place_highlight_sphere(sphere_center_transformed, pointID)
+            polydata = self.centerline_actor.GetMapper().GetInput()
+            sphere_center = [0.0, 0.0, 0.0]
+            polydata.GetPoint(pointID, sphere_center)
+            self.place_highlight_sphere(sphere_center, pointID)
+            
             if len(self.selected_points) > self.num_kelvinlet_points:
                 self.selected_points.pop(0)
-                # remove the oldest highlight sphere
-                self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.redHighlightActors[0])
+                renderer.RemoveActor(self.redHighlightActors[0])
                 self.redHighlightActors.pop(0)
-                self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.roiActors[0])
+                renderer.RemoveActor(self.roiActors[0])
                 self.roiActors.pop(0)
         self.OnLeftButtonDown()
-        
-    def place_visualization_sphere(self, position, pointID):
-        sphere = vtkSphereSource()
-        sphere.SetCenter(position)
-        sphere.SetRadius(0.03)
 
-        mapper = vtkPolyDataMapper()
-        mapper.SetInputConnection(sphere.GetOutputPort())
+    def display_centerline_vertices(self):
+        polydata = self.centerline_actor.GetMapper().GetInput()
+        points = polydata.GetPoints()
+        num_points = points.GetNumberOfPoints()
+        print(f"We got here, and Number of points in centerline: {num_points}")
 
-        actor = vtkmodules.vtkRenderingCore.vtkActor()
-        actor.SetMapper(mapper)
-        actor.GetProperty().SetColor(0.0, 1.0, 0.0)
-        actor.centerpointID = pointID
-        actor.sphereSource = sphere  
+        sphereSource = vtkSphereSource()
+        sphereSource.SetRadius(0.02)  # Adjust radius as needed.
+        sphereSource.SetThetaResolution(4)
+        sphereSource.SetPhiResolution(4)
+        sphereSource.Update()
 
-        ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
-        ren.AddActor(actor)
-        self.vertexVisualizationActors.append(actor)
+        glyphFilter = vtkGlyph3D()
+        glyphFilter.SetSourceConnection(sphereSource.GetOutputPort())
+        glyphFilter.SetInputData(polydata)
+        # Disable data-driven scaling if you want uniform sphere sizes.
+        glyphFilter.SetScaleModeToDataScalingOff()
+        glyphFilter.Update()
+
+        glyphMapper = vtkPolyDataMapper()
+        glyphMapper.SetInputConnection(glyphFilter.GetOutputPort())
+
+        glyphActor = vtkActor()
+        glyphActor.SetMapper(glyphMapper)
+        glyphActor.GetProperty().SetColor(0.0, 1.0, 0.0)
+        self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(glyphActor)
+        self.glyph_actor = glyphActor
+        self.mesh_actor.GetProperty().SetOpacity(0.3)
+        self.centerline_actor.SetPickable(1)
+        self.GetInteractor().GetRenderWindow().Render()
+
+    # def place_visualization_sphere(self, position, pointID):
+    #     sphere = vtkSphereSource()
+    #     sphere.SetCenter(position)
+    #     sphere.SetRadius(0.03)
+
+    #     mapper = vtkPolyDataMapper()
+    #     mapper.SetInputConnection(sphere.GetOutputPort())
+
+    #     actor = vtkmodules.vtkRenderingCore.vtkActor()
+    #     actor.SetMapper(mapper)
+    #     actor.GetProperty().SetColor(0.0, 1.0, 0.0)
+    #     actor.centerpointID = pointID
+    #     actor.sphereSource = sphere  
+
+    #     ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+    #     ren.AddActor(actor)
+    #     self.vertexVisualizationActors.append(actor)
 
     def place_highlight_sphere(self, position, pointID):
         sphere = vtkSphereSource()
@@ -327,9 +388,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
     def update_highlight_sphere_position(self, idx):
         pointID = self.selected_points[idx]
-        visualization_sphere_actor = self.vertexVisualizationActors[pointID]
-        sphere_center = visualization_sphere_actor.GetMapper().GetInput().GetCenter()
-        # sphere_center_transformed = transform.TransformPoint(sphere_center)
+        polydata = self.centerline_actor.GetMapper().GetInput()
+        sphere_center = [0.0, 0.0, 0.0]
+        polydata.GetPoint(pointID, sphere_center)
         
         highlight_actor = self.redHighlightActors[idx]
         highlight_sphere = highlight_actor.sphereSource
@@ -408,27 +469,29 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     #     self.GetInteractor().GetRenderWindow().Render()
     #     self.jit_warm_up()
 
-    def display_centerline_vertices(self):
-        points = self.centerline_actor.GetMapper().GetInput().GetPoints()
-        for i in range(points.GetData().GetNumberOfTuples()):
-            point = [0.0, 0.0, 0.0]
-            points.GetPoint(i, point)
-            self.place_visualization_sphere(point, i)
+    # def display_centerline_vertices(self):
+    #     points = self.centerline_actor.GetMapper().GetInput().GetPoints()
+    #     print(f"We got hereeeeee, anddddd Number of points in centerline: {points.GetNumberOfPoints()}")
+    #     for i in range(points.GetData().GetNumberOfTuples()):
+    #         point = [0.0, 0.0, 0.0]
+    #         points.GetPoint(i, point)
+    #         print(f"Point {i}: {point}")
+    #         self.place_visualization_sphere(point, i)
         
-        self.mesh_actor.GetProperty().SetOpacity(0.3)
-        self.GetInteractor().GetRenderWindow().Render()
+    #     self.mesh_actor.GetProperty().SetOpacity(0.3)
+    #     self.GetInteractor().GetRenderWindow().Render()
 
     def update_centerline_vertices(self):
-        points = self.centerline.GetPoints()
-        transform = vtkTransform()
-        actor_matrix = self.mesh_actor.GetMatrix()
-        transform.SetMatrix(actor_matrix)
+        # points = self.centerline.GetPoints()
+        # transform = vtkTransform()
+        # actor_matrix = self.mesh_actor.GetMatrix()
+        # transform.SetMatrix(actor_matrix)
 
-        for i in range(points.GetData().GetNumberOfTuples()):
-            point = [0.0, 0.0, 0.0]
-            points.GetPoint(i, point)
-            transformed_point = transform.TransformPoint(point)
-            self.vertexVisualizationActors[i].sphereSource.SetCenter(transformed_point)
+        # for i in range(points.GetData().GetNumberOfTuples()):
+        #     point = [0.0, 0.0, 0.0]
+        #     points.GetPoint(i, point)
+            # transformed_point = transform.TransformPoint(point)
+            # self.vertexVisualizationActors[i].sphereSource.SetCenter(transformed_point)
         
         for highlight_actor in self.redHighlightActors:
             highlight_sphere = highlight_actor.sphereSource
@@ -605,6 +668,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         displacement_start_time = time.time()
         simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
         surface_polydata = common.update_polydata_with_points(surface_polydata, simulation_data, "surface")
+        # simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
+        # centerline_polydata = common.update_polydata_with_points(centerline_polydata, simulation_data, "centerline")
         print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
         total_simulation_time = time.time() - total_start_time
         print(f"Total simulation time: {total_simulation_time:.4f} seconds")

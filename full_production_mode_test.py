@@ -155,6 +155,7 @@ class MainWindow(QMainWindow):
         # Button to toggle interleave mode
         self.toggle_interleave_mode_button = QPushButton("Interleave Mode")
         self.toggle_interleave_mode_button.setFixedWidth(130)
+        self.toggle_interleave_mode_button.setStyleSheet("background-color: #d84005;")
         self.controls_layout4.addWidget(self.toggle_interleave_mode_button)
         self.toggle_interleave_mode_button.clicked.connect(self.toggle_interleave_mode)
         # Reverse animation direction button
@@ -166,7 +167,6 @@ class MainWindow(QMainWindow):
         self.animated_aneurysm_button = QPushButton("Animated Aneurysm Apply")
         self.animated_aneurysm_button.setFixedWidth(200)
         self.controls_layout4.addWidget(self.animated_aneurysm_button)
-        self.animation_timer.timeout.connect(self.update_selected_point)
         self.animated_aneurysm_button.pressed.connect(self.start_animated_deformation)
         self.animated_aneurysm_button.released.connect(self.stop_animated_deformation)
 
@@ -179,6 +179,7 @@ class MainWindow(QMainWindow):
         # Connect button press and release events
         self.continuous_run_button.pressed.connect(self.start_continuous_deformation)
         self.continuous_run_button.released.connect(self.stop_continuous_deformation)
+        self.animation_timer.timeout.connect(self.interleave_update_selected_points)
 
         # VTK Setup
         self.vtk_interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
@@ -228,6 +229,8 @@ class MainWindow(QMainWindow):
 
         self.ren = self.vtk_handler.get_renderer()
         self.ren.SetBackground(1, 1, 1)
+        if self.vtk_widget.GetRenderWindow().GetRenderers().GetNumberOfItems() > 0:
+            self.vtk_widget.GetRenderWindow().GetRenderers().RemoveAllItems()
         self.vtk_widget.GetRenderWindow().AddRenderer(self.ren)
 
         self.style = self.vtk_handler.get_interactor_style()
