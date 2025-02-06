@@ -136,6 +136,7 @@ def define_nodes_affine(data, list_of_node_point_indices):
     return data
 
 def add_node_data_to_centerline_polydata_affine(data, centerline_polydata):
+    # TODO: this can be potentially deprecated as it is not useful anymore
     num_centerline_points = data["points"]["centerline"].shape[0]
     # Create a VTK array directly to store node information
     is_node = vtk.vtkIntArray()
@@ -174,9 +175,10 @@ def linear_heaviside(x):
     return 0.5 * (1 + jnp.tanh(alpha*(jnp.abs(x)-w))) * x
 
 def regularize_origin(r):
+    return 0
     h = 100
-    gamma_origin = 70
-    r_0 = 0.2
+    gamma_origin = 500
+    r_0 = 0
     return h * (1 - 1 / (1 + jnp.exp(-gamma_origin * (r - r_0))))
 
 def regularize_radius(r):

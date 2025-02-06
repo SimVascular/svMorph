@@ -26,6 +26,7 @@ import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk_module import VTKHandler
 from PyQt6.QtCore import QTimer
+import math
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -49,6 +50,7 @@ class MainWindow(QMainWindow):
         
         # Controls
         self.controls_layout = QHBoxLayout()
+        '''
         # Slider's label
         self.slider_label = QLabel("Force Scale:")
         self.controls_layout.addWidget(self.slider_label)
@@ -64,6 +66,27 @@ class MainWindow(QMainWindow):
         self.controls_layout.addWidget(self.slider_value)
         self.area_slider.valueChanged.connect(lambda value: [self.slider_value.setText(f"{value / 100.0}"), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)])
         self.slider_value.textChanged.connect(lambda text: [self.area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)])
+        '''
+        # --- UI Setup ---
+        # Slider's label
+        self.slider_label = QLabel("Force Scale:")
+        self.controls_layout.addWidget(self.slider_label)
+
+        # Slider for the area adjustment (using a nonlinear mapping)
+        self.area_slider = QSlider(Qt.Orientation.Horizontal)
+        self.area_slider.setRange(-1000, 1000)  # Underlying slider range
+        # Initialize to a value that corresponds to 0.2 (for example)
+        self.area_slider.setValue(self.force_scale_value_to_slider(0.2))
+        self.controls_layout.addWidget(self.area_slider)
+        # Display the slider value in a QLineEdit (to show the float value)
+        self.slider_value = QLineEdit()
+        # Set the initial text using the mapping function (format to three decimals)
+        self.slider_value.setText(f"{self.force_scale_slider_to_value(self.area_slider.value()):.4f}")
+        self.slider_value.setFixedWidth(50)
+        # Connect signals to the handlers.
+        self.area_slider.valueChanged.connect(self.on_force_scale_slider_change)
+        self.slider_value.textChanged.connect(self.on_force_scale_text_change)
+        self.controls_layout.addWidget(self.slider_value)
 
         # Button for showing selectable nodes on the centerline
         self.show_nodes_button = QPushButton("Select Point")
@@ -94,8 +117,8 @@ class MainWindow(QMainWindow):
         self.stenosis_slider_value = QLineEdit()
         self.stenosis_slider_value.setText(f"{self.stenosis_area_slider.value() / 100.0}")
         self.stenosis_slider_value.setFixedWidth(50)
-        self.stenosis_area_slider.valueChanged.connect(lambda value: [self.stenosis_slider_value.setText(f"{value / 100.0}"), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)])
-        self.stenosis_slider_value.textChanged.connect(lambda text: [self.stenosis_area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)])
+        self.stenosis_area_slider.valueChanged.connect(lambda value: [self.stenosis_slider_value.setText(f"{value / 100.0}"), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
+        self.stenosis_slider_value.textChanged.connect(lambda text: [self.stenosis_area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
         self.controls_layout2.addWidget(self.stenosis_slider_value)
         
         self.num_ring_points_label = QLabel("Num Ring Points:")
@@ -155,7 +178,7 @@ class MainWindow(QMainWindow):
         # Button to toggle interleave mode
         self.toggle_interleave_mode_button = QPushButton("Interleave Mode")
         self.toggle_interleave_mode_button.setFixedWidth(130)
-        self.toggle_interleave_mode_button.setStyleSheet("background-color: #d84005;")
+        # self.toggle_interleave_mode_button.setStyleSheet("background-color: #d84005;")
         self.controls_layout4.addWidget(self.toggle_interleave_mode_button)
         self.toggle_interleave_mode_button.clicked.connect(self.toggle_interleave_mode)
         # Reverse animation direction button
@@ -241,7 +264,8 @@ class MainWindow(QMainWindow):
         self.vtk_interactor.Initialize()
         self.vtk_interactor.Start()
 
-        self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.area_slider.value() / 100.0)
+        self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))
+        self.toggle_interleave_mode_button.setStyleSheet("background-color: #d84005;")
 
     def keyPressEvent(self, event):
         # when buttons are pressed focus shifts to PyQt window so key press events are not captured by VTK and needed to be handled here
@@ -253,7 +277,7 @@ class MainWindow(QMainWindow):
 
     def run_deformation(self):
         # area_percent_change = self.area_slider.value()
-        force_scale = - self.area_slider.value() / 100.0
+        force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
         # print(f"Running deformation with area percent change: {area_percent_change}")
         print(f"Running stent with force scale: {force_scale}")
         # epsilon = 10 ** (-self.stenosis_area_slider.value()) # slider value 0 or 1 works well here
@@ -298,16 +322,16 @@ class MainWindow(QMainWindow):
         else:
             self.toggle_interleave_mode_button.setStyleSheet("background-color: #d84005;")
         if self.style.interleave_mode:
-            self.animation_timer.timeout.disconnect(self.interleave_update_selected_points)
+            self.animation_timer.timeout.disconnect()
             self.animation_timer.timeout.connect(self.update_selected_point)
         else:
-            self.animation_timer.timeout.disconnect(self.update_selected_point)
+            self.animation_timer.timeout.disconnect()
             self.animation_timer.timeout.connect(self.interleave_update_selected_points)
         self.style.toggle_interleave_mode()
 
     def display_centerline_nodes(self):
         print("Please select three centerline nodes to generate aneurysm.")
-        force_scale = - self.area_slider.value() / 100.0
+        force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
         epsilon = self.stenosis_area_slider.value() / 100.0
         self.style.display_centerline_vertices()
 
@@ -324,6 +348,63 @@ class MainWindow(QMainWindow):
     def stop_animated_deformation(self):
         self.timer.stop()
         self.animation_timer.stop()
+    
+    def on_force_scale_slider_change(self, raw_value):
+        """
+        Called when the slider is moved. Converts the slider’s raw integer value
+        to the nonlinearly mapped float value, updates the text display, and calls
+        update_deformation_parameters() accordingly.
+        """
+        float_value = self.force_scale_slider_to_value(raw_value)
+        self.slider_value.setText(f"{float_value:.4f}")
+        # Assuming self.stenosis_area_slider exists, convert its value similarly:
+        stenosis_value = self.stenosis_area_slider.value() / 100.0
+        self.style.update_deformation_parameters(stenosis_value, -float_value)
+
+    def on_force_scale_text_change(self, text):
+        """
+        Called when the user types a new value into the QLineEdit.
+        Parses the float value, converts it to the corresponding slider value,
+        and updates the slider and deformation parameters.
+        """
+        try:
+            # Convert entered text to float
+            new_value = float(text)
+        except ValueError:
+            # If parsing fails, do nothing.
+            return
+        new_slider_val = self.force_scale_value_to_slider(new_value)
+        self.area_slider.setValue(new_slider_val)
+        # Again, update the deformation parameters.
+        stenosis_value = self.stenosis_area_slider.value() / 100.
+        self.style.update_deformation_parameters(stenosis_value, -new_value)
+
+    @staticmethod
+    def force_scale_slider_to_value(slider_val):
+        """
+        Converts the raw slider value (from -1000 to 1000) into the
+        actual float value using a 7th degree polynomial mapping.
+        """
+        # Normalize slider value to [-1, 1]
+        normalized = slider_val / 1000.0
+        # Map nonlinearly. Near zero, changes are tiny;
+        # at the extremes, the full range (10) is reached.
+        mapped = math.copysign((abs(normalized) ** 7), normalized) * 10.0
+        return mapped
+
+    @staticmethod
+    def force_scale_value_to_slider(value):
+        """
+        Converts the displayed float value back to the slider integer value.
+        This is the inverse of the slider_to_value() function.
+        """
+        # To invert: if value = sign(x)*|x|^7*10, then
+        # x = sign(value)* (|value|/10)^(1/7) and slider value = x * 1000.
+        if value == 0:
+            normalized = 0.0
+        else:
+            normalized = math.copysign((abs(value) / 10.0) ** (1.0 / 7), value)
+        return int(normalized * 1000)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

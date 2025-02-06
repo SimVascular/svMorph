@@ -113,7 +113,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.force_scale = -0.2
         self.radius_of_influence = 0.0
         self.stent_unit_section_halflength = 0.2
-        self.roiActors = []
+        self.roi_actors = []
+        self.roi_visible = True
         self.animation_direction = 1
         self.num_kelvinlet_points = 2 # originally 3
         self.interleave_mode = True
@@ -158,8 +159,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     #             # remove the oldest highlight sphere
     #             self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.redHighlightActors[0])
     #             self.redHighlightActors.pop(0)
-    #             self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.roiActors[0])
-    #             self.roiActors.pop(0)
+    #             self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().RemoveActor(self.roi_actors[0])
+    #             self.roi_actors.pop(0)
     #     self.OnLeftButtonDown()
 
     def left_button_press_event(self, obj, event):
@@ -184,8 +185,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
                 self.selected_points.pop(0)
                 renderer.RemoveActor(self.redHighlightActors[0])
                 self.redHighlightActors.pop(0)
-                renderer.RemoveActor(self.roiActors[0])
-                self.roiActors.pop(0)
+                renderer.RemoveActor(self.roi_actors[0])
+                self.roi_actors.pop(0)
         self.OnLeftButtonDown()
 
     def display_centerline_vertices(self):
@@ -195,7 +196,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         print(f"We got here, and Number of points in centerline: {num_points}")
 
         sphereSource = vtkSphereSource()
-        sphereSource.SetRadius(0.02)  # Adjust radius as needed.
+        sphereSource.SetRadius(0.01)  # Adjust radius as needed.
         sphereSource.SetThetaResolution(4)
         sphereSource.SetPhiResolution(4)
         sphereSource.Update()
@@ -240,7 +241,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def place_highlight_sphere(self, position, pointID):
         sphere = vtkSphereSource()
         sphere.SetCenter(position)
-        sphere.SetRadius(0.06)
+        sphere.SetRadius(0.04)
 
         mapper = vtkPolyDataMapper()
         mapper.SetInputConnection(sphere.GetOutputPort())
@@ -343,7 +344,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.AddActor(actor)
         
-        self.roiActors.append(actor)
+        self.roi_actors.append(actor)
 
     def place_radius_of_influence_cylinder(self, position, pointID):
         cylinder = vtkCylinderSource()
@@ -383,8 +384,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.AddActor(actor)
-        
-        self.roiActors.append(actor)
+
+        actor.SetVisibility(self.roi_visible)
+        self.roi_actors.append(actor)
 
     def update_highlight_sphere_position(self, idx):
         pointID = self.selected_points[idx]
@@ -402,13 +404,13 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             self.place_radius_of_influence_cylinder(sphere_center, pointID)
 
     def update_deformation_parameters(self, epsilon, force_scale):
-        a = 0.0795774715459
+        a = 0.0795774715459 # TODO: dont hard code this lol
         b = 0.0331572798108
         self.epsilon = epsilon
         self.force_scale = force_scale
         self.radius_of_influence = calculate_radius_of_influence.get_radius_of_influence(a, b, epsilon, force_scale)
         print(f"Updated epsilon: {epsilon}, force_scale: {force_scale}, radius_of_influence: {self.radius_of_influence}")
-        for roi_actor in self.roiActors:
+        for roi_actor in self.roi_actors:
             roi_cylinder = roi_actor.cylinderSource
             roi_cylinder.SetRadius(self.radius_of_influence)
         self.GetInteractor().GetRenderWindow().Render()
@@ -445,13 +447,25 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.force_center_idx = (self.animation_direction - 1) // 2
 
     def toggle_roi_cylinder(self):
-        for roi_actor in self.roiActors:
+        self.roi_visible = not self.roi_visible
+        for roi_actor in self.roi_actors:
             roi_actor.SetVisibility(not roi_actor.GetVisibility())
         self.GetInteractor().GetRenderWindow().Render()
 
     def toggle_interleave_mode(self):
         self.interleave_mode = not self.interleave_mode
         self.num_kelvinlet_points = 2 if self.interleave_mode else 1
+        if self.interleave_mode:
+            self.num_kelvinlet_points = 2
+        else:
+            self.num_kelvinlet_points = 1
+            self.selected_points.pop(0)
+            renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+            renderer.RemoveActor(self.redHighlightActors[0])
+            self.redHighlightActors.pop(0)
+            renderer.RemoveActor(self.roi_actors[0])
+            self.roi_actors.pop(0)
+            self.GetInteractor().GetRenderWindow().Render()
 
     # def display_centerline_vertices(self):
     #     points = self.centerline.GetPoints()
@@ -638,9 +652,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
         
         # --- Initialize Centerline Data ---
-        init_centerline_start_time = time.time()
-        centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(simulation_data, centerline_polydata)
-        print(f"Time for setting initial centerline data: {time.time() - init_centerline_start_time:.4f} seconds")
+        # init_centerline_start_time = time.time()
+        # centerline_polydata = scaling.add_node_data_to_centerline_polydata_affine(simulation_data, centerline_polydata)
+        # print(f"Time for setting initial centerline data: {time.time() - init_centerline_start_time:.4f} seconds")
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
         calc_displacement_start_time = time.time()
@@ -661,6 +675,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         eps = affine_params["eps"][model] * original_radius
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         print("eps = ", eps, "force_scale = ", force_scale)
+        # , centerline_displacements
         surface_displacements = scaling.get_displacements(simulation_data, a, b, eps, force_scale, None, normal)
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         
