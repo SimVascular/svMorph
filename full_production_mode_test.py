@@ -175,6 +175,11 @@ class MainWindow(QMainWindow):
         self.controls_layout4.addWidget(self.run_save_button)
         self.layout.addLayout(self.controls_layout4)
         self.run_save_button.clicked.connect(self.save_mesh)
+        # Button to toggle camera locking
+        self.toggle_camera_lock_button = QPushButton("Camera Lock")
+        self.toggle_camera_lock_button.setFixedWidth(120)
+        self.controls_layout4.addWidget(self.toggle_camera_lock_button)
+        self.toggle_camera_lock_button.clicked.connect(self.toggle_camera_lock)
         # Button to toggle interleave mode
         self.toggle_interleave_mode_button = QPushButton("Interleave Mode")
         self.toggle_interleave_mode_button.setFixedWidth(130)
@@ -266,6 +271,7 @@ class MainWindow(QMainWindow):
 
         self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))
         self.toggle_interleave_mode_button.setStyleSheet("background-color: #d84005;")
+        self.toggle_camera_lock_button.setStyleSheet("background-color: white")
 
     def keyPressEvent(self, event):
         # when buttons are pressed focus shifts to PyQt window so key press events are not captured by VTK and needed to be handled here
@@ -328,6 +334,13 @@ class MainWindow(QMainWindow):
             self.animation_timer.timeout.disconnect()
             self.animation_timer.timeout.connect(self.interleave_update_selected_points)
         self.style.toggle_interleave_mode()
+    
+    def toggle_camera_lock(self):
+        if self.toggle_camera_lock_button.styleSheet() == "background-color: #d84005;":
+            self.toggle_camera_lock_button.setStyleSheet("background-color: white")
+        else:
+            self.toggle_camera_lock_button.setStyleSheet("background-color: #d84005;")
+        self.style.toggle_camera_lock()
 
     def display_centerline_nodes(self):
         print("Please select three centerline nodes to generate aneurysm.")

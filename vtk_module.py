@@ -114,11 +114,14 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.radius_of_influence = 0.0
         self.stent_unit_section_halflength = 0.2
         self.roi_actors = []
+        self.stent_actors = []
         self.roi_visible = True
         self.animation_direction = 1
         self.num_kelvinlet_points = 2 # originally 3
         self.interleave_mode = True
         self.operation_count = 0
+        self.camera_lock = False
+        self.previous_focal = [0.0, 0.0, 0.0]
     
     def key_press_event(self, obj, event):
         key = self.GetInteractor().GetKeySym()
@@ -179,6 +182,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             polydata = self.centerline_actor.GetMapper().GetInput()
             sphere_center = [0.0, 0.0, 0.0]
             polydata.GetPoint(pointID, sphere_center)
+            self.operation_count = 0
             self.place_highlight_sphere(sphere_center, pointID)
             
             if len(self.selected_points) > self.num_kelvinlet_points:
@@ -257,7 +261,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         ren.AddActor(actor)
         self.redHighlightActors.append(actor)
 
-        # self.place_radius_of_influence_sphere(position, pointID)
+        self.lock_camera(position)
         self.place_radius_of_influence_cylinder(position, pointID)
 
     def jit_warm_up(self):
@@ -388,7 +392,49 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         actor.SetVisibility(self.roi_visible)
         self.roi_actors.append(actor)
 
-    def update_highlight_sphere_position(self, idx):
+    def place_stent_cylinder(self, position, pointID):
+        cylinder = vtkCylinderSource()
+        # cylinder.SetCenter(position)
+        cylinder.SetRadius(self.radius_of_influence)
+        cylinder.SetHeight(2 * self.stent_unit_section_halflength)
+        cylinder.SetResolution(100)
+
+        # compute the rotation
+        default_axis = np.array([0, 1, 0])
+        tangent = self.centerline_tangents[pointID]
+        rotation_axis = np.cross(default_axis, tangent)
+        angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
+        # print(f"tangent: {tangent}, orientation: {rotation_axis}, angle: {angle}")
+
+        # Create a transform to align the cylinder with the vector (1, 2, 3)
+        transform = vtkTransform()
+        transform.Translate(position)  # Translate to origin
+        transform.RotateWXYZ(angle, rotation_axis)  # Rotate about the origin
+        
+
+        transform_filter = vtkmodules.vtkFiltersGeneral.vtkTransformPolyDataFilter()
+        transform_filter.SetInputConnection(cylinder.GetOutputPort())
+        transform_filter.SetTransform(transform)
+        transform_filter.Update()
+
+        mapper = vtkPolyDataMapper()
+        mapper.SetInputConnection(transform_filter.GetOutputPort())
+
+        actor = vtkmodules.vtkRenderingCore.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(0.9, 0.9, 0.9)
+        actor.GetProperty().SetOpacity(0.2)
+        actor.SetPickable(0)
+        actor.centerpointID = pointID
+        actor.cylinderSource = cylinder 
+
+        ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+        ren.AddActor(actor)
+
+        actor.SetVisibility(self.roi_visible)
+        self.stent_actors.append(actor)
+
+    def update_red_highlight_sphere_position(self, idx):
         pointID = self.selected_points[idx]
         polydata = self.centerline_actor.GetMapper().GetInput()
         sphere_center = [0.0, 0.0, 0.0]
@@ -399,9 +445,12 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         highlight_sphere.SetCenter(sphere_center)
 
         # self.place_radius_of_influence_sphere(position, pointID)
+        self.lock_camera(sphere_center)
+        if self.operation_count == 0:
+            self.place_stent_cylinder(sphere_center, pointID)
         self.operation_count += 1
         if self.operation_count % 5 == 0:
-            self.place_radius_of_influence_cylinder(sphere_center, pointID)
+            self.place_stent_cylinder(sphere_center, pointID)
 
     def update_deformation_parameters(self, epsilon, force_scale):
         a = 0.0795774715459 # TODO: dont hard code this lol
@@ -410,7 +459,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.force_scale = force_scale
         self.radius_of_influence = calculate_radius_of_influence.get_radius_of_influence(a, b, epsilon, force_scale)
         print(f"Updated epsilon: {epsilon}, force_scale: {force_scale}, radius_of_influence: {self.radius_of_influence}")
-        for roi_actor in self.roi_actors:
+        for roi_actor in self.roi_actors[-1:]:
             roi_cylinder = roi_actor.cylinderSource
             roi_cylinder.SetRadius(self.radius_of_influence)
         self.GetInteractor().GetRenderWindow().Render()
@@ -418,12 +467,12 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def update_selected_point(self):
         if len(self.selected_points) == 0:
             return
-        self.selected_points[0] += self.animation_direction
+        self.selected_points[0] += self.animation_direction * 5
         if self.selected_points[0] >= self.centerline.GetNumberOfPoints():
             self.selected_points[0] = 0
         elif self.selected_points[0] < 0:
             self.selected_points[0] = self.centerline.GetNumberOfPoints() - 1
-        self.update_highlight_sphere_position(0)
+        self.update_red_highlight_sphere_position(0)
     
     def interleave_update_selected_points(self):
         if len(self.selected_points) == 0:
@@ -438,7 +487,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         elif self.selected_points[self.force_center_idx] < 0:
             self.selected_points[self.force_center_idx] = self.centerline.GetNumberOfPoints() - 1
         
-        self.update_highlight_sphere_position(self.force_center_idx)
+        self.update_red_highlight_sphere_position(self.force_center_idx)
 
     def reverse_animation_direction(self):
         self.animation_direction *= -1
@@ -450,6 +499,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.roi_visible = not self.roi_visible
         for roi_actor in self.roi_actors:
             roi_actor.SetVisibility(not roi_actor.GetVisibility())
+        for stent_actor in self.stent_actors:
+            stent_actor.SetVisibility(not stent_actor.GetVisibility())
         self.GetInteractor().GetRenderWindow().Render()
 
     def toggle_interleave_mode(self):
@@ -459,12 +510,39 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             self.num_kelvinlet_points = 2
         else:
             self.num_kelvinlet_points = 1
-            self.selected_points.pop(0)
-            renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
-            renderer.RemoveActor(self.redHighlightActors[0])
-            self.redHighlightActors.pop(0)
-            renderer.RemoveActor(self.roi_actors[0])
-            self.roi_actors.pop(0)
+            if len(self.selected_points) > 1:
+                self.selected_points.pop(0)
+                renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+                renderer.RemoveActor(self.redHighlightActors[0])
+                self.redHighlightActors.pop(0)
+                renderer.RemoveActor(self.roi_actors[0])
+                self.roi_actors.pop(0)
+            self.GetInteractor().GetRenderWindow().Render()
+
+    def toggle_camera_lock(self):
+        if self.camera_lock:
+            self.lock_camera(self.previous_focal)
+            self.camera_lock = False
+        else:
+            self.camera_lock = True
+            if len(self.selected_points) == 1:
+                self.lock_camera(self.centerline.GetPoint(self.selected_points[-1]))
+            elif self.interleave_mode and len(self.selected_points) >= 2:
+                mid_point = [(self.centerline.GetPoint(self.selected_points[0])[i] + self.centerline.GetPoint(self.selected_points[-1])[i]) / 2.0 for i in range(3)]
+                self.lock_camera_interleave(mid_point[0], mid_point[1], mid_point[2])
+
+    def lock_camera(self, position):
+        if self.camera_lock and not self.interleave_mode:
+            camera = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActiveCamera()
+            self.previous_focal = camera.GetFocalPoint()
+            camera.SetFocalPoint(position)
+            self.GetInteractor().GetRenderWindow().Render()
+
+    def lock_camera_interleave(self, x, y, z):
+        if self.camera_lock:
+            camera = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActiveCamera()
+            self.previous_focal = camera.GetFocalPoint()
+            camera.SetFocalPoint(x, y, z)
             self.GetInteractor().GetRenderWindow().Render()
 
     # def display_centerline_vertices(self):
