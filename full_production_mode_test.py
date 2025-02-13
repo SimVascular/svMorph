@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
 
         # Timer for continuous deformation and animated deformation
         self.timer = QTimer(self)
+        self.stent_edge_timer = QTimer(self)
         self.animation_timer = QTimer(self)
         
         # Controls
@@ -186,11 +187,21 @@ class MainWindow(QMainWindow):
         # self.toggle_interleave_mode_button.setStyleSheet("background-color: #d84005;")
         self.controls_layout4.addWidget(self.toggle_interleave_mode_button)
         self.toggle_interleave_mode_button.clicked.connect(self.toggle_interleave_mode)
+
         # Reverse animation direction button
         self.reverse_animation_button = QPushButton("Reverse Direction")
         self.reverse_animation_button.setFixedWidth(130)
         self.controls_layout4.addWidget(self.reverse_animation_button)
         self.reverse_animation_button.clicked.connect(self.reverse_animation_direction)
+        
+        # Continuous Stent Edge apply button
+        self.stent_edge_button = QPushButton("Stent Edge")
+        self.stent_edge_button.setFixedWidth(120)
+        self.controls_layout4.addWidget(self.stent_edge_button)
+        self.stent_edge_timer.timeout.connect(self.run_stent_edge)
+        self.stent_edge_button.pressed.connect(self.start_stent_edge_deformation)
+        self.stent_edge_button.released.connect(self.stop_stent_edge_deformation)
+
         # Animated Aneurysm Apply Button
         self.animated_aneurysm_button = QPushButton("Animated Aneurysm Apply")
         self.animated_aneurysm_button.setFixedWidth(200)
@@ -284,7 +295,6 @@ class MainWindow(QMainWindow):
     def run_deformation(self):
         # area_percent_change = self.area_slider.value()
         force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
-        # print(f"Running deformation with area percent change: {area_percent_change}")
         print(f"Running stent with force scale: {force_scale}")
         # epsilon = 10 ** (-self.stenosis_area_slider.value()) # slider value 0 or 1 works well here
         epsilon = self.stenosis_area_slider.value() / 100.0
@@ -293,6 +303,12 @@ class MainWindow(QMainWindow):
         self.style.deform_mesh_sequential(epsilon, force_scale)
         # self.vtk_widget.GetRenderWindow().Render()
     
+    def run_stent_edge(self):
+        force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
+        epsilon = self.stenosis_area_slider.value() / 100.0
+        print(f"Shaping stent edge with epsilon: {epsilon}")
+        self.style.deform_mesh_stent_edge(epsilon, force_scale)
+
     def update_selected_point(self):
         # every 1 second, shift the selected force center to the next centerline node by incrementing or decrementing the index
         self.style.update_selected_point()
@@ -351,16 +367,22 @@ class MainWindow(QMainWindow):
     def start_continuous_deformation(self):
         self.timer.start(50)  # Run every 50 milliseconds
 
+    def stop_continuous_deformation(self):
+        self.timer.stop()
+
     def start_animated_deformation(self):
         self.timer.start(50)
         self.animation_timer.start(100)
 
-    def stop_continuous_deformation(self):
-        self.timer.stop()
-
     def stop_animated_deformation(self):
         self.timer.stop()
         self.animation_timer.stop()
+    
+    def start_stent_edge_deformation(self):
+        self.stent_edge_timer.start(50)
+
+    def stop_stent_edge_deformation(self):
+        self.stent_edge_timer.stop()
     
     def on_force_scale_slider_change(self, raw_value):
         """

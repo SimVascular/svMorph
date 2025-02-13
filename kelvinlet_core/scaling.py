@@ -174,12 +174,23 @@ def linear_heaviside(x):
     w = 0.2
     return 0.5 * (1 + jnp.tanh(alpha*(jnp.abs(x)-w))) * x
 
+def linear_heaviside_stent_edge(x):
+    alpha = 200
+    w = 0.2
+    return 0.5 * (1 + jnp.tanh(alpha*(jnp.abs(x)-w)))
+
 def regularize_origin(r):
     return 0
     h = 100
     gamma_origin = 500
     r_0 = 0
     return h * (1 - 1 / (1 + jnp.exp(-gamma_origin * (r - r_0))))
+
+def sigmoid_truncation(z, d):
+    h = 1
+    gamma = 10000
+    w = 0.2
+    return h * (1 - 1 / (1 + jnp.exp(-gamma * (-d * z - w))))
 
 def regularize_radius(r):
     gamma_singularity = 0.001
@@ -220,6 +231,40 @@ def kelvinlets_affine_laplacian(rv, a, b, eps, s):
     # displacements = ((-105*a*eps**4 / (2*re9)) - (b*(4*re2 - 5*(5*eps**2+2*r2))/re7) + (3*b*(4*re2-7*(7*eps**2+2*r2))*r2/re9) + (12*b*(7*eps**2+2*r2)/re7)) * s * rv
     displacements = ((b*(109*eps**2+34*r2-4*re2)/re7) + ((3*b*(4*re2-49*eps**2-14*r2)*r2 - 52.5*a*eps**4)/re9)) * s * rv
     # assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
+    # print("displacements[21611:21613]", displacements[21611:21613])
+    return displacements
+
+def kelvinlets_stent_edge(rv, a, b, eps, s, direction):
+    # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
+    rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+    rz_cylinder = linear_heaviside_stent_edge(rz)
+    rv = rv.at[:, :, 2].set(rz_cylinder)
+    r = jnp.sqrt(rx**2 + ry**2 + rz_cylinder**2)
+    w = 0.2
+    taper = 2
+    base_damping = 1
+    damping = base_damping + taper / 2 * sigmoid_truncation(rz, direction)*(1 + direction * rz / w)
+    rx_damped = rx / damping**2
+    ry_damped = ry / damping**2
+    rv = rv.at[:, :, 0].set(rx_damped)
+    rv = rv.at[:, :, 1].set(ry_damped)
+    # r = regularize_radius(r)
+    # print("r[21611:21613]", r[21611:21613])
+    r2 = r**2
+    re = jnp.sqrt(r2 + eps**2)
+    # Expand re and tile to match the dimensions of rv
+    re = jnp.expand_dims(re, 2)
+    # r = jnp.expand_dims(r, 2)
+    r2 = jnp.expand_dims(r2, 2)
+    # Compute powers of re for the displacement formula
+    re2 = re**2
+    re7 = re**7
+    re9 = re**9
+    # Calculate displacements
+    # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
+    # displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
+    # displacements = ((-105*a*eps**4 / (2*re9)) - (b*(4*re2 - 5*(5*eps**2+2*r2))/re7) + (3*b*(4*re2-7*(7*eps**2+2*r2))*r2/re9) + (12*b*(7*eps**2+2*r2)/re7)) * s * rv
+    displacements = ((b*(109*eps**2+34*r2-4*re2)/re7) + ((3*b*(4*re2-49*eps**2-14*r2)*r2 - 52.5*a*eps**4)/re9)) * s * rv
     # print("displacements[21611:21613]", displacements[21611:21613])
     return displacements
 
@@ -456,6 +501,26 @@ def get_affine_displacements_inner(data_points, rotation_matrices, xs, centers, 
         displacement *= surface_mesh_scale_factor
     return displacement
 
+@jx.jit
+def get_stent_edge_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, direction):
+    num_mesh_points = data_points.shape[0]
+    # Prepare xs and centers using broadcasting
+    centers = jnp.tile(centers, (num_mesh_points, 1, 1))
+    # Compute rv in the local frame
+    rv = xs - centers
+    # Rotate rv to the global frame
+    rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
+    centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
+    # Compute Kelvinlet displacements
+    displacement_local = kelvinlets_stent_edge(centerline_aligned_rv, a, b, eps, s, direction)
+    displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
+    # Aggregate and normalize
+    displacement = jnp.sum(displacement_global, axis=1)
+    # Scale if required
+    if surface_mesh_scale_factor is not None:
+        displacement *= surface_mesh_scale_factor
+    return displacement
+
 # Helper function to preprocess data
 def get_affine_displacements_v2(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor):
     # Resolve all_indices and force_center_point_id outside JIT
@@ -577,6 +642,38 @@ def get_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_cente
     # Call the JIT-compiled function
     displacements = get_affine_laplacian_displacements_inner(
         data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+    )
+    # print("displacement: ", displacements)
+    # print("to see which entry of displacement has a large numerical entry: ")
+    # large_entries = jnp.where(jnp.abs(displacements) > 1)
+    # print("large entries: ", large_entries)
+    # print("the magnitude of the displacement is: ", jnp.linalg.norm(displacements))
+    # displacement = get_affine_displacements_inner(
+    #     data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+    # ) / num_kelvinlet_points
+    # xs = jnp.expand_dims(centerline_points, 1)
+    # xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
+    # print("centerline xs shape: ", xs.shape)
+    # centerline_displacements = get_affine_displacements_inner(
+    #     centerline_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+    # )
+    return displacements#, centerline_displacements
+
+def get_stent_edge_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal, direction):
+    # Resolve all_indices and force_center_point_id outside JIT
+    force_center_point_id = data["nodes"]["force_center_point_id"]
+    print("force center: ", force_center_point_id)
+    data_points = data["points"]["surface"]
+    centerline_points = data["points"]["centerline"]
+    num_kelvinlet_points = 1
+    xs = jnp.expand_dims(data_points, 1)
+    xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
+    centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
+    kelvinlet_points_normals = jnp.array([force_center_normal])
+    rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
+    # Call the JIT-compiled function
+    displacements = get_stent_edge_displacements_inner(
+        data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, direction
     )
     # print("displacement: ", displacements)
     # print("to see which entry of displacement has a large numerical entry: ")
