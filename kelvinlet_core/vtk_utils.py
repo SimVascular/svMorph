@@ -350,6 +350,16 @@ def get_centerline_tangents_np(centerline_polydata):
     tangents[-1] /= np.linalg.norm(tangents[-1])
     return tangents
 
+def get_centerline_cross_section_areas_np(centerline_polydata):
+    areas = centerline_polydata.GetPointData().GetArray("CenterlineSectionArea")
+    num_centerline_points = centerline_polydata.GetNumberOfPoints()
+    centerline_areas = np.zeros(num_centerline_points)
+    if areas is None:
+        return centerline_areas
+    for point_id in range(num_centerline_points):
+        centerline_areas[point_id] = areas.GetValue(point_id)
+    return centerline_areas
+
 # @jx.jit
 def get_normal_at_centerline_point(centerline_jnp_array, point_id):
     num_centerline_points = centerline_jnp_array.shape[0]

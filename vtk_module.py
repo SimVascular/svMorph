@@ -102,6 +102,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # print("centerline length: ", centerline.GetNumberOfPoints())
         # print("centerline tangents length: ", len(self.centerline_tangents))
         # print("a few of the entries of centerline tangents: ", self.centerline_tangents[:5])
+        self.centerline_section_areas = vtk_utils.get_centerline_cross_section_areas_np(centerline)
         self.mesh_filename = mesh_filename
         self.centerline_filename = centerline_filename
         self.mesh_actor = mesh_actor
@@ -115,6 +116,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.stent_unit_section_halflength = 0.2
         self.roi_actors = []
         self.stent_actors = []
+        self.radius_text_actor = None
+        self.roi_text_actor = None
         self.roi_visible = True
         self.animation_direction = 1
         self.num_kelvinlet_points = 2 # originally 3
@@ -191,6 +194,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
                 self.redHighlightActors.pop(0)
                 renderer.RemoveActor(self.roi_actors[0])
                 self.roi_actors.pop(0)
+            self.update_selected_point_radius_text()
         self.OnLeftButtonDown()
 
     def display_centerline_vertices(self):
@@ -222,6 +226,44 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.glyph_actor = glyphActor
         self.mesh_actor.GetProperty().SetOpacity(0.3)
         self.centerline_actor.SetPickable(1)
+        self.GetInteractor().GetRenderWindow().Render()
+
+    def display_radius_texts(self):
+        radius = 0.0
+        # Create a text actor to display the radius at selected point
+        selected_point_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
+        selected_point_text_actor.SetInput(f"approx radius = {radius:.4f}")
+        selected_point_text_actor.GetTextProperty().SetColor(0.0, 0.0, 0.0)
+        selected_point_text_actor.GetTextProperty().SetFontSize(16)
+        selected_point_text_actor.SetPosition(10, 28)
+        self.radius_text_actor = selected_point_text_actor
+        # Create another text actor to display the radius of influence below it
+        roi_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
+        roi_text_actor.SetInput(f"roi = {self.radius_of_influence:.4f}")
+        roi_text_actor.GetTextProperty().SetColor(0.0, 0.0, 0.0)
+        roi_text_actor.GetTextProperty().SetFontSize(16)
+        roi_text_actor.SetPosition(10, 4)
+        self.roi_text_actor = roi_text_actor
+        
+        # Add the text actor to the renderer
+        self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor2D(self.radius_text_actor)
+        self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor2D(self.roi_text_actor)
+        self.GetInteractor().GetRenderWindow().Render()
+        
+    def update_selected_point_radius_text(self):
+        if len(self.selected_points) == 0:
+            radius = 0.0
+        else:
+            pointID = self.selected_points[-1]
+            area = self.centerline_section_areas[pointID]
+            radius = np.sqrt(area / np.pi)
+        self.radius_text_actor.SetInput(f"approx radius = {radius:.4f}")
+        self.GetInteractor().GetRenderWindow().Render()
+
+    def update_roi_text(self):
+        if self.roi_text_actor is None:
+            return
+        self.roi_text_actor.SetInput(f"roi = {self.radius_of_influence:.4f}")
         self.GetInteractor().GetRenderWindow().Render()
 
     # def place_visualization_sphere(self, position, pointID):
@@ -462,6 +504,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         for roi_actor in self.roi_actors[-1:]:
             roi_cylinder = roi_actor.cylinderSource
             roi_cylinder.SetRadius(self.radius_of_influence)
+        self.update_roi_text()
         self.GetInteractor().GetRenderWindow().Render()
             
     def update_selected_point(self):

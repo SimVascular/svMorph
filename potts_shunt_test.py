@@ -75,9 +75,9 @@ class MainWindow(QMainWindow):
 
         # Slider for the area adjustment (using a nonlinear mapping)
         self.area_slider = QSlider(Qt.Orientation.Horizontal)
-        self.area_slider.setRange(-1000, 1000)  # Underlying slider range
+        self.area_slider.setRange(-10000, 20000)  # Underlying slider range
         # Initialize to a value that corresponds to 0.2 (for example)
-        self.area_slider.setValue(self.force_scale_value_to_slider(0.2))
+        self.area_slider.setValue(self.force_scale_value_to_slider(2))
         self.controls_layout.addWidget(self.area_slider)
         # Display the slider value in a QLineEdit (to show the float value)
         self.slider_value = QLineEdit()
@@ -230,8 +230,12 @@ class MainWindow(QMainWindow):
         # self.centerline_file = "/home/bohanjeffli/Full_Centerlines.vtp"
         ######################## DEMO 1 ########################
         # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
-        self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
-        self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
+        # self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        ######################## DEMO 1 ########################
+        self.mesh_file = "/home/bohanjeffli/potts/potts_geometry.vtp"
+        # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
+        self.centerline_file = "/home/bohanjeffli/potts/potts_centerlines.vtp"
         #######################################################
         # self.mesh_file = "/home/bohanjeffli/ImageToStl.com_9x9_square_grid_verbose.vtp"
         # self.centerline_file = "/home/bohanjeffli/ImageToStl.com_midline_polyline.vtp"
