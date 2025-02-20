@@ -233,9 +233,10 @@ class MainWindow(QMainWindow):
         # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
         # self.centerline_file = "/home/bohanjeffli/centerline.vtp"
         ######################## DEMO 1 ########################
-        self.mesh_file = "/home/bohanjeffli/potts/potts_geometry.vtp"
-        # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
-        self.centerline_file = "/home/bohanjeffli/potts/potts_centerlines.vtp"
+        # self.mesh_file = "/home/bohanjeffli/potts/potts_geometry_remeshed.vtp"
+        self.mesh_file = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed_scaled_down_10x.vtp"
+        # self.centerline_file = "/home/bohanjeffli/potts/potts_fine_centerlines.vtp"
+        self.centerline_file = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_fine_centerlines_scaled_down_10x.vtp"
         #######################################################
         # self.mesh_file = "/home/bohanjeffli/ImageToStl.com_9x9_square_grid_verbose.vtp"
         # self.centerline_file = "/home/bohanjeffli/ImageToStl.com_midline_polyline.vtp"

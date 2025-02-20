@@ -113,6 +113,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.epsilon = 0.2
         self.force_scale = -0.2
         self.radius_of_influence = 0.0
+        self.stent_radius = 0.5
         self.stent_unit_section_halflength = 0.2
         self.roi_actors = []
         self.stent_actors = []
@@ -123,6 +124,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.num_kelvinlet_points = 2 # originally 3
         self.interleave_mode = True
         self.operation_count = 0
+        self.total_displacement_distance = 0.0
         self.camera_lock = False
         self.previous_focal = [0.0, 0.0, 0.0]
     
@@ -186,6 +188,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             sphere_center = [0.0, 0.0, 0.0]
             polydata.GetPoint(pointID, sphere_center)
             self.operation_count = 0
+            self.total_displacement_distance = 0.0
             self.place_highlight_sphere(sphere_center, pointID)
             
             if len(self.selected_points) > self.num_kelvinlet_points:
@@ -374,7 +377,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def place_radius_of_influence_sphere(self, position, pointID):
         sphere = vtkSphereSource()
         sphere.SetCenter(position)
-        sphere.SetRadius(self.radius_of_influence)
+        sphere.SetRadius(self.stent_radius)
 
         mapper = vtkPolyDataMapper()
         mapper.SetInputConnection(sphere.GetOutputPort())
@@ -395,7 +398,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def place_radius_of_influence_cylinder(self, position, pointID):
         cylinder = vtkCylinderSource()
         # cylinder.SetCenter(position)
-        cylinder.SetRadius(self.radius_of_influence)
+        # cylinder.SetRadius(self.radius_of_influence)
+        cylinder.SetRadius(self.stent_radius)
         cylinder.SetHeight(2 * self.stent_unit_section_halflength)
         cylinder.SetResolution(100)
 
@@ -437,7 +441,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def place_stent_cylinder(self, position, pointID):
         cylinder = vtkCylinderSource()
         # cylinder.SetCenter(position)
-        cylinder.SetRadius(self.radius_of_influence)
+        # cylinder.SetRadius(self.radius_of_influence)
+        cylinder.SetRadius(self.stent_radius)
         cylinder.SetHeight(2 * self.stent_unit_section_halflength)
         cylinder.SetResolution(100)
 
@@ -506,7 +511,14 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             roi_cylinder.SetRadius(self.radius_of_influence)
         self.update_roi_text()
         self.GetInteractor().GetRenderWindow().Render()
-            
+
+    def update_stent_radius(self, radius):
+        self.stent_radius = radius
+        for roi_actor in self.roi_actors[-1:]:
+            roi_cylinder = roi_actor.cylinderSource
+            roi_cylinder.SetRadius(self.stent_radius)
+        self.GetInteractor().GetRenderWindow().Render()
+
     def update_selected_point(self):
         if len(self.selected_points) == 0:
             return
@@ -661,7 +673,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         num_time_steps = 1
         self.run_aneurysm_with_precribed_delta_radius(
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
-        force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, 
+        force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, self.stent_unit_section_halflength,
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
         self.GetInteractor().GetRenderWindow().Render()
     
@@ -669,6 +681,11 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         if len(self.selected_points) < 1:
             print("Please select the center of the stent along the centerline.")
             return
+        # local_area = self.centerline_section_areas[self.selected_points[-1]]
+        # local_radius = np.sqrt(local_area / np.pi)
+        # if self.total_displacement_distance + local_radius >= self.radius_of_influence - 0.01:
+            # print("Prescribed radius reached.")
+            # return
         centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
         surface_polydata_output_file_name = "obtained_aneurysm_surface"
         list_of_other_geometry_polydata_input_file_names = []
@@ -682,10 +699,12 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         mu = 1
         nu = 0.2 # (0, 0.5), 0.4 originally
         num_time_steps = 1
-        self.run_aneyrusm_sequential(
+        displacement_distance = self.run_aneyrusm_sequential(
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
-        force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, 
+        force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius,
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
+        # self.total_displacement_distance += displacement_distance
+        # print(f"Total displacement distance: {self.total_displacement_distance}")
         self.GetInteractor().GetRenderWindow().Render()
 
     def deform_mesh_stent_edge(self, epsilon, force_scale):
@@ -765,7 +784,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def run_aneyrusm_sequential(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
-                        force_scale, num_time_steps, node_point_indices, 
+                        force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius, 
                         other_geometry_input_files, other_geometry_output_files):
         # --- Initialization and Parameter Setup ---
         total_start_time = time.time()  # Start total timer
@@ -812,7 +831,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         print("eps = ", eps, "force_scale = ", force_scale)
         # , centerline_displacements
-        surface_displacements = scaling.get_displacements(simulation_data, a, b, eps, force_scale, None, normal)
+        surface_displacements, average_displacement_distance = scaling.get_displacements(simulation_data, a, b, eps, force_scale, None, normal, stent_halflength, stent_radius)
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         
         # --- Scale Displacements to Match Desired Area ---
@@ -825,6 +844,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         total_simulation_time = time.time() - total_start_time
         print(f"Total simulation time: {total_simulation_time:.4f} seconds")
         print(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
+        return average_displacement_distance
 
     def run_stent_edge(self, affine_params, model, mu, nu, phi_type, force_center_point_id, force_scale, node_point_indices, direction):
         # --- Initialization and Parameter Setup ---
@@ -884,7 +904,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def run_aneurysm_with_precribed_delta_radius(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
-                        force_scale, num_time_steps, node_point_indices, 
+                        force_scale, num_time_steps, node_point_indices, stent_halflength, 
                         other_geometry_input_files, other_geometry_output_files):
         # --- Initialization and Parameter Setup ---
         total_start_time = time.time()  # Start total timer
@@ -933,7 +953,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         # force_scale = -0.25
         print("eps = ", eps, "force_scale = ", force_scale)
-        surface_displacements = scaling.get_affine_displacements_point(simulation_data, a, b, eps, force_scale, phi_type, "surface", None, normal)  # 0 = "surface"
+        surface_displacements = scaling.get_affine_displacements_point(simulation_data, a, b, eps, force_scale, phi_type, "surface", None, normal, stent_halflength)  # 0 = "surface"
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         
         # --- Scale Displacements to Match Desired Area ---

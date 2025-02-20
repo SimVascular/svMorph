@@ -169,9 +169,8 @@ def assign_force_location_affine_v2(data, point_id):
 def get_force_matrix_scale(scale, a, b):
     return scale * (2 / 5) / (2 * b - a)
 
-def linear_heaviside(x):
+def linear_heaviside(x, w):
     alpha = 300
-    w = 0.2
     return 0.5 * (1 + jnp.tanh(alpha*(jnp.abs(x)-w))) * x
 
 def linear_heaviside_stent_edge(x):
@@ -194,10 +193,12 @@ def sigmoid_truncation(z, d):
 
 def regularize_radius(r):
     gamma_singularity = 0.001
+    # gamma_singularity = 0.01
     r_1 = 0.5
+    # r_1 = 0.8
     return regularize_origin(r) + r + jnp.sqrt((r - r_1)**2 + gamma_singularity**2) / 2
 
-def kelvinlets_affine_laplacian(rv, a, b, eps, s):
+def kelvinlets_affine_laplacian_commentedout(rv, a, b, eps, s, w, r_target):
     # Ensure the input tensor has the correct dimensions
     print(f"rv shape: {rv.shape}")
     # assert rv.ndim == 3
@@ -208,7 +209,7 @@ def kelvinlets_affine_laplacian(rv, a, b, eps, s):
     # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
     # Extract components of rv
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
-    rz = linear_heaviside(rz)
+    rz = linear_heaviside(rz, w)
     rv = rv.at[:, :, 2].set(rz)
     # Compute re with epsilon added
     r = jnp.sqrt(rx**2 + ry**2 + rz**2)
@@ -231,8 +232,137 @@ def kelvinlets_affine_laplacian(rv, a, b, eps, s):
     # displacements = ((-105*a*eps**4 / (2*re9)) - (b*(4*re2 - 5*(5*eps**2+2*r2))/re7) + (3*b*(4*re2-7*(7*eps**2+2*r2))*r2/re9) + (12*b*(7*eps**2+2*r2)/re7)) * s * rv
     displacements = ((b*(109*eps**2+34*r2-4*re2)/re7) + ((3*b*(4*re2-49*eps**2-14*r2)*r2 - 52.5*a*eps**4)/re9)) * s * rv
     # assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
-    # print("displacements[21611:21613]", displacements[21611:21613])
     return displacements
+
+def kelvinlets_affine_laplacian_hard_cutoff_if_radius_over(rv, a, b, eps, s, w, r_target): #radius bounded this causes self-intersection (hard_cutoff_if_radius_over)
+    # Ensure the input tensor has the correct dimensions
+    print(f"rv shape: {rv.shape}")
+    # assert rv.ndim == 3
+    num_mesh_points, num_kelvinlet_points, ndims = rv.shape
+    # assert ndims == 3
+    print(f"num_mesh_points: {num_mesh_points}, num_kelvinlet_points: {num_kelvinlet_points}, ndims: {ndims}")
+
+    # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
+    # Extract components of rv
+    rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+    rz = linear_heaviside(rz, w)
+    # to convert rz into a mask that is 1 if rz is less than w and 0 otherwise
+    mask = (rz < 1e-6).astype(int) # consider using 1e-4 also possible
+    rv = rv.at[:, :, 2].set(rz)
+    # Compute re with epsilon added
+    r = jnp.sqrt(rx**2 + ry**2 + rz**2)
+    # r = regularize_radius(r)
+    # print("r[21611:21613]", r[21611:21613])
+    r2 = r**2
+    re = jnp.sqrt(r2 + eps**2)
+    # assert re.shape == (num_mesh_points, num_kelvinlet_points)
+    # Expand re and tile to match the dimensions of rv
+    re = jnp.expand_dims(re, 2)
+    # r = jnp.expand_dims(r, 2)
+    r2 = jnp.expand_dims(r2, 2)
+    # Compute powers of re for the displacement formula
+    re2 = re**2
+    re7 = re**7
+    re9 = re**9
+    # Calculate displacements
+    # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
+    # displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
+    # displacements = ((-105*a*eps**4 / (2*re9)) - (b*(4*re2 - 5*(5*eps**2+2*r2))/re7) + (3*b*(4*re2-7*(7*eps**2+2*r2))*r2/re9) + (12*b*(7*eps**2+2*r2)/re7)) * s * rv
+    displacements = ((b*(109*eps**2+34*r2-4*re2)/re7) + ((3*b*(4*re2-49*eps**2-14*r2)*r2 - 52.5*a*eps**4)/re9)) * s * rv
+    # assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
+    print("displacements[21611:21613]", displacements[21611:21613])
+    print("shape of displacements: ", displacements.shape)
+    radius_mask = (r < 0.509).astype(int)
+    
+    # import matplotlib.pyplot as plt
+    # # Convert r to a numpy array and flatten it for plotting.
+    # r_np = np.array(r).flatten()
+    # plt.hist(r_np, bins=200, edgecolor="black")
+    # plt.xlabel("r")
+    # plt.ylabel("Frequency")
+    # plt.title("Distribution of r values over small buckets")
+    # plt.show()
+
+    mask = mask * radius_mask
+    displacements = displacements * mask[:, :, None]
+    cylindrical_wall_displacements = displacements * mask[:, :, None]
+    norms = jnp.linalg.norm(cylindrical_wall_displacements, axis=2)
+    # nonzero_mask = (norms > 0.001).astype(int)
+    norms_sum = jnp.sum(norms, axis=0)[0]
+    # total_nonzero_entries = jnp.sum(nonzero_mask, axis=0)[0]
+    total_nonzero_entries = jnp.sum(mask, axis=0)[0]
+    print("total_nonzero_entries: ", total_nonzero_entries)
+    safe_total_nonzero_entries = total_nonzero_entries + (total_nonzero_entries == 0).astype(int)
+    average_displacement_distance = norms_sum / (safe_total_nonzero_entries) * (total_nonzero_entries > 0).astype(int)
+    print("average_displacement_distance: ", average_displacement_distance)
+    return displacements, average_displacement_distance
+
+def kelvinlets_affine_laplacian(rv, a, b, eps, s, w, r_target): #radius bounded, stops the whole field at once, maybe no self-intersections, current best
+    # Ensure the input tensor has the correct dimensions
+    print(f"rv shape: {rv.shape}")
+    # assert rv.ndim == 3
+    num_mesh_points, num_kelvinlet_points, ndims = rv.shape
+    # assert ndims == 3
+    print(f"num_mesh_points: {num_mesh_points}, num_kelvinlet_points: {num_kelvinlet_points}, ndims: {ndims}")
+
+    # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
+    # Extract components of rv
+    rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+    rz = linear_heaviside(rz, w)
+    # to convert rz into a mask that is 1 if rz is less than w and 0 otherwise
+    mask = (rz < 1e-6).astype(int) # consider using 1e-4 also possible
+    rv = rv.at[:, :, 2].set(rz)
+    # Compute re with epsilon added
+    r = jnp.sqrt(rx**2 + ry**2 + rz**2)
+    # r = regularize_radius(r)
+    # print("r[21611:21613]", r[21611:21613])
+    r2 = r**2
+    re = jnp.sqrt(r2 + eps**2)
+    # assert re.shape == (num_mesh_points, num_kelvinlet_points)
+    # Expand re and tile to match the dimensions of rv
+    re = jnp.expand_dims(re, 2)
+    # r = jnp.expand_dims(r, 2)
+    r2 = jnp.expand_dims(r2, 2)
+    # Compute powers of re for the displacement formula
+    re2 = re**2
+    re7 = re**7
+    re9 = re**9
+    # Calculate displacements
+    # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
+    # displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
+    # displacements = ((-105*a*eps**4 / (2*re9)) - (b*(4*re2 - 5*(5*eps**2+2*r2))/re7) + (3*b*(4*re2-7*(7*eps**2+2*r2))*r2/re9) + (12*b*(7*eps**2+2*r2)/re7)) * s * rv
+    displacements = ((b*(109*eps**2+34*r2-4*re2)/re7) + ((3*b*(4*re2-49*eps**2-14*r2)*r2 - 52.5*a*eps**4)/re9)) * s * rv
+    # assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
+    print("displacements[21611:21613]", displacements[21611:21613])
+    print("shape of displacements: ", displacements.shape)
+    # radius_mask = (r < 0.509).astype(int)
+    radius_mask = (r < r_target).astype(int)
+
+    
+    # import matplotlib.pyplot as plt
+    # # Convert r to a numpy array and flatten it for plotting.
+    # r_np = np.array(r).flatten()
+    # plt.hist(r_np, bins=200, edgecolor="black")
+    # plt.xlabel("r")
+    # plt.ylabel("Frequency")
+    # plt.title("Distribution of r values over small buckets")
+    # plt.show()
+
+    mask = mask * radius_mask
+    # displacements = displacements * mask[:, :, None]
+    cylindrical_wall_displacements = displacements * mask[:, :, None]
+    norms = jnp.linalg.norm(cylindrical_wall_displacements, axis=2)
+    # nonzero_mask = (norms > 0.001).astype(int)
+    norms_sum = jnp.sum(norms, axis=0)[0]
+    # total_nonzero_entries = jnp.sum(nonzero_mask, axis=0)[0]
+    total_nonzero_entries = jnp.sum(mask, axis=0)[0]
+    print("total_nonzero_entries: ", total_nonzero_entries)
+    displacement_continue_flag = 1 - (total_nonzero_entries == 0).astype(int)
+    safe_total_nonzero_entries = total_nonzero_entries + (total_nonzero_entries == 0).astype(int)
+    average_displacement_distance = norms_sum / (safe_total_nonzero_entries) * (total_nonzero_entries > 0).astype(int)
+    print("average_displacement_distance: ", average_displacement_distance)
+    displacements = displacements * displacement_continue_flag
+    return displacements, average_displacement_distance
 
 def kelvinlets_stent_edge(rv, a, b, eps, s, direction):
     # rv = rv.at[:, :, 2].set(1e-6 * rv[:, :, 2])
@@ -458,8 +588,8 @@ def get_rotation_matrix_v2_jonathan(data, first_centerline_point_id, last_center
 
     return rotation_matrix, centerline_axis_vector
 
-@jx.jit
-def get_affine_laplacian_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor):
+@jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
+def get_affine_laplacian_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, w, r_target):
     num_mesh_points = data_points.shape[0]
     # Prepare xs and centers using broadcasting
     centers = jnp.tile(centers, (num_mesh_points, 1, 1))
@@ -469,14 +599,15 @@ def get_affine_laplacian_displacements_inner(data_points, rotation_matrices, xs,
     rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
     centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
     # Compute Kelvinlet displacements
-    displacement_local = kelvinlets_affine_laplacian(centerline_aligned_rv, a, b, eps, s)
+    displacement_local, average_displacement_distance = kelvinlets_affine_laplacian(centerline_aligned_rv, a, b, eps, s, w, r_target)
     displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
-    # Aggregate and normalize
+    # Aggregate and normalize TODO: below use of sum is unnecessary if there is only 1 kelvinlet point
     displacement = jnp.sum(displacement_global, axis=1)
     # Scale if required
     if surface_mesh_scale_factor is not None:
         displacement *= surface_mesh_scale_factor
-    return displacement
+        average_displacement_distance *= surface_mesh_scale_factor
+    return displacement, average_displacement_distance
 
 @jx.jit
 def get_affine_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor):
@@ -588,7 +719,7 @@ def get_affine_displacements_v3(data, a, b, eps, s, phi_type, mesh_type, surface
     ) / num_kelvinlet_points
     return displacement
 
-def get_affine_displacements_point(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor, force_center_normal):
+def get_affine_displacements_point(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor, force_center_normal, stent_halflength):
     # Resolve all_indices and force_center_point_id outside JIT
     all_indices = data["nodes"]["all_indices"]
     # force_center_point_id = data["nodes"]["force_center_point_id"]
@@ -616,15 +747,15 @@ def get_affine_displacements_point(data, a, b, eps, s, phi_type, mesh_type, surf
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
     # rotation_matrices = [compute_householder_matrix(normal) for normal in kelvinlet_points_normals]
     # Call the JIT-compiled function
-    displacement = get_affine_laplacian_displacements_inner(
-        data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+    displacement, average_displacement_distance = get_affine_laplacian_displacements_inner(
+        data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, stent_halflength
     ) / num_kelvinlet_points
     # displacement = get_affine_displacements_inner(
     #     data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
     # ) / num_kelvinlet_points
     return displacement
 
-def get_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal):
+def get_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, stent_radius):
     # Resolve all_indices and force_center_point_id outside JIT
     force_center_point_id = data["nodes"]["force_center_point_id"]
     print("force center: ", force_center_point_id)
@@ -640,8 +771,8 @@ def get_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_cente
     kelvinlet_points_normals = jnp.array([force_center_normal])
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
     # Call the JIT-compiled function
-    displacements = get_affine_laplacian_displacements_inner(
-        data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+    displacements, average_displacement_distance = get_affine_laplacian_displacements_inner(
+        data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, stent_halflength, stent_radius
     )
     # print("displacement: ", displacements)
     # print("to see which entry of displacement has a large numerical entry: ")
@@ -657,7 +788,8 @@ def get_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_cente
     # centerline_displacements = get_affine_displacements_inner(
     #     centerline_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
     # )
-    return displacements#, centerline_displacements
+    # print("average_displacement_distance = ", average_displacement_distance)
+    return displacements, average_displacement_distance#, centerline_displacements
 
 def get_stent_edge_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal, direction):
     # Resolve all_indices and force_center_point_id outside JIT

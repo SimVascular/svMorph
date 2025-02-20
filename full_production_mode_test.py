@@ -122,18 +122,26 @@ class MainWindow(QMainWindow):
         self.stenosis_slider_value.textChanged.connect(lambda text: [self.stenosis_area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
         self.controls_layout2.addWidget(self.stenosis_slider_value)
         
-        self.num_ring_points_label = QLabel("Num Ring Points:")
-        self.controls_layout2.addWidget(self.num_ring_points_label)
-        
-        self.num_ring_points_slider = QSlider(Qt.Orientation.Horizontal)
-        self.num_ring_points_slider.setRange(1, 100)
-        self.num_ring_points_slider.setValue(35)
-        self.controls_layout2.addWidget(self.num_ring_points_slider)
-        
-        self.num_ring_points_value = QLineEdit()
-        self.num_ring_points_value.setText(f"{self.num_ring_points_slider.value()}")
-        self.num_ring_points_value.setFixedWidth(50)
-        self.controls_layout2.addWidget(self.num_ring_points_value)
+        self.stent_radius_label = QLabel("Stent Radius:")
+        self.controls_layout2.addWidget(self.stent_radius_label)
+
+        self.stent_radius_slider = QSlider(Qt.Orientation.Horizontal)
+        # Slider value maps linearly from 0.1 to 8 over 1000 steps.
+        self.stent_radius_slider.setRange(0, 1000)
+        # Default stent radius is set to 1.0.
+        default_radius = 0.5
+        default_slider_value = int((default_radius - 0.1) / (8 - 0.1) * 1000)
+        self.stent_radius_slider.setValue(default_slider_value)
+        self.controls_layout2.addWidget(self.stent_radius_slider)
+
+        self.stent_radius_value = QLineEdit()
+        self.stent_radius_value.setText(f"{default_radius:.4f}")
+        self.stent_radius_value.setFixedWidth(50)
+        self.controls_layout2.addWidget(self.stent_radius_value)
+        # When the slider value changes, update the QLineEdit to show the mapped stent radius.
+        self.stent_radius_slider.valueChanged.connect(lambda value: (self.stent_radius_value.setText(
+            f"{0.1 + (value/1000)*(8-0.1):.4f}"), self.style.update_stent_radius(0.1 + (value/1000)*(8-0.1))))
+        self.stent_radius_value.textChanged.connect(self.update_stent_radius_slider)
         
         self.run_stenosis_button = QPushButton("Stenosis Apply")
         self.run_stenosis_button.setFixedWidth(120)
@@ -143,8 +151,8 @@ class MainWindow(QMainWindow):
         # self.stenosis_area_slider.valueChanged.connect(lambda value: self.stenosis_slider_value.setText(f"{value}"))
         # self.stenosis_slider_value.textChanged.connect(lambda text: self.stenosis_area_slider.setValue(int(text)))
         # Connect the slider and QLineEdit for num ring points
-        self.num_ring_points_slider.valueChanged.connect(lambda value: self.num_ring_points_value.setText(f"{value}"))
-        self.num_ring_points_value.textChanged.connect(lambda text: self.num_ring_points_slider.setValue(int(text)))
+        # self.num_ring_points_slider.valueChanged.connect(lambda value: self.num_ring_points_value.setText(f"{value}"))
+        # self.num_ring_points_value.textChanged.connect(lambda text: self.num_ring_points_slider.setValue(int(text)))
         # Connect the button to the run_stenosis method
         self.run_stenosis_button.clicked.connect(self.run_stenosis)
 
@@ -335,10 +343,10 @@ class MainWindow(QMainWindow):
             return
 
         area_percent_change = self.stenosis_area_slider.value()
-        num_ring_points = self.num_ring_points_slider.value()
+        num_ring_points = 25
         falloff_type = "regular"
         weight_regularized_laplacian = 1        
-        print(f"Running stenosis with area percent change: {area_percent_change}, num ring points: {num_ring_points}")
+        print(f"Running stenosis with area percent change: {area_percent_change}")
         self.style.deform_mesh_stenosis(area_percent_change, num_ring_points, falloff_type, weight_regularized_laplacian)
         # self.vtk_widget.GetRenderWindow().Render()
         # self.ren.Render()
@@ -389,6 +397,20 @@ class MainWindow(QMainWindow):
     def stop_stent_edge_deformation(self):
         self.stent_edge_timer.stop()
     
+    # Helper function for handling stent radius changes.
+    def update_stent_radius_slider(self, text):
+        try:
+            val = float(text)
+            # Clamp the value between 0.1 and 8.
+            if val < 0.1:
+                val = 0.1
+            elif val > 8:
+                val = 8
+            slider_val = int((val - 0.1) / (8 - 0.1) * 1000)
+            self.stent_radius_slider.setValue(slider_val)
+        except ValueError:
+            pass
+
     def on_force_scale_slider_change(self, raw_value):
         """
         Called when the slider is moved. Converts the slider’s raw integer value
@@ -445,6 +467,7 @@ class MainWindow(QMainWindow):
         else:
             normalized = math.copysign((abs(value) / 10.0) ** (1.0 / 7), value)
         return int(normalized * 1000)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
