@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPu
 from PyQt6.QtCore import Qt
 import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-from vtk_module import VTKHandler
+from vtk_module_v2 import VTKHandler
 from PyQt6.QtCore import QTimer
 import math
 
@@ -122,18 +122,26 @@ class MainWindow(QMainWindow):
         self.stenosis_slider_value.textChanged.connect(lambda text: [self.stenosis_area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
         self.controls_layout2.addWidget(self.stenosis_slider_value)
         
-        self.num_ring_points_label = QLabel("Num Ring Points:")
-        self.controls_layout2.addWidget(self.num_ring_points_label)
-        
-        self.num_ring_points_slider = QSlider(Qt.Orientation.Horizontal)
-        self.num_ring_points_slider.setRange(1, 100)
-        self.num_ring_points_slider.setValue(35)
-        self.controls_layout2.addWidget(self.num_ring_points_slider)
-        
-        self.num_ring_points_value = QLineEdit()
-        self.num_ring_points_value.setText(f"{self.num_ring_points_slider.value()}")
-        self.num_ring_points_value.setFixedWidth(50)
-        self.controls_layout2.addWidget(self.num_ring_points_value)
+        self.stent_radius_label = QLabel("Stent Radius:")
+        self.controls_layout2.addWidget(self.stent_radius_label)
+
+        self.stent_radius_slider = QSlider(Qt.Orientation.Horizontal)
+        # Slider value maps linearly from 0.1 to 8 over 1000 steps.
+        self.stent_radius_slider.setRange(0, 1000)
+        # Default stent radius is set to 1.0.
+        default_radius = 0.5
+        default_slider_value = int((default_radius - 0.1) / (8 - 0.1) * 1000)
+        self.stent_radius_slider.setValue(default_slider_value)
+        self.controls_layout2.addWidget(self.stent_radius_slider)
+
+        self.stent_radius_value = QLineEdit()
+        self.stent_radius_value.setText(f"{default_radius:.4f}")
+        self.stent_radius_value.setFixedWidth(50)
+        self.controls_layout2.addWidget(self.stent_radius_value)
+        # When the slider value changes, update the QLineEdit to show the mapped stent radius.
+        self.stent_radius_slider.valueChanged.connect(lambda value: (self.stent_radius_value.setText(
+            f"{0.1 + (value/1000)*(8-0.1):.4f}"), self.style.update_stent_radius(0.1 + (value/1000)*(8-0.1))))
+        self.stent_radius_value.textChanged.connect(self.update_stent_radius_slider)
         
         self.run_stenosis_button = QPushButton("Stenosis Apply")
         self.run_stenosis_button.setFixedWidth(120)
@@ -143,8 +151,8 @@ class MainWindow(QMainWindow):
         # self.stenosis_area_slider.valueChanged.connect(lambda value: self.stenosis_slider_value.setText(f"{value}"))
         # self.stenosis_slider_value.textChanged.connect(lambda text: self.stenosis_area_slider.setValue(int(text)))
         # Connect the slider and QLineEdit for num ring points
-        self.num_ring_points_slider.valueChanged.connect(lambda value: self.num_ring_points_value.setText(f"{value}"))
-        self.num_ring_points_value.textChanged.connect(lambda text: self.num_ring_points_slider.setValue(int(text)))
+        # self.num_ring_points_slider.valueChanged.connect(lambda value: self.num_ring_points_value.setText(f"{value}"))
+        # self.num_ring_points_value.textChanged.connect(lambda text: self.num_ring_points_slider.setValue(int(text)))
         # Connect the button to the run_stenosis method
         self.run_stenosis_button.clicked.connect(self.run_stenosis)
 
@@ -220,6 +228,27 @@ class MainWindow(QMainWindow):
         self.continuous_run_button.released.connect(self.stop_continuous_deformation)
         self.animation_timer.timeout.connect(self.interleave_update_selected_points)
 
+        self.controls_layout5 = QHBoxLayout()
+        
+        self.controls_layout5.addStretch(1)
+        # Continuous Stent Edge apply button
+        self.select_multiple_points_button = QPushButton("Select Points")
+        self.select_multiple_points_button.setFixedWidth(120)
+        self.controls_layout5.addWidget(self.select_multiple_points_button)
+        self.select_multiple_points_button.clicked.connect(self.display_centerline_nodes_select_multiple)
+        # self.stent_edge_timer.timeout.connect(self.run_stent_edge)
+        # self.stent_edge_button.pressed.connect(self.start_stent_edge_deformation)
+        # self.stent_edge_button.released.connect(self.stop_stent_edge_deformation)
+
+        # Animated Aneurysm Apply Button
+        self.simultaneous_apply_button = QPushButton("Simultaneous Apply")
+        self.animated_aneurysm_button.setFixedWidth(200)
+        self.controls_layout5.addWidget(self.simultaneous_apply_button)
+        self.simultaneous_apply_button.clicked.connect(self.run_deformation_simultaneous)
+        # self.animated_aneurysm_button.pressed.connect(self.start_animated_deformation)
+        # self.animated_aneurysm_button.released.connect(self.stop_animated_deformation)
+        self.layout.addLayout(self.controls_layout5)
+
         # VTK Setup
         self.vtk_interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
         self.vtk_handler = None
@@ -230,13 +259,13 @@ class MainWindow(QMainWindow):
         # self.centerline_file = "/home/bohanjeffli/Full_Centerlines.vtp"
         ######################## DEMO 1 ########################
         # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
-        # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
-        # self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
+        self.centerline_file = "/home/bohanjeffli/centerline.vtp"
         ######################## DEMO 1 ########################
         # self.mesh_file = "/home/bohanjeffli/potts/potts_geometry_remeshed.vtp"
-        self.mesh_file = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed_scaled_down_10x.vtp"
+        # self.mesh_file = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed_scaled_down_10x.vtp"
         # self.centerline_file = "/home/bohanjeffli/potts/potts_fine_centerlines.vtp"
-        self.centerline_file = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_fine_centerlines_scaled_down_10x.vtp"
+        # self.centerline_file = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_fine_centerlines_scaled_down_10x.vtp"
         #######################################################
         # self.mesh_file = "/home/bohanjeffli/ImageToStl.com_9x9_square_grid_verbose.vtp"
         # self.centerline_file = "/home/bohanjeffli/ImageToStl.com_midline_polyline.vtp"
@@ -313,6 +342,16 @@ class MainWindow(QMainWindow):
         self.style.deform_mesh_sequential(epsilon, force_scale)
         # self.vtk_widget.GetRenderWindow().Render()
     
+    def run_deformation_simultaneous(self):
+        # area_percent_change = self.area_slider.value()
+        force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
+        print(f"Running stent with force scale: {force_scale}")
+        # epsilon = 10 ** (-self.stenosis_area_slider.value()) # slider value 0 or 1 works well here
+        epsilon = self.stenosis_area_slider.value() / 100.0
+        print(f"Running stent with epsilon: {epsilon}")
+        # self.style.deform_mesh(epsilon, force_scale)
+        self.style.deform_mesh_parallel(epsilon, force_scale)
+    
     def run_stent_edge(self):
         force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
         epsilon = self.stenosis_area_slider.value() / 100.0
@@ -340,7 +379,7 @@ class MainWindow(QMainWindow):
             return
 
         area_percent_change = self.stenosis_area_slider.value()
-        num_ring_points = self.num_ring_points_slider.value()
+        num_ring_points = 25
         falloff_type = "regular"
         weight_regularized_laplacian = 1        
         print(f"Running stenosis with area percent change: {area_percent_change}, num ring points: {num_ring_points}")
@@ -369,9 +408,17 @@ class MainWindow(QMainWindow):
         self.style.toggle_camera_lock()
 
     def display_centerline_nodes(self):
+        print("Please select centerline nodes to generate aneurysm.")
+        force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
+        epsilon = self.stenosis_area_slider.value() / 100.0
+        self.style.display_centerline_vertices()
+        
+    def display_centerline_nodes_select_multiple(self):
         print("Please select three centerline nodes to generate aneurysm.")
         force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
         epsilon = self.stenosis_area_slider.value() / 100.0
+        self.style.select_multiple_points = True
+        self.style.num_kelvinlet_points = 10
         self.style.display_centerline_vertices()
 
     def start_continuous_deformation(self):
@@ -394,6 +441,19 @@ class MainWindow(QMainWindow):
     def stop_stent_edge_deformation(self):
         self.stent_edge_timer.stop()
     
+    def update_stent_radius_slider(self, text):
+        try:
+            val = float(text)
+            # Clamp the value between 0.1 and 8.
+            if val < 0.1:
+                val = 0.1
+            elif val > 8:
+                val = 8
+            slider_val = int((val - 0.1) / (8 - 0.1) * 1000)
+            self.stent_radius_slider.setValue(slider_val)
+        except ValueError:
+            pass
+
     def on_force_scale_slider_change(self, raw_value):
         """
         Called when the slider is moved. Converts the slider’s raw integer value

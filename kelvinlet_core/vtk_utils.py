@@ -394,6 +394,26 @@ def get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, point
     normal /= jnp.linalg.norm(normal)
     return point, normal
 
+def get_normal_at_point_on_centerline(centerline_polydata, point_id):
+    point = jnp.array(centerline_polydata.GetPoint(point_id))  # Directly convert to JAX array
+    num_centerline_points = centerline_polydata.GetNumberOfPoints()
+    # Compute the normal vector based on the position of point_id in the sequence
+    if 0 < point_id < num_centerline_points - 1:
+        next_point = jnp.array(centerline_polydata.GetPoint(point_id + 1))
+        prev_point = jnp.array(centerline_polydata.GetPoint(point_id - 1))
+        normal = next_point - prev_point
+    elif point_id == num_centerline_points - 1:
+        # Last point, calculate using only previous point
+        prev_point = jnp.array(centerline_polydata.GetPoint(point_id - 1))
+        normal = point - prev_point
+    else:
+        # First point, calculate using only the next point
+        next_point = jnp.array(centerline_polydata.GetPoint(point_id + 1))
+        normal = next_point - point
+    # Normalize the normal vector
+    normal /= jnp.linalg.norm(normal)
+    return normal
+
 def get_coordinates_and_normal_at_point_on_centerline_jonathan(centerline_polydata, point_id):
     point = centerline_polydata.GetPoint(point_id)
     num_centerline_points = centerline_polydata.GetNumberOfPoints()
