@@ -27,6 +27,9 @@ from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk_module_v2 import VTKHandler
 from PyQt6.QtCore import QTimer
 import math
+MAX_STENT_SIZE = 1 # 1cm = 10mm
+MIN_STENT_SIZE = 0.1 # 0.1cm = 1mm
+STENT_STEP_SIZE = 900
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -75,14 +78,15 @@ class MainWindow(QMainWindow):
 
         # Slider for the area adjustment (using a nonlinear mapping)
         self.area_slider = QSlider(Qt.Orientation.Horizontal)
-        self.area_slider.setRange(-10000, 20000)  # Underlying slider range
+        self.area_slider.setRange(-1000, 1000)  # Underlying slider range
         # Initialize to a value that corresponds to 0.2 (for example)
-        self.area_slider.setValue(self.force_scale_value_to_slider(2))
+        self.area_slider.setValue(self.force_scale_value_to_slider(1))
         self.controls_layout.addWidget(self.area_slider)
         # Display the slider value in a QLineEdit (to show the float value)
         self.slider_value = QLineEdit()
         # Set the initial text using the mapping function (format to three decimals)
-        self.slider_value.setText(f"{self.force_scale_slider_to_value(self.area_slider.value()):.4f}")
+        slider_value = self.force_scale_slider_to_value(self.area_slider.value())
+        self.slider_value.setText(f"{slider_value:.3f}" if slider_value >= 0 else f"-{abs(slider_value):.3f}")
         self.slider_value.setFixedWidth(50)
         # Connect signals to the handlers.
         self.area_slider.valueChanged.connect(self.on_force_scale_slider_change)
@@ -94,14 +98,14 @@ class MainWindow(QMainWindow):
         self.show_nodes_button.setFixedWidth(120)
         self.controls_layout.addWidget(self.show_nodes_button)
         # Button for running the deformation
-        self.run_button = QPushButton("Aneurysm Apply")
+        self.run_button = QPushButton("Contact Apply")
         self.run_button.setFixedWidth(120)
         self.controls_layout.addWidget(self.run_button)
         # Add controls layout to main layout
         self.layout.addLayout(self.controls_layout)
         self.frame.setLayout(self.layout)
         self.setCentralWidget(self.frame)
-        self.run_button.clicked.connect(self.run_deformation)
+        self.run_button.clicked.connect(self.run_deformation_sdf)
         self.show_nodes_button.clicked.connect(self.display_centerline_nodes)
 
         # To add a second row of buttons, add another QHBoxLayout and add it to the main layout
@@ -122,26 +126,26 @@ class MainWindow(QMainWindow):
         self.stenosis_slider_value.textChanged.connect(lambda text: [self.stenosis_area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
         self.controls_layout2.addWidget(self.stenosis_slider_value)
         
-        self.stent_radius_label = QLabel("Stent Radius:")
+        self.stent_radius_label = QLabel("Stent Diameter:")
         self.controls_layout2.addWidget(self.stent_radius_label)
 
-        self.stent_radius_slider = QSlider(Qt.Orientation.Horizontal)
+        self.stent_diameter_slider = QSlider(Qt.Orientation.Horizontal)
         # Slider value maps linearly from 0.1 to 8 over 1000 steps.
-        self.stent_radius_slider.setRange(0, 1000)
+        self.stent_diameter_slider.setRange(0, STENT_STEP_SIZE)
         # Default stent radius is set to 1.0.
-        default_radius = 0.5
-        default_slider_value = int((default_radius - 0.1) / (8 - 0.1) * 1000)
-        self.stent_radius_slider.setValue(default_slider_value)
-        self.controls_layout2.addWidget(self.stent_radius_slider)
+        default_diameter = 0.8 # 8mm stent, 0.4cm radius
+        default_slider_value = int((default_diameter - MIN_STENT_SIZE) / (MAX_STENT_SIZE - MIN_STENT_SIZE) * STENT_STEP_SIZE)
+        self.stent_diameter_slider.setValue(default_slider_value)
+        self.controls_layout2.addWidget(self.stent_diameter_slider)
 
-        self.stent_radius_value = QLineEdit()
-        self.stent_radius_value.setText(f"{default_radius:.4f}")
-        self.stent_radius_value.setFixedWidth(50)
-        self.controls_layout2.addWidget(self.stent_radius_value)
+        self.stent_diameter_value = QLineEdit()
+        self.stent_diameter_value.setText(f"{default_diameter:.4f}")
+        self.stent_diameter_value.setFixedWidth(50)
+        self.controls_layout2.addWidget(self.stent_diameter_value)
         # When the slider value changes, update the QLineEdit to show the mapped stent radius.
-        self.stent_radius_slider.valueChanged.connect(lambda value: (self.stent_radius_value.setText(
-            f"{0.1 + (value/1000)*(8-0.1):.4f}"), self.style.update_stent_radius(0.1 + (value/1000)*(8-0.1))))
-        self.stent_radius_value.textChanged.connect(self.update_stent_radius_slider)
+        self.stent_diameter_slider.valueChanged.connect(lambda value: (self.stent_diameter_value.setText(
+            f"{MIN_STENT_SIZE + (value/STENT_STEP_SIZE)*(MAX_STENT_SIZE-MIN_STENT_SIZE):.4f}"), self.style.update_prescribed_stent_radius((MIN_STENT_SIZE + (value/STENT_STEP_SIZE)*(MAX_STENT_SIZE-MIN_STENT_SIZE))/2.0)))
+        self.stent_diameter_value.textChanged.connect(self.update_stent_diameter_slider)
         
         self.run_stenosis_button = QPushButton("Stenosis Apply")
         self.run_stenosis_button.setFixedWidth(120)
@@ -342,6 +346,14 @@ class MainWindow(QMainWindow):
         self.style.deform_mesh_sequential(epsilon, force_scale)
         # self.vtk_widget.GetRenderWindow().Render()
     
+    def run_deformation_sdf(self):
+        # area_percent_change = self.area_slider.value()
+        force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
+        print(f"Haha Running stent with force scale: {force_scale}")
+        epsilon = self.stenosis_area_slider.value() / 100.0
+        print(f"Running stent with epsilon: {epsilon}")
+        self.style.deform_mesh_sdf(epsilon, force_scale)
+    
     def run_deformation_simultaneous(self):
         # area_percent_change = self.area_slider.value()
         force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
@@ -441,16 +453,16 @@ class MainWindow(QMainWindow):
     def stop_stent_edge_deformation(self):
         self.stent_edge_timer.stop()
     
-    def update_stent_radius_slider(self, text):
+    def update_stent_diameter_slider(self, text):
         try:
             val = float(text)
-            # Clamp the value between 0.1 and 8.
-            if val < 0.1:
-                val = 0.1
-            elif val > 8:
-                val = 8
-            slider_val = int((val - 0.1) / (8 - 0.1) * 1000)
-            self.stent_radius_slider.setValue(slider_val)
+            # Clamp the value between 0.1 and 1.
+            if val < MIN_STENT_SIZE:
+                val = MIN_STENT_SIZE
+            elif val > MAX_STENT_SIZE:
+                val = MAX_STENT_SIZE
+            slider_val = int((val - MIN_STENT_SIZE) / (MAX_STENT_SIZE - MIN_STENT_SIZE) * STENT_STEP_SIZE)
+            self.stent_diameter_slider.setValue(slider_val)
         except ValueError:
             pass
 
@@ -461,7 +473,7 @@ class MainWindow(QMainWindow):
         update_deformation_parameters() accordingly.
         """
         float_value = self.force_scale_slider_to_value(raw_value)
-        self.slider_value.setText(f"{float_value:.4f}")
+        self.slider_value.setText(f"{float_value:.3f}")
         # Assuming self.stenosis_area_slider exists, convert its value similarly:
         stenosis_value = self.stenosis_area_slider.value() / 100.0
         self.style.update_deformation_parameters(stenosis_value, -float_value)
@@ -494,7 +506,7 @@ class MainWindow(QMainWindow):
         normalized = slider_val / 1000.0
         # Map nonlinearly. Near zero, changes are tiny;
         # at the extremes, the full range (10) is reached.
-        mapped = math.copysign((abs(normalized) ** 7), normalized) * 10.0
+        mapped = normalized
         return mapped
 
     @staticmethod
@@ -508,7 +520,7 @@ class MainWindow(QMainWindow):
         if value == 0:
             normalized = 0.0
         else:
-            normalized = math.copysign((abs(value) / 10.0) ** (1.0 / 7), value)
+            normalized = value
         return int(normalized * 1000)
 
 if __name__ == "__main__":
