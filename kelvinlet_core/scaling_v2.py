@@ -162,7 +162,7 @@ def add_node_data_to_centerline_polydata_affine_jonathan(data, centerline_polyda
     return centerline_polydata
 
 def assign_force_location_affine_v2(data, point_id):
-    assert(point_id in data["nodes"]["all_indices"])
+    # assert(point_id in data["nodes"]["all_indices"])
     data["nodes"]["force_center_point_id"] = point_id
     return data
 
@@ -434,11 +434,11 @@ def kelvinlets_truncated_sphere_warp_sculp(rv, a, b, eps, s, r_target):
 
     return displacements
 
-def sdf_capsule_warp_sculp(rv, a, b, eps, s, r_target, r_current):
+def sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current):
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     # Extract components of rv
     f_scale = 0.05 
-    doi = 0.2
+    doi = 0.15
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
     # Compute re with epsilon added
     # re = jnp.sqrt(rx**2 + ry**2 + rz**2 + eps**2)
@@ -452,19 +452,41 @@ def sdf_capsule_warp_sculp(rv, a, b, eps, s, r_target, r_current):
     # re3 = re**3
     # re5 = re**5
     # Calculate displacements
-    b = jnp.array([0, 0, -0.2])
-    a = jnp.array([0, 0, 0.2])
-    ba = b - a
-    pa = rv - a
-    ba_dot_pa = jnp.sum(ba * pa, axis=2)
-    ba_dot_ba = jnp.dot(ba, ba)
-    h = jnp.clip(ba_dot_pa / ba_dot_ba, 0, 1)
-    axis_to_point = pa - h[:, :, None] * ba
-    dist = jnp.linalg.norm(axis_to_point, axis=2)[..., None]
-    direction = axis_to_point / dist
-    dist_to_surface = dist - r_current
+    # a = jnp.array([0, 0, 0.2])
+    # b = jnp.array([0, 0, -0.2])
+    # ba = b - a
+    # pa = rv - a
+    # ba_dot_pa = jnp.sum(ba * pa, axis=2)
+    # ba_dot_ba = jnp.dot(ba, ba)
+    # h = jnp.clip(ba_dot_pa / ba_dot_ba, 0, 1)
+    # axis_to_point = pa - h[:, :, None] * ba
+    # dist = jnp.linalg.norm(axis_to_point, axis=2)[..., None]
+    # direction = axis_to_point / dist
+    # dist_to_surface = dist - r_current
     
-
+    ba_all = jnp.diff(stent_vertices, axis=0)
+    pa_all = rv - stent_vertices[None, :-1, :]
+    print("ba_test shape: ", ba_all.shape)
+    print("pa_test shape: ", pa_all.shape)
+    ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
+    ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
+    print("ba_dot_pa shape: ", ba_dot_pa_all.shape)
+    print("ba_dot_ba shape: ", ba_dot_ba_all.shape)
+    h_all = jnp.clip(ba_dot_pa_all / ba_dot_ba_all, 0, 1)
+    axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
+    dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
+    direction_all = axis_to_point_all / dist_all
+    print("h_test shape: ", h_all.shape)
+    print("axis_to_point_test shape: ", axis_to_point_all.shape)
+    print("dist_test shape: ", dist_all.shape)
+    print("direction_test shape: ", direction_all.shape)
+    dist_idx = jnp.argmin(dist_all[:,:,0], axis=1)
+    print("dist_idx shape: ", dist_idx.shape)
+    dist = dist_all[jnp.arange(dist_all.shape[0]), dist_idx, :]
+    dist_to_surface = dist - r_current
+    print("dist_min shape: ", dist.shape)
+    direction = direction_all[jnp.arange(direction_all.shape[0]), dist_idx, :]
+    print("direction_min shape: ", direction.shape)
     # rv = rv.at[:, :, 2].set(0 * rv[:, :, 2])
     
     # displacements = 0.1*f_scale * r_target * ((re / r_target) ** 2 - 1) ** 2 * (-s) * rv
@@ -844,23 +866,23 @@ def get_stent_edge_displacements_inner(data_points, rotation_matrices, xs, cente
         displacement *= surface_mesh_scale_factor
     return displacement
 
-@jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
-def get_sdf_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, w, r_target, r_current):
+#@jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
+def get_sdf_displacements_inner(data_points, xs, centers, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, w, r_target, r_current):
     num_mesh_points = data_points.shape[0]
     # Prepare xs and centers using broadcasting
     centers = jnp.tile(centers, (num_mesh_points, 1, 1))
     # Compute rv in the local frame
     rv = xs - centers
     # Rotate rv to the global frame
-    rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
-    centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
+    # rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
+    # centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
     # Compute Kelvinlet displacements
     # average_displacement_distance = 0
-    displacement_local, step_size = sdf_capsule_warp_sculp(centerline_aligned_rv, a, b, eps, s, r_target, r_current)
+    displacement, step_size = sdf_capsule_warp_sculp(xs, a, b, stent_vertices, eps, s, r_target, r_current)
     # displacement_local = kelvinlets_affine_laplacian(centerline_aligned_rv, a, b, eps, s, 1, 0.8)
-    displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
+    # displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     # Aggregate and normalize TODO: below use of sum is unnecessary if there is only 1 kelvinlet point
-    displacement = jnp.sum(displacement_global, axis=1)
+    # displacement = jnp.sum(displacement_local, axis=1)
     # Scale if required
     if surface_mesh_scale_factor is not None:
         displacement *= surface_mesh_scale_factor
@@ -1059,7 +1081,7 @@ def get_stent_edge_displacements(data, a, b, eps, s, surface_mesh_scale_factor, 
     # )
     return displacements#, centerline_displacements
 
-def get_sdf_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
+def get_sdf_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
     # Resolve all_indices and force_center_point_id outside JIT
     force_center_point_id = data["nodes"]["force_center_point_id"]
     print("force center: ", force_center_point_id)
@@ -1076,7 +1098,7 @@ def get_sdf_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_c
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
     # Call the JIT-compiled function
     displacements, step_size = get_sdf_displacements_inner(
-        data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, stent_halflength, target_stent_radius, current_stent_radius
+        data_points, xs, centers, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, stent_halflength, target_stent_radius, current_stent_radius
     )
     # print("displacement: ", displacements)
     # print("to see which entry of displacement has a large numerical entry: ")
