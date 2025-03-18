@@ -10,11 +10,9 @@ def profile_func(func):
         profiler.enable()
         result = func(self)
         profiler.disable()
-        
         # Print profiling results
         ps = pstats.Stats(profiler)
         ps.strip_dirs().sort_stats("cumulative").print_stats(10)
-        
         return result
     return wrapper
 
@@ -27,9 +25,13 @@ from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk_module_v2 import VTKHandler
 from PyQt6.QtCore import QTimer
 import math
-MAX_STENT_SIZE = 1 # 1cm = 10mm
-MIN_STENT_SIZE = 0.1 # 0.1cm = 1mm
-STENT_STEP_SIZE = 900
+MAX_STENT_SIZE = 1.0 # 1cm = 10mm diameter
+MIN_STENT_SIZE = 0.1 # 0.1cm = 1mm diameter
+STENT_DIAMETER_NUM_STEPS = 900
+MAX_STENT_LENGTH = 8.0 # 80mm length
+MIN_STENT_LENGTH = 2.0 # 20mm length
+# STENT_LENGTH_NUM_STEPS = 12
+STENT_LENGTH_NUM_STEPS = 24
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -110,31 +112,35 @@ class MainWindow(QMainWindow):
 
         # To add a second row of buttons, add another QHBoxLayout and add it to the main layout
         self.controls_layout2 = QHBoxLayout()
-        # Add stenosis controls
-        self.stenosis_slider_label = QLabel("Epsilon Negative Exponent:")
-        self.controls_layout2.addWidget(self.stenosis_slider_label)
-        
-        self.stenosis_area_slider = QSlider(Qt.Orientation.Horizontal)
-        # self.stenosis_area_slider.setRange(-3, 6)
-        self.stenosis_area_slider.setRange(0, 500)
-        self.stenosis_area_slider.setValue(20)
-        self.controls_layout2.addWidget(self.stenosis_area_slider)
-        self.stenosis_slider_value = QLineEdit()
-        self.stenosis_slider_value.setText(f"{self.stenosis_area_slider.value() / 100.0}")
-        self.stenosis_slider_value.setFixedWidth(50)
-        self.stenosis_area_slider.valueChanged.connect(lambda value: [self.stenosis_slider_value.setText(f"{value / 100.0}"), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
-        self.stenosis_slider_value.textChanged.connect(lambda text: [self.stenosis_area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
-        self.controls_layout2.addWidget(self.stenosis_slider_value)
+        # Slider for stent length
+        self.stent_length_label = QLabel("Stent Length:")
+        self.controls_layout2.addWidget(self.stent_length_label)
+        self.stent_length_slider = QSlider(Qt.Orientation.Horizontal)
+        # Slider value maps linearly from 2 to 8 over 14 steps.
+        self.stent_length_slider.setRange(0, STENT_LENGTH_NUM_STEPS)
+        # Default stent radius is set to 1.0.
+        default_length = 3.0 # 30mm stent
+        default_legnth_slider_value = int((default_length - MIN_STENT_LENGTH) / (MAX_STENT_LENGTH - MIN_STENT_LENGTH) * STENT_LENGTH_NUM_STEPS)
+        self.stent_length_slider.setValue(default_legnth_slider_value)
+        self.controls_layout2.addWidget(self.stent_length_slider)
+
+        self.stent_length_value = QLineEdit()
+        self.stent_length_value.setText(f"{default_length:.4f}")
+        self.stent_length_value.setFixedWidth(50)
+        self.controls_layout2.addWidget(self.stent_length_value)
+        self.stent_length_slider.valueChanged.connect(lambda value: (self.stent_length_value.setText(
+            f"{MIN_STENT_LENGTH + (value/STENT_LENGTH_NUM_STEPS)*(MAX_STENT_LENGTH-MIN_STENT_LENGTH):.4f}"), self.style.update_prescribed_stent_length(MIN_STENT_LENGTH + (value/STENT_LENGTH_NUM_STEPS)*(MAX_STENT_LENGTH-MIN_STENT_LENGTH))))
+        self.stent_length_value.textChanged.connect(self.update_stent_length_slider)
         
         self.stent_radius_label = QLabel("Stent Diameter:")
         self.controls_layout2.addWidget(self.stent_radius_label)
 
         self.stent_diameter_slider = QSlider(Qt.Orientation.Horizontal)
         # Slider value maps linearly from 0.1 to 8 over 1000 steps.
-        self.stent_diameter_slider.setRange(0, STENT_STEP_SIZE)
+        self.stent_diameter_slider.setRange(0, STENT_DIAMETER_NUM_STEPS)
         # Default stent radius is set to 1.0.
         default_diameter = 0.8 # 8mm stent, 0.4cm radius
-        default_slider_value = int((default_diameter - MIN_STENT_SIZE) / (MAX_STENT_SIZE - MIN_STENT_SIZE) * STENT_STEP_SIZE)
+        default_slider_value = int((default_diameter - MIN_STENT_SIZE) / (MAX_STENT_SIZE - MIN_STENT_SIZE) * STENT_DIAMETER_NUM_STEPS)
         self.stent_diameter_slider.setValue(default_slider_value)
         self.controls_layout2.addWidget(self.stent_diameter_slider)
 
@@ -144,7 +150,7 @@ class MainWindow(QMainWindow):
         self.controls_layout2.addWidget(self.stent_diameter_value)
         # When the slider value changes, update the QLineEdit to show the mapped stent radius.
         self.stent_diameter_slider.valueChanged.connect(lambda value: (self.stent_diameter_value.setText(
-            f"{MIN_STENT_SIZE + (value/STENT_STEP_SIZE)*(MAX_STENT_SIZE-MIN_STENT_SIZE):.4f}"), self.style.update_prescribed_stent_radius((MIN_STENT_SIZE + (value/STENT_STEP_SIZE)*(MAX_STENT_SIZE-MIN_STENT_SIZE))/2.0)))
+            f"{MIN_STENT_SIZE + (value/STENT_DIAMETER_NUM_STEPS)*(MAX_STENT_SIZE-MIN_STENT_SIZE):.4f}"), self.style.update_prescribed_stent_radius((MIN_STENT_SIZE + (value/STENT_DIAMETER_NUM_STEPS)*(MAX_STENT_SIZE-MIN_STENT_SIZE))/2.0)))
         self.stent_diameter_value.textChanged.connect(self.update_stent_diameter_slider)
         
         self.run_stenosis_button = QPushButton("Stenosis Apply")
@@ -234,6 +240,23 @@ class MainWindow(QMainWindow):
 
         self.controls_layout5 = QHBoxLayout()
         
+        # Epsilon slider 
+        # Add stenosis controls
+        self.stenosis_slider_label = QLabel("Epsilon Negative Exponent:")
+        self.controls_layout5.addWidget(self.stenosis_slider_label)
+        
+        self.stenosis_area_slider = QSlider(Qt.Orientation.Horizontal)
+        # self.stenosis_area_slider.setRange(-3, 6)
+        self.stenosis_area_slider.setRange(0, 500)
+        self.stenosis_area_slider.setValue(20)
+        self.controls_layout5.addWidget(self.stenosis_area_slider)
+        self.stenosis_slider_value = QLineEdit()
+        self.stenosis_slider_value.setText(f"{self.stenosis_area_slider.value() / 100.0}")
+        self.stenosis_slider_value.setFixedWidth(50)
+        self.stenosis_area_slider.valueChanged.connect(lambda value: [self.stenosis_slider_value.setText(f"{value / 100.0}"), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
+        self.stenosis_slider_value.textChanged.connect(lambda text: [self.stenosis_area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
+        self.controls_layout5.addWidget(self.stenosis_slider_value)
+
         self.controls_layout5.addStretch(1)
         # Continuous Stent Edge apply button
         self.select_multiple_points_button = QPushButton("Select Points")
@@ -461,8 +484,21 @@ class MainWindow(QMainWindow):
                 val = MIN_STENT_SIZE
             elif val > MAX_STENT_SIZE:
                 val = MAX_STENT_SIZE
-            slider_val = int((val - MIN_STENT_SIZE) / (MAX_STENT_SIZE - MIN_STENT_SIZE) * STENT_STEP_SIZE)
+            slider_val = int((val - MIN_STENT_SIZE) / (MAX_STENT_SIZE - MIN_STENT_SIZE) * STENT_DIAMETER_NUM_STEPS)
             self.stent_diameter_slider.setValue(slider_val)
+        except ValueError:
+            pass
+
+    def update_stent_length_slider(self, text):
+        try:
+            val = float(text)
+            # Clamp the value between 0.1 and 1.
+            if val < MIN_STENT_LENGTH:
+                val = MIN_STENT_LENGTH
+            elif val > MAX_STENT_LENGTH:
+                val = MAX_STENT_LENGTH
+            slider_val = int((val - MIN_STENT_LENGTH) / (MAX_STENT_LENGTH - MIN_STENT_LENGTH) * STENT_LENGTH_NUM_STEPS)
+            self.stent_length_slider.setValue(slider_val)
         except ValueError:
             pass
 

@@ -116,9 +116,10 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.stent_axis_vertices = None
 
         self.epsilon = 0.2
-        self.force_scale = -0.2
+        self.force_scale = -1.0
         self.radius_of_influence = 0.0
         self.stent_radius = 0.4
+        self.stent_length = 3.0
         self.undeployed_stent_radius = 0.05
         self.current_stent_radius = self.undeployed_stent_radius
         self.stent_unit_section_halflength = 0.2
@@ -288,11 +289,10 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def compute_prescribed_stent(self):
-        total_length = 3.0 # cm 3.0
+        # total_length = 3.0 # cm 3.0
         segment_length = 0.1 # cm 0.1
-        self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.selected_points[-1], total_length, segment_length, jump_threshold=1.0)
-        print(f"num vertices for stent of length {total_length}cm, segment length {segment_length}cm: {len(self.stent_axis_vertices)}")
-
+        self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.selected_points[-1], self.stent_length, segment_length, jump_threshold=1.0)
+        print(f"num vertices for stent of length {self.stent_length}cm, segment length {segment_length}cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
         
 
@@ -414,8 +414,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             sphere = vtkSphereSource()
             sphere.SetCenter(vertex)
             sphere.SetRadius(self.current_stent_radius)
-            sphere.SetThetaResolution(20)
-            sphere.SetPhiResolution(20)
+            sphere.SetThetaResolution(50)
+            sphere.SetPhiResolution(50)
             sphere.Update()
             
             mapper = vtkPolyDataMapper()
@@ -628,6 +628,15 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         for roi_actor in self.roi_actors[-1:]:
             roi_cylinder = roi_actor.cylinderSource
             roi_cylinder.SetRadius(self.stent_radius)
+        self.GetInteractor().GetRenderWindow().Render()
+    
+    def update_prescribed_stent_length(self, length):
+        self.stent_length = length
+        self.compute_prescribed_stent()
+        renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+        renderer.RemoveActor(self.stent_visualization_actors[0])
+        self.stent_visualization_actors.pop(0)
+        # self.current_stent_radius = self.undeployed_stent_radius
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_current_stent_radius(self):

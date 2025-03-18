@@ -204,6 +204,42 @@ def regularize_radius(r):
     # r_1 = 0.8
     return regularize_origin(r) + r + jnp.sqrt((r - r_1)**2 + gamma_singularity**2) / 2
 
+def mix(a, b, t):
+    return a + (b - a) * t
+
+def smin(a, b, k):
+    k *= 4.0
+    h = max(k - abs(a - b), 0.0) / k
+    return min(a, b) - h**2 * k / 4.0 
+
+def branching_smin_and_gradient(a, da, b, db, k):
+    k *= 4.0
+    h = max(k - abs(a - b), 0.0) / k
+    n = 0.5 * h
+    m = h**2 * k / 4.0
+    return a - m, mix(da, db, n) if a < b else b - m, mix(da, db, 1.-n)
+
+def smin_and_gradient(a, da, b, db, k=0.01):
+    k = k * 4.0
+    h = jnp.maximum(k - jnp.abs(a - b), 0.0) / k
+    n = 0.5 * h
+    m = h**2 * k / 4.0
+    # Use jnp.where to choose between the two cases in a jittable way
+    value = jnp.where(a < b, a - m, b - m)
+    grad  = jnp.where(a < b, mix(da, db, n), mix(da, db, 1.0 - n))
+    return value, grad
+
+def fold_smin(carry, elem):
+    cur_min_d, cur_min_dir = carry 
+    d, dir = elem      # new distance and direction to combine
+    new_d, new_dir = smin_and_gradient(cur_min_d, cur_min_dir, d, dir)
+    return (new_d, new_dir), None
+
+def compute_min_dist_and_direction(d, dir):
+    # d: (num_segments,), dir: (num_segments, ndims)
+    (final_d, final_dir), _ = jx.lax.scan(fold_smin, (d[0], dir[0]), (d[1:], dir[1:]))
+    return final_d, final_dir
+
 def kelvinlets_affine_laplacian_commentedout(rv, a, b, eps, s, w, r_target):
     # Ensure the input tensor has the correct dimensions
     print(f"rv shape: {rv.shape}")
@@ -437,8 +473,8 @@ def kelvinlets_truncated_sphere_warp_sculp(rv, a, b, eps, s, r_target):
 def sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current):
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     # Extract components of rv
-    f_scale = 0.05 
     doi = 0.15
+    f_scale = 0.25 * doi 
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
     # Compute re with epsilon added
     # re = jnp.sqrt(rx**2 + ry**2 + rz**2 + eps**2)
@@ -463,7 +499,6 @@ def sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current
     # dist = jnp.linalg.norm(axis_to_point, axis=2)[..., None]
     # direction = axis_to_point / dist
     # dist_to_surface = dist - r_current
-    
     ba_all = jnp.diff(stent_vertices, axis=0)
     pa_all = rv - stent_vertices[None, :-1, :]
     print("ba_test shape: ", ba_all.shape)
@@ -495,6 +530,31 @@ def sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current
     displacements = displacements * mask
     # displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
     # assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
+    step_size = f_scale * (-s)
+
+    return displacements, step_size
+
+def smin_sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current):
+    doi = 0.15 # distance of influence: width of the deformation zone
+    f_scale = 0.25 * doi 
+    # rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+    ba_all = jnp.diff(stent_vertices, axis=0)
+    pa_all = rv - stent_vertices[None, :-1, :]
+    ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
+    ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
+    h_all = jnp.clip(ba_dot_pa_all / ba_dot_ba_all, 0, 1)
+    axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
+    dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
+    direction_all = axis_to_point_all / dist_all
+    dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments)
+    dist_to_surface_all = dist_all_squeezed - r_current
+    # Vectorize the folding over all mesh points:
+    final_dist_to_surface, final_direction = jx.vmap(compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
+    final_dist_to_surface = final_dist_to_surface[:, None]
+    mask = (final_dist_to_surface < doi).astype(int)
+    displacements = f_scale * ((final_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * final_direction
+    displacements = displacements * mask
+    # displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
     step_size = f_scale * (-s)
 
     return displacements, step_size
@@ -866,7 +926,7 @@ def get_stent_edge_displacements_inner(data_points, rotation_matrices, xs, cente
         displacement *= surface_mesh_scale_factor
     return displacement
 
-#@jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
+@jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
 def get_sdf_displacements_inner(data_points, xs, centers, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, w, r_target, r_current):
     num_mesh_points = data_points.shape[0]
     # Prepare xs and centers using broadcasting
@@ -878,7 +938,7 @@ def get_sdf_displacements_inner(data_points, xs, centers, a, b, stent_vertices, 
     # centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
     # Compute Kelvinlet displacements
     # average_displacement_distance = 0
-    displacement, step_size = sdf_capsule_warp_sculp(xs, a, b, stent_vertices, eps, s, r_target, r_current)
+    displacement, step_size = smin_sdf_capsule_warp_sculp(xs, a, b, stent_vertices, eps, s, r_target, r_current)
     # displacement_local = kelvinlets_affine_laplacian(centerline_aligned_rv, a, b, eps, s, 1, 0.8)
     # displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     # Aggregate and normalize TODO: below use of sum is unnecessary if there is only 1 kelvinlet point
