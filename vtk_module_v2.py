@@ -1,8 +1,9 @@
 import vtkmodules.vtkRenderingOpenGL2
 from vtkmodules.vtkCommonColor import vtkNamedColors
 from vtkmodules.vtkCommonTransforms import vtkTransform
+from vtkmodules.vtkCommonDataModel import vtkImageData
 from vtkmodules.vtkFiltersSources import vtkSphereSource, vtkCylinderSource
-from vtkmodules.vtkFiltersCore import vtkGlyph3D
+from vtkmodules.vtkFiltersCore import vtkGlyph3D, vtkMarchingCubes
 from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import (
@@ -22,6 +23,7 @@ import calculate_radius_of_influence
 import numpy as np
 import copy
 from vtk.util.numpy_support import vtk_to_numpy as v2n
+from vtk.util.numpy_support import numpy_to_vtk, get_vtk_array_type
 import jax as jx
 import jax.numpy as jnp
 import time
@@ -121,6 +123,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.stent_radius = 0.4
         self.stent_length = 3.0
         self.undeployed_stent_radius = 0.05
+        # self.undeployed_stent_radius = 0.35
         self.current_stent_radius = self.undeployed_stent_radius
         self.stent_unit_section_halflength = 0.2
 
@@ -133,8 +136,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.roi_visible = True
 
         self.animation_direction = 1
-        self.num_kelvinlet_points = 2 # originally 3
-        self.interleave_mode = True
+        self.num_kelvinlet_points = 1 # originally 3
+        self.interleave_mode = False
         self.operation_count = 0
         self.total_displacement_distance = 0.0
         self.camera_lock = False
@@ -448,8 +451,76 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         renderer.AddActor(stent_assembly)
         self.stent_visualization_actors.append(stent_assembly)
-            
 
+    @staticmethod
+    @jx.jit
+    def capsule_sdf_fast(p, stent_vertices, r):
+        ba_all = jnp.diff(stent_vertices, axis=0)
+        pa_all = p - stent_vertices[None, :-1, :]
+        ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
+        ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
+        h_all = jnp.clip(ba_dot_pa_all / ba_dot_ba_all, 0, 1)
+        axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
+        dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
+        direction_all = axis_to_point_all / dist_all
+        dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments)
+        dist_to_surface_all = dist_all_squeezed - r
+        # Vectorize the folding over all mesh points:
+        final_dist_to_surface, _ = jx.vmap(scaling.compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
+        final_dist_to_surface = final_dist_to_surface[:, None]
+        sdf = final_dist_to_surface
+        return sdf
+
+    def render_sdf(self):
+        time_start = time.time()
+        if self.stent_axis_vertices is None:
+            return
+        r = self.current_stent_radius               # capsule radius
+        r_render = r + 0.1
+        # Define the sampling grid.
+        nx, ny, nz = 100, 100, 100
+        xmin = jnp.min(self.stent_axis_vertices[:,0]) - r_render
+        xmax = jnp.max(self.stent_axis_vertices[:,0]) + r_render
+        ymin = jnp.min(self.stent_axis_vertices[:,1]) - r_render
+        ymax = jnp.max(self.stent_axis_vertices[:,1]) + r_render
+        zmin = jnp.min(self.stent_axis_vertices[:,2]) - r_render
+        zmax = jnp.max(self.stent_axis_vertices[:,2]) + r_render
+        print(f"xmin: {xmin}, xmax: {xmax}, ymin: {ymin}, ymax: {ymax}, zmin: {zmin}, zmax: {zmax}")
+        x = jnp.linspace(xmin, xmax, nx)
+        y = jnp.linspace(ymin, ymax, ny)
+        z = jnp.linspace(zmin, zmax, nz)
+        X, Y, Z = jnp.meshgrid(x, y, z, indexing='ij')
+        p = jnp.stack((X.ravel(order='F'), Y.ravel(order='F'), Z.ravel(order='F')), axis=1)
+        p = p[:, None, :]
+        sdf = self.capsule_sdf_fast(p, self.stent_axis_vertices, r)
+        print(f"Time to compute SDF: {time.time() - time_start:.4f} seconds")
+        render_time_start = time.time()
+        # Create a vtkImageData and populate it with the SDF values.
+        imageData = vtkImageData()
+        imageData.SetDimensions(nx, ny, nz)
+        spacing = ((xmax - xmin) / (nx - 1), (ymax - ymin) / (ny - 1), (zmax - zmin) / (nz - 1))
+        imageData.SetSpacing(spacing)
+        imageData.SetOrigin(xmin, ymin, zmin)
+        # Flatten the sdf array in Fortran order(VTK expects Fortran order)
+        sdf_flat = sdf.ravel(order='F')
+        vtk_sdf = numpy_to_vtk(sdf_flat, deep=True, array_type=get_vtk_array_type(np.float32))
+        vtk_sdf.SetName("SDF")
+        imageData.GetPointData().SetScalars(vtk_sdf)
+        # Use vtkMarchingCubes to extract the 0-level isosurface.
+        mc = vtkMarchingCubes()
+        mc.SetInputData(imageData)
+        mc.SetValue(0, 0.0)
+        mc.Update()
+        mapper = vtkPolyDataMapper()
+        mapper.SetInputConnection(mc.GetOutputPort())
+        actor = vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(vtkNamedColors().GetColor3d("Tomato"))
+        renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+        renderer.AddActor(actor)
+        self.GetInteractor().GetRenderWindow().Render() 
+        print(f"Time to render SDF: {time.time() - render_time_start:.4f} seconds")
+        
     def place_radius_of_influence_cylinder(self, position, pointID):
         cylinder = vtkCylinderSource()
         # cylinder.SetCenter(position)
@@ -463,13 +534,11 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         tangent = self.centerline_tangents[pointID]
         rotation_axis = np.cross(default_axis, tangent)
         angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
-        # print(f"tangent: {tangent}, orientation: {rotation_axis}, angle: {angle}")
 
         # Create a transform to align the cylinder with the vector (1, 2, 3)
         transform = vtkTransform()
         transform.Translate(position)  # Translate to origin
         transform.RotateWXYZ(angle, rotation_axis)  # Rotate about the origin
-        
 
         transform_filter = vtkmodules.vtkFiltersGeneral.vtkTransformPolyDataFilter()
         transform_filter.SetInputConnection(cylinder.GetOutputPort())

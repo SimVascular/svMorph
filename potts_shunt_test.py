@@ -238,7 +238,7 @@ class MainWindow(QMainWindow):
         self.continuous_run_button.released.connect(self.stop_continuous_deformation)
         self.animation_timer.timeout.connect(self.interleave_update_selected_points)
 
-        self.controls_layout5 = QHBoxLayout()
+        self.controls_layout5 = QHBoxLayout() 
         
         # Epsilon slider 
         # Add stenosis controls
@@ -256,8 +256,16 @@ class MainWindow(QMainWindow):
         self.stenosis_area_slider.valueChanged.connect(lambda value: [self.stenosis_slider_value.setText(f"{value / 100.0}"), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
         self.stenosis_slider_value.textChanged.connect(lambda text: [self.stenosis_area_slider.setValue(int(float(text) * 100)), self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))])
         self.controls_layout5.addWidget(self.stenosis_slider_value)
-
         self.controls_layout5.addStretch(1)
+
+        self.detect_self_intersection_button = QPushButton("Detect Self-Intersection")
+        self.detect_self_intersection_button.setFixedWidth(200)
+        self.controls_layout5.addWidget(self.detect_self_intersection_button)
+
+        self.render_sdf_button = QPushButton("Render SDF")
+        self.render_sdf_button.setFixedWidth(120)
+        self.controls_layout5.addWidget(self.render_sdf_button)
+        self.render_sdf_button.clicked.connect(self.render_sdf)
         # Continuous Stent Edge apply button
         self.select_multiple_points_button = QPushButton("Select Points")
         self.select_multiple_points_button.setFixedWidth(120)
@@ -286,6 +294,8 @@ class MainWindow(QMainWindow):
         # self.centerline_file = "/home/bohanjeffli/Full_Centerlines.vtp"
         ######################## DEMO 1 ########################
         # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
+        # self.mesh_file = "/home/bohanjeffli/Unstented-Fully-Remeshed-002.vtp"
+        # self.mesh_file = "/home/bohanjeffli/pymeshfix-output-Unstented-Fully-Remeshed-002.vtp"
         self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
         self.centerline_file = "/home/bohanjeffli/centerline.vtp"
         ######################## DEMO 1 ########################
@@ -344,7 +354,7 @@ class MainWindow(QMainWindow):
         self.vtk_interactor.Start()
 
         self.style.update_deformation_parameters(self.stenosis_area_slider.value() / 100.0, -self.force_scale_slider_to_value(self.area_slider.value()))
-        self.toggle_interleave_mode_button.setStyleSheet("background-color: #d84005;")
+        self.toggle_interleave_mode_button.setStyleSheet("background-color: white")
         self.toggle_camera_lock_button.setStyleSheet("background-color: white")
         # to display some debugging information about the radius as text inside the viewport
         self.style.display_radius_texts()
@@ -455,6 +465,10 @@ class MainWindow(QMainWindow):
         self.style.select_multiple_points = True
         self.style.num_kelvinlet_points = 10
         self.style.display_centerline_vertices()
+
+    def render_sdf(self):
+        print("Displaying signed distance field.")
+        self.style.render_sdf()
 
     def start_continuous_deformation(self):
         self.timer.start(50)  # Run every 50 milliseconds

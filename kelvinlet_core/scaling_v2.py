@@ -534,9 +534,21 @@ def sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current
 
     return displacements, step_size
 
+from jax import lax
+def safe_max(arr):
+    # Use lax.cond to choose a branch based on whether the array has any elements.
+    print("arr shape: ", arr.shape)
+    return lax.cond(
+        arr.shape[1] > 0,             # Condition: is the array non-empty?
+        lambda x: jnp.max(x, axis=1)[:, None], # True branch: max together.
+        lambda x: jnp.ones((arr.shape[0],1)),  # False branch: passthrough when empty.
+        arr                         # Input to the branch functions.
+    )
 def smin_sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current):
-    doi = 0.15 # distance of influence: width of the deformation zone
-    f_scale = 0.25 * doi 
+    doi = 0.65 # distance of influence: width of the deformation zone
+    # doi = 0.15
+    f_scale = 0.25 * doi * 0.1
+    # f_scale = 0.25 * doi
     # rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
     ba_all = jnp.diff(stent_vertices, axis=0)
     pa_all = rv - stent_vertices[None, :-1, :]
@@ -546,7 +558,7 @@ def smin_sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_cu
     axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
     dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
     direction_all = axis_to_point_all / dist_all
-    dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments)
+    dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments) 
     dist_to_surface_all = dist_all_squeezed - r_current
     # Vectorize the folding over all mesh points:
     final_dist_to_surface, final_direction = jx.vmap(compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
@@ -555,6 +567,34 @@ def smin_sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_cu
     displacements = f_scale * ((final_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * final_direction
     displacements = displacements * mask
     # displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
+    scaling_mask = (1 - final_dist_to_surface / doi)
+    # following line is original unJITable code
+    # vertices_close_to_stent = rv[(final_dist_to_surface < 0.01).astype(bool)] 
+    # vertices_close_to_stent_indices = jnp.range(rv.shape[0]) * (final_dist_to_surface < 0.01).astype(int)
+    # vertices_close_to_stent = jnp.take(rv, vertices_close_to_stent_indices, axis=0)
+    vertices_close_to_stent_mask = (final_dist_to_surface < 0.01).astype(int)
+    # print("vertices_close_to_stent shape: ", vertices_close_to_stent.shape)
+    print("rv shape", rv.shape)
+    print("mask shape: ", mask.shape)
+    # distances_to_vertices_close_to_stent = jnp.linalg.norm(rv - vertices_close_to_stent[None, :, :], axis=-1)
+    distances_to_vertices_close_to_stent = jnp.linalg.norm(rv - rv[None, :, 0, :], axis=-1)
+    print("distances_to_vertices_close_to_stent shape: ", distances_to_vertices_close_to_stent.shape)
+    affected_vertices_mask = (distances_to_vertices_close_to_stent < doi).astype(int)
+    affected_vertices_alpha = (1 - distances_to_vertices_close_to_stent / doi) * affected_vertices_mask
+    print("affected_vertices_alpha shape: ", affected_vertices_alpha.shape)
+    print("affected_vertices_mask shape: ", affected_vertices_mask.shape)
+    # affected_vertices_mask = jnp.any(affected_vertices_mask, axis=1)[:, None].astype(int)
+    # following is the original unJITable code
+    # affected_vertices_blended_alpha = jnp.max(affected_vertices_alpha, axis=1)[:, None] if affected_vertices_alpha.shape[1] > 0 else jnp.any(affected_vertices_mask, axis=1)[:, None].astype(int)
+    print("vertices_close_to_stent_mask shape: ", vertices_close_to_stent_mask.shape)
+    affected_vertices_alpha = affected_vertices_alpha * vertices_close_to_stent_mask[None, :, 0]
+    affected_vertices_blended_alpha = safe_max(affected_vertices_alpha)
+
+    print("affected_vertices_blended_alpha shape: ", affected_vertices_blended_alpha.shape)
+
+    # displacements = displacements
+    # displacements = displacements * jnp.any(affected_vertices_mask, axis=1)[:, None].astype(int)
+    displacements = displacements * affected_vertices_blended_alpha #* scaling_mask 
     step_size = f_scale * (-s)
 
     return displacements, step_size
@@ -932,7 +972,9 @@ def get_sdf_displacements_inner(data_points, xs, centers, a, b, stent_vertices, 
     # Prepare xs and centers using broadcasting
     centers = jnp.tile(centers, (num_mesh_points, 1, 1))
     # Compute rv in the local frame
-    rv = xs - centers
+    # rv = xs - centers
+    # print("rv shape: ", rv.shape)
+    # print("xs shape: ", xs.shape)
     # Rotate rv to the global frame
     # rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
     # centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
