@@ -5,6 +5,8 @@ import vtk
 import copy
 # from time import perf_counter
 import numpy as np
+from scipy.spatial import cKDTree
+from scipy.spatial.distance import cdist
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 from vtk.util.numpy_support import numpy_to_vtk as n2v
 
@@ -535,13 +537,23 @@ def sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current
     return displacements, step_size
 
 from jax import lax
-def safe_max(arr):
+def old_safe_max(arr):
     # Use lax.cond to choose a branch based on whether the array has any elements.
     print("arr shape: ", arr.shape)
     return lax.cond(
         arr.shape[1] > 0,             # Condition: is the array non-empty?
         lambda x: jnp.max(x, axis=1)[:, None], # True branch: max together.
         lambda x: jnp.ones((arr.shape[0],1)),  # False branch: passthrough when empty.
+        arr                         # Input to the branch functions.
+    )
+
+def safe_max(arr):
+    # Use lax.cond to choose a branch based on whether the array has any elements.
+    print("alpha_array shape[1]: ", arr.shape[1])
+    return lax.cond(
+        arr.shape[1] > 0,             # Condition: if in_contact is non-empty
+        lambda x: jnp.max(x, axis=1), # True branch: max together.
+        lambda x: jnp.ones(arr.shape[0]),  # False branch: passthrough when empty.
         arr                         # Input to the branch functions.
     )
 def smin_sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current):
@@ -566,6 +578,7 @@ def smin_sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_cu
     mask = (final_dist_to_surface < doi).astype(int)
     displacements = f_scale * ((final_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * final_direction
     displacements = displacements * mask
+    '''
     # displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
     scaling_mask = (1 - final_dist_to_surface / doi)
     # following line is original unJITable code
@@ -588,16 +601,111 @@ def smin_sdf_capsule_warp_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_cu
     # affected_vertices_blended_alpha = jnp.max(affected_vertices_alpha, axis=1)[:, None] if affected_vertices_alpha.shape[1] > 0 else jnp.any(affected_vertices_mask, axis=1)[:, None].astype(int)
     print("vertices_close_to_stent_mask shape: ", vertices_close_to_stent_mask.shape)
     affected_vertices_alpha = affected_vertices_alpha * vertices_close_to_stent_mask[None, :, 0]
-    affected_vertices_blended_alpha = safe_max(affected_vertices_alpha)
+    affected_vertices_blended_alpha = old_safe_max(affected_vertices_alpha)
 
     print("affected_vertices_blended_alpha shape: ", affected_vertices_blended_alpha.shape)
 
     # displacements = displacements
     # displacements = displacements * jnp.any(affected_vertices_mask, axis=1)[:, None].astype(int)
     displacements = displacements * affected_vertices_blended_alpha #* scaling_mask 
+    '''
     step_size = f_scale * (-s)
 
     return displacements, step_size
+
+@jx.jit
+def smin_sdf_capsule_contact_sculp(rv, a, b, stent_vertices, eps, s, r_target, r_current):
+    doi = 0.65 # distance of influence: width of the deformation zone
+    doc = 0.01 # distance within which contact is made
+    # doi = 0.15
+    f_scale = 0.25 * doi * 0.1
+    # f_scale = 0.25 * doi
+    # rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+    ba_all = jnp.diff(stent_vertices, axis=0)
+    pa_all = rv - stent_vertices[None, :-1, :]
+    ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
+    ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
+    h_all = jnp.clip(ba_dot_pa_all / ba_dot_ba_all, 0, 1)
+    axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
+    dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
+    direction_all = axis_to_point_all / dist_all
+    dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments) 
+    dist_to_surface_all = dist_all_squeezed - r_current
+    # Vectorize the folding over all mesh points:
+    final_dist_to_surface, final_direction = jx.vmap(compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
+    final_dist_to_surface = final_dist_to_surface[:, None]
+    # mask = (final_dist_to_surface < doi).astype(int)
+    # new_contact_mask = (final_dist_to_surface < doc).astype(bool)
+    
+    return final_dist_to_surface, final_direction
+    # displacements = f_scale * ((final_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * final_direction
+    # displacements = displacements * mask
+
+@jx.jit
+def smin_sdf_capsule_contact_sculp_part_two(in_influence_vertices, in_contact_vertices, doi):
+    doi = 0.65
+    # f_scale = 0.25 * doi * 0.1
+    start_time = time.time()
+    # in_influence_indices = jnp.nonzero(in_influence_mask, size = num_in_influence, fill_value=-1)[0] 
+    # in_influence_vertices = xs[in_influence_indices, 0, :]
+    in_influence_to_in_contact_distances = jnp.linalg.norm(in_influence_vertices[:, None, :] - in_contact_vertices[None, :, :], axis=-1)
+    print("time to compute all pair distances: ", time.time() - start_time)
+    start_time = time.time()
+    # shape of in_influence_to_in_contact_distances: 
+    # (num_in_influence_points, in_contact_points)
+    in_influence_vertices_alpha = (1 - in_influence_to_in_contact_distances / doi)
+    in_influence_vertices_blended_alpha = jnp.max(in_influence_vertices_alpha, axis=1)
+    # print("in_influence_vertices_blended_alpha shape: ", in_influence_vertices_blended_alpha.shape)
+    # print("final_dist_to_surface shape: ", final_dist_to_surface.shape)
+    # print("in_influence_indices shape: ", in_influence_indices.shape)
+    # in_influence_vertices_blended_alpha_mask = jnp.zeros(total_num_vertices)
+    # in_influence_vertices_blended_alpha_mask = in_influence_vertices_blended_alpha_mask.at[in_influence_indices].set(in_influence_vertices_blended_alpha)
+    print("time to compute the blend mask: ", time.time() - start_time)
+    # start_time = time.time()
+
+    # displacements = f_scale * ((final_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * final_direction * doi_mask * in_influence_vertices_blended_alpha_mask[:, None]
+    # step_size = f_scale * (-s)
+    # print("time to compute displacements: ", time.time() - start_time)
+
+    # return displacements, step_size
+    return in_influence_vertices_blended_alpha
+
+def smin_sdf_capsule_contact_sculp_part_two_KD(in_influence_vertices, in_contact_vertices, doi):
+    doi = 0.65
+    start_time = time.time()
+    # in_influence_to_in_contact_distances = jnp.linalg.norm(in_influence_vertices[:, None, :] - in_contact_vertices[None, :, :], axis=-1)
+    tree = cKDTree(in_contact_vertices, leafsize=32)
+    in_influence_to_in_contact_distances, indices = tree.query(in_influence_vertices, k=1)
+    print("time to compute all pair distances: ", time.time() - start_time)
+    start_time = time.time()
+    # shape of in_influence_to_in_contact_distances: 
+    # print("in_influence_to_in_contact_distances shape: ", in_influence_to_in_contact_distances.shape)
+    # (num_in_influence_points, in_contact_points)
+    in_influence_vertices_alpha = (1 - in_influence_to_in_contact_distances / doi)
+    # in_influence_vertices_blended_alpha = jnp.max(in_influence_vertices_alpha, axis=1)
+    print("time to compute the blend mask: ", time.time() - start_time)
+    
+    return in_influence_vertices_alpha
+
+@ jx.jit
+def smin_sdf_capsule_contact_sculp_default(final_dist_to_surface, final_direction, in_influence_indices, in_influence_vertices, in_contact_vertices, doi, s):
+    doi = 0.65
+    f_scale = 0.25 * doi * 0.1
+    doi_mask = (final_dist_to_surface < doi).astype(int)
+    in_influence_to_in_contact_distances = jnp.linalg.norm(in_influence_vertices[:, None, :] - in_contact_vertices[None, :, :], axis=-1)
+    # shape of in_influence_to_in_contact_distances: 
+    # (num_in_influence_points, in_contact_points)
+    in_influence_vertices_alpha = (1 - in_influence_to_in_contact_distances / doi)
+    in_influence_vertices_blended_alpha = safe_max(in_influence_vertices_alpha)
+    print("in_influence_vertices_blended_alpha shape: ", in_influence_vertices_blended_alpha.shape)
+    in_influence_vertices_blended_alpha_mask = jnp.ones(final_dist_to_surface.shape[0])
+    in_influence_vertices_blended_alpha_mask = in_influence_vertices_blended_alpha_mask.at[in_influence_indices].set(in_influence_vertices_blended_alpha)
+
+    displacements = f_scale * ((final_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * final_direction * doi_mask * in_influence_vertices_blended_alpha_mask[:, None]
+    step_size = f_scale * (-s)
+
+    return displacements, step_size    
+
 
 def kelvinlets_stent_edge_nonaffine_cylinder_with_stop(rv, a, b, eps, s, direction): #radius bounded, stops the whole field at once, maybe no self-intersections, current best
     # Ensure the input tensor has the correct dimensions
@@ -991,6 +1099,22 @@ def get_sdf_displacements_inner(data_points, xs, centers, a, b, stent_vertices, 
         # average_displacement_distance *= surface_mesh_scale_factor
     return displacement, step_size
 
+@jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
+def get_sdf_contact_displacements_inner(data_points, xs, centers, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, w, r_target, r_current):
+    num_mesh_points = data_points.shape[0]
+    # Prepare xs and centers using broadcasting
+    centers = jnp.tile(centers, (num_mesh_points, 1, 1))
+    # Compute rv in the local frame
+    # rv = xs - centers
+    # print("rv shape: ", rv.shape)
+    # print("xs shape: ", xs.shape)
+    contact_mask = smin_sdf_capsule_contact_sculp(xs, a, b, stent_vertices, eps, s, r_target, r_current)
+
+    # Scale if required
+    if surface_mesh_scale_factor is not None:
+        displacement *= surface_mesh_scale_factor
+    return 
+
 # Helper function to preprocess data
 def get_affine_displacements_v2(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor):
     # Resolve all_indices and force_center_point_id outside JIT
@@ -1218,6 +1342,89 @@ def get_sdf_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale
     # )
     # print("average_displacement_distance = ", average_displacement_distance)
     return displacements, step_size#, centerline_displacements
+
+def get_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius, in_contact_mask, not_in_contact_mask):
+    # Resolve all_indices and force_center_point_id outside JIT
+    force_center_point_id = data["nodes"]["force_center_point_id"]
+    print("force center: ", force_center_point_id)
+    # Prepare other data
+    data_points = data["points"]["surface"]
+    # centerline_points = data["points"]["centerline"]
+    num_kelvinlet_points = 1
+    xs = jnp.expand_dims(data_points, 1)
+    xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
+    # print("num_kelvinlet_points: ", num_kelvinlet_points)
+    # print("xs shape: ", xs.shape)
+    # centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
+   
+    num_mesh_points = data_points.shape[0]
+    # Prepare xs and centers using broadcasting
+    # centers = jnp.tile(centers, (num_mesh_points, 1, 1))
+    start_time = time.time()
+    total_num_vertices = xs.shape[0]
+    doi = 0.65
+    doc = 0.01
+    f_scale = 0.25 * doi * 0.1
+    final_dist_to_surface, final_direction = smin_sdf_capsule_contact_sculp(xs, a, b, stent_vertices, eps, s, target_stent_radius, current_stent_radius) #JIT-compiled
+    new_contact_mask = (final_dist_to_surface < doc).astype(bool)
+    # print("new_contact_mask shape: ", new_contact_mask.shape)
+    print("time taken to compute new_contact points: ", time.time() - start_time)
+    xs = np.array(xs)
+    new_contact_mask = np.array(new_contact_mask)
+    start_time = time.time()
+    in_contact_vertices = xs[new_contact_mask, :]
+    print("time taken to obtain in_contact vertices subslice: ", time.time() - start_time)
+    # print("in contact vertices shape: ", in_contact_vertices.shape)
+    if in_contact_vertices.shape[0] == 0: # things are in contact <=> things are in influence
+        step_size = f_scale * (-s)
+        displacements, step_size = jnp.zeros((num_mesh_points, 3)), step_size
+        return displacements, step_size 
+    # in_contact_mask = in_contact_mask.at[new_contact_indices].set(True)
+    # not_in_contact_mask = not_in_contact_mask.at[new_contact_indices].set(False)
+    start_time = time.time()
+    contact_tree = cKDTree(in_contact_vertices, leafsize=32)
+    dist_min, _ = contact_tree.query(xs[:, 0, :], k=1, distance_upper_bound=doi)
+    # print("dist_min shape: ", dist_min.shape)
+    # print("time for KD Tree query: ", time.time() - start_time)
+    start_time = time.time()
+    in_influence_mask = dist_min < doi
+    # print("in_influence_mask shape: ", in_influence_mask.shape)
+    print("time it takes to compute <", time.time() - start_time)
+    flat_time = time.time()
+    in_influence_indices = np.flatnonzero(in_influence_mask)
+    print("in_influence_indices shape: ", in_influence_indices.shape)
+    print("time taken to flattennonzero: ", time.time() - flat_time)
+    # assert(in_influence_indices.shape[0] > 0)
+    start_time = time.time()
+    # in_influence_vertices = xs[in_influence_mask, 0, :]
+    # print("in_influence_vertices shape: ", in_influence_vertices.shape)
+    # print("in_influence x in-contact shape: (", in_influence_vertices.shape[0], ", ", in_contact_vertices.shape[0], ")")
+    in_influence_vertices = xs[in_influence_mask, 0, :]
+    # num_in_influence = jx.jit(lambda mask: jnp.sum(mask))(in_influence_mask)
+    print("time taken to obtain in-influence vertices: ", time.time() - start_time)
+    # # D = compute_all_pair_distances(in_influence_vertices, in_contact_vertices)
+    # print("D shape: ", D.shape)
+    part_two_start_time = time.time()
+    # in_influence_vertices = jnp.array(in_influence_vertices)
+    # in_influence_indices_jnp = jnp.array(in_influence_indices)
+    # in_contact_vertices = jnp.array(in_contact_vertices)
+    print("time for converting to jnp arrays: ", time.time() - part_two_start_time)
+    start_time = time.time()
+    doi_mask = (final_dist_to_surface < doi).astype(int)
+    in_influence_vertices_blended_alpha_mask = np.zeros(total_num_vertices)
+    in_influence_vertices_blended_alpha = smin_sdf_capsule_contact_sculp_part_two_KD(in_influence_vertices, in_contact_vertices, doi)
+    print("time taken to compute JIT sculpt part two: ", time.time() - start_time)
+    start_time = time.time()
+    in_influence_vertices_blended_alpha = np.array(in_influence_vertices_blended_alpha)
+    # in_influence_vertices_blended_alpha_mask = in_influence_vertices_blended_alpha_mask.at[in_influence_indices].set(in_influence_vertices_blended_alpha)
+    in_influence_vertices_blended_alpha_mask[in_influence_indices] = in_influence_vertices_blended_alpha
+    print("time taken to compute blended alpha mask in np: ", time.time() - start_time)
+    start_time = time.time()
+    displacements = f_scale * ((final_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * final_direction * doi_mask * in_influence_vertices_blended_alpha_mask[:, None]
+    step_size = f_scale * (-s)
+    print("time taken to compute rest of the displacements: ", time.time() - start_time)   
+
+    return displacements, step_size
 
 def get_affine_displacements_v2_no_timer(data, a, b, eps, s, phi_type, mesh_type, surface_mesh_scale_factor):
     assert mesh_type in {"surface", "centerline"} or mesh_type.startswith("other_geometry_")

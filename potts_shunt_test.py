@@ -385,7 +385,8 @@ class MainWindow(QMainWindow):
         print(f"Haha Running stent with force scale: {force_scale}")
         epsilon = self.stenosis_area_slider.value() / 100.0
         print(f"Running stent with epsilon: {epsilon}")
-        self.style.deform_mesh_sdf(epsilon, force_scale)
+        # self.style.deform_mesh_sdf(epsilon, force_scale)
+        self.style.deform_mesh_sdf_contact(epsilon, force_scale)
     
     def run_deformation_simultaneous(self):
         # area_percent_change = self.area_slider.value()
