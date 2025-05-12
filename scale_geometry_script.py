@@ -28,10 +28,18 @@ if __name__ == '__main__':
     scale_factor = 0.1
 
     # File names for the input and output files
-    surface_input = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed.vtp"
-    centerline_input = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_fine_centerlines.vtp"
-    surface_output = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed_scaled_down_10x.vtp"
-    centerline_output = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_fine_centerlines_scaled_down_10x.vtp"
+    # surface_input = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed.vtp"
+    # centerline_input = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_fine_centerlines.vtp"
+    surface_input = "/home/bohanjeffli/SU0243-preop.vtp"
+    centerline_input = "/home/bohanjeffli/SU0243-preop-centerlines.vtp"
+    surface_input = "/home/bohanjeffli/SU0243-postop-estimated.vtp"
+    # centerline_input = "/home/bohanjeffli/SU0243-postop-estimated-centerlines.vtp"
+    # surface_output = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed_scaled_down_10x.vtp"
+    # centerline_output = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_fine_centerlines_scaled_down_10x.vtp"
+    surface_output = "/home/bohanjeffli/SU0243-preop-cm.vtp"
+    centerline_output = "/home/bohanjeffli/SU0243-preop-centerlines-cm.vtp"
+    surface_output = "/home/bohanjeffli/SU0243-postop-estimated-cm.vtp"
+    # centerline_output = "/home/bohanjeffli/SU0243-postop-estimated-centerlines-cm.vtp"
 
     # Scale both the surface mesh and the centerline
     scale_polydata(surface_input, surface_output, scale_factor)

@@ -4,6 +4,7 @@ import vtk
 import numpy as np
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 from vtk.util.numpy_support import numpy_to_vtk as n2v
+from collections import defaultdict
 import time
 import jax.numpy as jnp
 import jax as jx
@@ -60,9 +61,66 @@ def polydata_to_np_jnp_data(surface_polydata, centerline_polydata):
         },
         "centerline_coordinate": jnp.array([])
     }
+    
     return data
 
-def sample_stent_axis_vertices(points, starting_point_idx, desired_total_length, desired_segment_length, jump_threshold=1.0):
+def polydata_to_parent_tip_map(centerline_polydata):
+    """
+    Build a mapping  pointId -> maxPointId_of_closest_parent_segment
+    for a VTK centre‑line tree whose segments are encoded by a
+    {0,1}-flag array (one component per leaf branch).
+    Returns dict { pointId (int) : parent_tip_pointId (int) }.
+    """
+    vtk_arr = centerline_polydata.GetPointData().GetArray("CenterlineId")
+    if vtk_arr is None:
+        raise ValueError("Point array 'CenterlineId' not found.")
+    flags = v2n(vtk_arr)            # (N, n_components)
+    print("flags.shape = ", flags.shape)
+    # n_pts, n_comp = flags.shape
+    # Group points into segments
+    #  -- unique_rows  :   (n_segments, n_components)
+    #  -- inverse      :   length N vector   point i --> segment_id
+    unique_rows, inverse = np.unique(flags, axis=0, return_inverse=True)
+    # n_segments = unique_rows.shape[0]
+    segment_points = defaultdict(list)          # seg_id -> [pt_id, ...]
+    for pointId, seg_id in enumerate(inverse):
+        segment_points[seg_id].append(pointId)
+    #  Pre‑compute the “tip” (largest point id) of every segment.
+    seg_tip = {seg_id: max(pts) for seg_id, pts in segment_points.items()}
+    segment_base_mask = np.zeros(flags.shape[0], dtype=bool)
+    for seg_id, pts in segment_points.items():
+        segment_base_mask[min(pts)] = True
+    #  Pre‑compute bit counts (how many 1’s) to choose closest parent.
+    seg_bitcount = unique_rows.sum(axis=1)      # (n_segments,)
+    # 3)  For every segment, find its closest ancestor
+    #     (superset with minimal extra 1‑bits)
+    parent_tip_for_segment = {}   # seg_id -> parent_tip_point_id
+    for child_id, child_mask in enumerate(unique_rows):
+        # Vectorised superset test:
+        # parent is superset  <=>   all 1‑bits in child also 1 in parent
+        mask_ok = np.logical_or(~child_mask.astype(bool), unique_rows.astype(bool))
+        is_superset = mask_ok.all(axis=1)
+        # Exclude itself, keep only strictly larger (superset) bit masks
+        is_superset[child_id] = False
+        # If no ancestor exists (root), map to its own tip.
+        if not np.any(is_superset):
+            parent_tip_for_segment[child_id] = seg_tip[child_id]
+            continue
+        # Among supersets pick the one with the fewest 1‑bits
+        candidate_ids = np.nonzero(is_superset)[0]
+        extra_bits = seg_bitcount[candidate_ids] - seg_bitcount[child_id]
+        best_parent_idx = candidate_ids[np.argmin(extra_bits)]
+        parent_tip_for_segment[child_id] = seg_tip[best_parent_idx]
+
+    # 4)  Build the final point‑level dictionary
+    point_to_parent_tip = {}
+    for pt_id, seg_id in enumerate(inverse):
+        point_to_parent_tip[pt_id] = parent_tip_for_segment[seg_id]
+    # print("unit test: parent id for 662 = ", point_to_parent_tip[662])
+    # print("unit test: parent id for 7745 = ", point_to_parent_tip[7745])
+    return point_to_parent_tip, segment_base_mask
+
+def sample_stent_axis_vertices(points, parent_tip_map, segment_base_mask, starting_point_idx, desired_total_length, desired_segment_length, jump_threshold=1.0, sampling_direction=-1):
     """
     Extracts and resamples a subsegment of a polyline.
     
@@ -80,40 +138,52 @@ def sample_stent_axis_vertices(points, starting_point_idx, desired_total_length,
     is longer than jump_threshold, a jump is assumed.
     If a jump is encountered before reaching the desired_total_length, the subsegment is terminated
     just before the jump and the achieved length is printed.
+    The sampling direction can be either -1 (backward) or +1 (forward), this ensures we always sample from a branch towards a trunk so that stent location can be unambiguously identified with just the starting point index.
     """
+    if sampling_direction not in (-1, 1):
+        raise ValueError("sampling_direction must be integer -1 or +1")
     if len(points) < 2:
         raise ValueError("Not enough points to form a polyline.")
+    
     diffs_all = np.diff(points, axis=0)
     distances_all = np.linalg.norm(diffs_all, axis=1)
     
     subsegment_points = []
-    # Start with the given starting point.
     subsegment_points.append(points[starting_point_idx])
     cumulative_length = 0.0
     n_points = len(points)
     
     # Walk along the polyline starting from starting_point_idx.
-    for i in range(starting_point_idx, n_points - 1):
-        # Compute the Euclidean distance to the next point.
-        d = distances_all[i]
-        # Check if this segment is a jump.
-        if d > jump_threshold:
+    i = starting_point_idx
+    idx_end = 0 if sampling_direction == -1 else n_points - 1
+    next_point_idx_offset = -1 if sampling_direction == -1 else 0
+    while i != idx_end:
+        # d = distances_all[i+next_point_dist_idx]
+        # if d > jump_threshold:
             # Jump detected; break out without including the jump segment.
-            print(f"Jump detected at segment {i} -> {i+1} (distance {d:.4f} cm).")
-            break
+            # print(f"Jump detected at segment {i} -> {i+sampling_direction} (distance {d:.4f} cm).")
+            # break
+        if segment_base_mask[i]:
+            next_i = parent_tip_map[i]
+            d = np.linalg.norm(points[next_i] - points[i])
+        else:
+            next_i = i + sampling_direction
+            d = distances_all[i + next_point_idx_offset]
         # If adding the full segment would exceed desired_total_length,
         # interpolate along this segment to hit the target exactly.
         if cumulative_length + d < desired_total_length:
             cumulative_length += d
-            subsegment_points.append(points[i+1])
+            subsegment_points.append(points[next_i])
         else:
             remaining = desired_total_length - cumulative_length
-            t = remaining / d  # interpolation fraction
-            new_point = (1 - t) * points[i] + t * points[i+1]
+            t = remaining / d 
+            new_point = (1 - t) * points[i] + t * points[next_i]
             subsegment_points.append(new_point)
             cumulative_length += remaining
-            break  # desired total length achieved
-    
+            break  # desired total length achieved, exit loop
+
+        i = next_i
+    print(f"subsegment_points = {subsegment_points}")
     effective_total_length = cumulative_length
     if effective_total_length < desired_total_length:
         print(f"Subsegment truncated due to jump. Best achieved length = {effective_total_length:.4f} cm")
@@ -124,7 +194,7 @@ def sample_stent_axis_vertices(points, starting_point_idx, desired_total_length,
     # Compute cumulative arc-length for the subsegment.
     diffs = np.diff(subsegment_points, axis=0)
     seg_lengths = np.linalg.norm(diffs, axis=1)
-    cumu_length = np.concatenate(([0], np.cumsum(seg_lengths)))
+    cumu_length = np.concatenate(([0.0], np.cumsum(seg_lengths)))
     total_length = cumu_length[-1]
     # Generate new arc-length values from 0 to total_length, with spacing desired_segment_length.
     new_s = np.arange(0, total_length, desired_segment_length)

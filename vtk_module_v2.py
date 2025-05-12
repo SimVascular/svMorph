@@ -103,6 +103,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.centerline_tangents = vtk_utils.get_centerline_tangents_np(centerline)
         print(f"Time to get centerline tangents: {time.time() - start_time:.4f} seconds")
         self.data = vtk_utils.polydata_to_np_jnp_data(mesh, centerline)
+        self.parent_tip_map, self.segment_base_mask = vtk_utils.polydata_to_parent_tip_map(centerline)
         # print("Should be equal:", np.allclose(self.data["points"]["centerline"], self.data["points"]["centerline_points_view_np"]))
         # print("centerline tangents length: ", len(self.centerline_tangents))
         # print("a few of the entries of centerline tangents: ", self.centerline_tangents[:5])
@@ -126,8 +127,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # self.undeployed_stent_radius = 0.43
         self.current_stent_radius = self.undeployed_stent_radius
         self.stent_unit_section_halflength = 0.2
-        self.in_contact_mask = None
-        self.not_in_contact_mask = None
 
         self.stent_visualization_actors = []
         self.roi_actors = []
@@ -137,6 +136,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.glyph_actor = None
         self.roi_visible = True
 
+        self.sampling_direction = -1
         self.animation_direction = 1
         self.num_kelvinlet_points = 1 # originally 3
         self.interleave_mode = False
@@ -298,7 +298,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def compute_prescribed_stent(self):
         # total_length = 3.0 # cm 3.0
         segment_length = 0.1 # cm 0.1
-        self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.selected_points[-1], self.stent_length, segment_length, jump_threshold=1.0)
+        self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], self.stent_length, segment_length, jump_threshold=1.0, sampling_direction=self.sampling_direction)
         print(f"num vertices for stent of length {self.stent_length}cm, segment length {segment_length}cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
         
@@ -754,6 +754,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
     def reverse_animation_direction(self):
         self.animation_direction *= -1
+        self.sampling_direction *= -1
 
     def update_force_center_idx(self):
         self.force_center_idx = (self.animation_direction - 1) // 2
@@ -1076,6 +1077,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         displacement_start_time = time.time()
         simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
         surface_polydata = common.update_polydata_with_points(surface_polydata, simulation_data, "surface")
+        # self.mesh = surface_polydata
         # simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
         # centerline_polydata = common.update_polydata_with_points(centerline_polydata, simulation_data, "centerline")
         print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
@@ -1250,7 +1252,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         print("eps = ", eps, "force_scale = ", force_scale)
         # , centerline_displacements
-        surface_displacements, step_size = scaling.get_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius, self.in_contact_mask, self.not_in_contact_mask) # TODO: remove those arguments that has self since can directly access 
+        surface_displacements, step_size = scaling.get_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
         self.current_stent_radius += step_size
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         

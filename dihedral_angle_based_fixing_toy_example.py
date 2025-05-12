@@ -4,10 +4,13 @@ import time
 import numpy as np
 import scipy.sparse as sp
 from collections import defaultdict
+from vtk.util.numpy_support import vtk_to_numpy
+from scipy.spatial import cKDTree
 
 # Global variables for file paths (unused in this minimal example if you switch to manually created polydata)
 FILE_PATH1 = "/home/bohanjeffli/mesh-complete-exterior.vtp"
 FILE_PATH = "/home/bohanjeffli/march-24-SI-Test-Two.vtp"
+# FILE_PATH = "/home/bohanjeffli/SU0243-stented-SI-test.vtp"
 # FILE_PATH = "/home/bohanjeffli/march-24-SI-Test-Fine-Mesh.vtp"
 # FILE_PATH = "/home/bohanjeffli/march-21-SI-Test-Two.vtp"
 # FILE_PATH = "/home/bohanjeffli/april-14-SI-perpendicular-typical-scale-test.vtp"
@@ -408,6 +411,57 @@ def build_adjacency_matrix(polyData):
     A = sp.coo_matrix((data, (rows, cols)), shape=(num_points, num_points))
     return A.tocsr()
 
+# -------------------------------------------------------------------------
+# Build edge‑adjacency / vertex‑only‑adjacency **only for a subset** of
+# triangles identified by their global cell‑ids.
+# -------------------------------------------------------------------------
+def build_subset_adjacency(polydata, cell_ids):
+    """
+    Parameters
+    ----------
+    polydata : vtkPolyData    (the global mesh)
+    cell_ids : list[int]      (global cell ids of the working subset)
+
+    Returns
+    -------
+    tris_global  : (m,3) int   vertex indices of the subset
+    edge_adj     : list[ set[int] ] length m
+    vert_adj     : list[ set[int] ] length m
+    """
+    # ----- gather triangles --------------------------------------------------
+    tri_ids_map = {cid: k for k, cid in enumerate(cell_ids)}   # global→local
+    tris_global = vtk_to_numpy(polydata.GetPolys().GetData()).reshape(-1, 4)[:, 1:][cell_ids]
+
+    m = len(cell_ids)
+    edge_adj = [set() for _ in range(m)]
+    vert_adj = [set() for _ in range(m)]
+
+    # ----- edge adjacency ----------------------------------------------------
+    edge2local = {}
+    for loc_id, (a, b, c) in enumerate(tris_global):
+        for e in ((a, b), (b, c), (c, a)):
+            key = tuple(sorted(e))
+            edge2local.setdefault(key, []).append(loc_id)
+    for ids in edge2local.values():
+        if len(ids) > 1:
+            for i in ids:
+                edge_adj[i].update(ids)
+
+    # ----- vertex‑only adjacency --------------------------------------------
+    v2local = {}
+    for loc_id, tri in enumerate(tris_global):
+        for v in tri:
+            v2local.setdefault(int(v), []).append(loc_id)
+    for ids in v2local.values():
+        if len(ids) > 1:
+            for i in ids:
+                for j in ids:
+                    if j == i or j in edge_adj[i]:
+                        continue
+                    vert_adj[i].add(j)
+
+    return tris_global, edge_adj, vert_adj
+
 def k_ring_neighbors_sparse(A, start_vertex, k):
     """
     Compute the k-ring neighborhood using repeated sparse matrix multiplication.
@@ -428,6 +482,199 @@ def k_ring_neighbors_sparse(A, start_vertex, k):
 # =============================================================================
 # Module 9: Self-Intersection Correction (Existing Code)
 # =============================================================================
+EPS = 1e-12          # global geometric tolerance
+# ------------------------------------------------------------------
+#  Basic helpers
+# ------------------------------------------------------------------
+def plane_from_triangle(tri):
+    """Return (n, d) for the plane n·x + d = 0 containing the triangle."""
+    v0, v1, v2 = tri
+    n = np.cross(v1 - v0, v2 - v0)
+    n_norm = np.linalg.norm(n)
+    if n_norm < EPS:
+        raise ValueError("Degenerate triangle")
+    n /= n_norm
+    d = -np.dot(n, v0)
+    return n, d
+
+def signed_dist(points, n, d):
+    """Signed distance of point(s) to plane n·x + d = 0."""
+    return np.dot(points, n) + d
+
+def edge_plane_intersection(p0, p1, d0, d1):
+    """Return the intersection point of edge (p0,p1) with a plane,
+       given the signed distances d0, d1 of endpoints to that plane.
+    """
+    t = d0 / (d0 - d1)          # safe because d0 and d1 not both zero when called
+    return p0 + t * (p1 - p0)
+
+def unique_rows(pts):
+    """Deduplicate points within EPS tolerance."""
+    if len(pts) == 0:
+        return pts
+    # Sort lexicographically to cluster near‑duplicates
+    idx = np.lexsort((pts[:, 2], pts[:, 1], pts[:, 0]))
+    pts = pts[idx]
+    keep = [0]
+    for i in range(1, len(pts)):
+        if np.linalg.norm(pts[i] - pts[keep[-1]]) > EPS:
+            keep.append(i)
+    return pts[keep]
+
+def point_in_triangle(p, tri, n):
+    """Barycentric test, robust to coplanar tolerance."""
+    v0, v1, v2 = tri
+    u = v1 - v0
+    v = v2 - v0
+    w = p  - v0
+    uv = np.dot(u, v)
+    uu = np.dot(u, u)
+    vv = np.dot(v, v)
+    wu = np.dot(w, u)
+    wv = np.dot(w, v)
+    denom = uv * uv - uu * vv
+    if abs(denom) < EPS:
+        return False
+    s = (uv * wv - vv * wu) / denom
+    t = (uv * wu - uu * wv) / denom
+    return (-EPS <= s <= 1+EPS) and (-EPS <= t <= 1+EPS) and (s + t <= 1+EPS)
+
+# ------------------------------------------------------------------
+#  Main routine
+# ------------------------------------------------------------------
+def triangle_triangle_intersection(T1, T2):
+    """
+    Parameters
+    ----------
+    T1, T2 : ndarray, shape (3, 3)
+        Cartesian coordinates of the two triangles' vertices.
+
+    Returns
+    -------
+    result : dict with keys
+        'intersects' : bool
+        'type'       : 'none' | 'point' | 'segment' | 'area'
+        'points'     : ndarray (k, 3)  intersection vertices (empty if none)
+    """
+    # -- 1.  plane equations --------------------------------------------------
+    n1, d1 = plane_from_triangle(T1)
+    n2, d2 = plane_from_triangle(T2)
+
+    # Signed distances of triangle vertices to opposite planes
+    sd1 = signed_dist(T1, n2, d2)
+    sd2 = signed_dist(T2, n1, d1)
+
+    # Quick rejection: all on same strict side
+    if (np.all(sd1 >  EPS) or np.all(sd1 < -EPS) or
+        np.all(sd2 >  EPS) or np.all(sd2 < -EPS)):
+        return {'intersects': False, 'type': 'none', 'points': np.empty((0, 3))}
+
+    # -- 2.  Collect candidate intersection points ---------------------------
+    pts = []
+
+    # (a)  edges of T1 vs. plane of T2
+    edges1 = [(0,1), (1,2), (2,0)]
+    for i0, i1 in edges1:
+        d0, d1_e = sd1[i0], sd1[i1]
+        if d0 * d1_e < -EPS**2:                       # opposite signs
+            pts.append(edge_plane_intersection(T1[i0], T1[i1], d0, d1_e))
+        elif abs(d0) < EPS:                           # endpoint on plane
+            pts.append(T1[i0])
+        elif abs(d1_e) < EPS:
+            pts.append(T1[i1])
+
+    # (b)  edges of T2 vs. plane of T1
+    edges2 = [(0,1), (1,2), (2,0)]
+    for j0, j1 in edges2:
+        d0, d1_e = sd2[j0], sd2[j1]
+        if d0 * d1_e < -EPS**2:
+            pts.append(edge_plane_intersection(T2[j0], T2[j1], d0, d1_e))
+        elif abs(d0) < EPS:
+            pts.append(T2[j0])
+        elif abs(d1_e) < EPS:
+            pts.append(T2[j1])
+
+    if len(pts) == 0:
+        # Coplanar but disjoint or numerical fall‑through
+        return {'intersects': False, 'type': 'none', 'points': np.empty((0, 3))}
+
+    pts = unique_rows(np.asarray(pts))
+
+    # -- 3.  Filter points that truly lie inside both triangles --------------
+    keep = []
+    for p in pts:
+        if point_in_triangle(p, T1, n1) and point_in_triangle(p, T2, n2):
+            keep.append(p)
+    pts = unique_rows(np.asarray(keep))
+
+    if len(pts) == 0:
+        return {'intersects': False, 'type': 'none', 'points': np.empty((0, 3))}
+
+    # -- 4.  Classify the dimension of the intersection ----------------------
+    if len(pts) == 1 or np.max(np.linalg.norm(pts - pts[0], axis=1)) < EPS:
+        itype = 'point'
+    elif abs(np.dot(n1, n2) - 1) < EPS and len(pts) >= 3:
+        # Coplanar overlap with area (triangles not parallel exactly? They are.)
+        # Compute convex hull area in plane coordinates (project to dominant axis)
+        itype = 'area'
+    else:
+        # Non‑coplanar line segment (or coplanar segment)
+        itype = 'segment'
+
+    return {'intersects': True, 'type': itype, 'points': pts}
+
+
+# -------------------------------------------------------------------------
+# Push‑normal untangle  (works on the subset only)
+# -------------------------------------------------------------------------
+def untangle_push_normals(polydata, cell_ids, step=0.01,
+                          max_iter=15, broad_r=0.05):
+    pts = vtk_to_numpy(polydata.GetPoints().GetData())
+    tris, edge_adj, vert_adj = build_subset_adjacency(polydata, cell_ids)
+
+    # local → global helper
+    loc2glob = np.asarray(cell_ids, int)
+
+    for _ in range(max_iter):
+        T   = pts[tris]                # (m,3,3)
+        cen = T.mean(1)
+        nrm = np.cross(T[:,1]-T[:,0], T[:,2]-T[:,0])
+        nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
+
+        kd   = cKDTree(cen)
+        cand = kd.query_ball_tree(kd, r=broad_r)     # neighbour lists
+
+        moved = False
+        disp  = np.zeros_like(pts)
+
+        for i, neighbors in enumerate(cand):
+            neighbors = [j for j in neighbors
+                     if j not in edge_adj[i] and j != i]
+            if not neighbors:
+                continue
+
+            nontrivial = False
+            for j in neighbors:
+                info = triangle_triangle_intersection(T[i], T[j])
+                if not info['intersects']:
+                    continue
+                if info['type'] != 'point' or j not in vert_adj[i]:
+                    nontrivial = True
+                    break
+            if not nontrivial:
+                continue
+
+            # vec = cen[neighbors] - cen[i]
+            # sgn = np.sign(np.einsum('ij,ij->i', vec, nrm[i])).mean()
+            disp[tris[i]] += -step * nrm[i]
+            moved = True
+
+        if not moved:
+            break
+        pts += disp
+
+    polydata.GetPoints().GetData().Modified()
+
 def rotate_point_around_line(point, line_point1, line_point2, angle_degrees):
     """
     Rotate 'point' about the axis defined by line_point1 and line_point2 by angle_degrees.
@@ -514,6 +761,45 @@ def correct_self_intersections_callback(obj, event):
     global_glyph_actor = new_glyph_actor
     print("Self-intersection correction complete.")
 
+def push_normals_callback(obj, event):
+    global global_polydata, global_selected_vertices, global_renderWindow
+
+    if not global_selected_vertices:
+        print("No grow‑selection – nothing to correct.")
+        return
+
+    # collect global cell ids that touch at least one selected vertex
+    sel_cells = []
+    for cid in range(global_polydata.GetNumberOfCells()):
+        cell = global_polydata.GetCell(cid)
+        if any(cell.GetPointId(i) in global_selected_vertices for i in range(3)):
+            sel_cells.append(cid)
+
+    if not sel_cells:
+        print("Selection contains no triangles.")
+        return
+
+    print(f"Push‑normal untangle on {len(sel_cells)} triangles …")
+    untangle_push_normals(global_polydata, sel_cells,
+                          step=0.001, max_iter=1, broad_r=0.1)
+    global_renderWindow.Render()
+    print("Done.")
+
+def create_push_normals_button(interactor):
+    txt = vtk.vtkTextActor()
+    txt.SetInput("Correct Intersections (push‑normals)")
+    tp  = txt.GetTextProperty(); tp.SetFontSize(24); tp.SetColor(0,0,0)
+    rep = vtk.vtkTextRepresentation()
+    rep.GetPositionCoordinate().SetValue(0.35, 0.46)
+    rep.GetPosition2Coordinate().SetValue(0.3, 0.1)
+    w   = vtk.vtkTextWidget()
+    w.SetInteractor(interactor)
+    w.SetRepresentation(rep)
+    w.SetTextActor(txt)
+    w.On()
+    w.AddObserver("EndInteractionEvent", push_normals_callback)
+    return w
+
 def create_button_widget(interactor):
     """
     Create a text widget button that triggers self-intersection correction.
@@ -546,6 +832,9 @@ def save_mesh_callback(obj, event):
     file_name = "april-8-laplacian-corrected-15-degrees.vtp"
     file_name = "march-24-SI-Test-Fine-Mesh.vtp"
     file_name = "april-14-SI-Laplacian-Fixed-perpendicular-typical-scale-test.vtp"
+    file_name = "may-7-minimum-fix-0.001-movement.vtp"
+    file_name = "may-7-march-24-SI-Test-Two-0.001-movement.vtp"
+
     writer.SetFileName(file_name)
     writer.SetInputData(global_polydata)
     writer.Write()
@@ -770,6 +1059,9 @@ def main():
     
     # Create and add the Laplacian smooth button widget.
     laplacianSmoothButton = create_laplacian_smooth_button(interactor)
+
+    # Create and add the push normals button widget.
+    pushNormalsButton = create_push_normals_button(interactor)
 
     global_renderWindow.Render()
     interactor.Initialize()

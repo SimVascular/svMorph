@@ -296,8 +296,10 @@ class MainWindow(QMainWindow):
         # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
         # self.mesh_file = "/home/bohanjeffli/Unstented-Fully-Remeshed-002.vtp"
         # self.mesh_file = "/home/bohanjeffli/pymeshfix-output-Unstented-Fully-Remeshed-002.vtp"
-        self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
-        self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        self.mesh_file = "/home/bohanjeffli/SU0243-preop-cm.vtp"
+        # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
+        # self.centerline_file = "/home/bohanjeffli/centerline.vtp"
+        self.centerline_file = "/home/bohanjeffli/SU0243-preop-centerlines-cm.vtp"
         ######################## DEMO 1 ########################
         # self.mesh_file = "/home/bohanjeffli/potts/potts_geometry_remeshed.vtp"
         # self.mesh_file = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed_scaled_down_10x.vtp"
@@ -312,7 +314,7 @@ class MainWindow(QMainWindow):
         ########################################################
         # self.mesh_file = None
         # self.centerline_file = None
-        self.initialize_vtk_handler()
+        self.initialize_vtk_handler() 
         
 
 
