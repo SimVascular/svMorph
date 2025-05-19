@@ -296,7 +296,7 @@ class MainWindow(QMainWindow):
         # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
         # self.mesh_file = "/home/bohanjeffli/Unstented-Fully-Remeshed-002.vtp"
         # self.mesh_file = "/home/bohanjeffli/pymeshfix-output-Unstented-Fully-Remeshed-002.vtp"
-        self.mesh_file = "/home/bohanjeffli/SU0243-preop-cm.vtp"
+        self.mesh_file = "/home/bohanjeffli/SU0243-preop-cm.vtp" 
         # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
         # self.centerline_file = "/home/bohanjeffli/centerline.vtp"
         self.centerline_file = "/home/bohanjeffli/SU0243-preop-centerlines-cm.vtp"

@@ -10,6 +10,7 @@ from vtkmodules.vtkRenderingCore import (
     vtkActor,
     vtkPolyDataMapper,
     vtkPointPicker,
+    vtkGlyph3DMapper,
     vtkRenderWindowInteractor,
     vtkRenderer,
     vtkPropPicker,
@@ -209,8 +210,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             self.total_displacement_distance = 0.0
             self.place_highlight_sphere(sphere_center, pointID)
             self.compute_prescribed_stent()
-            self.in_contact_mask = jnp.zeros(self.data["points"]["surface"].shape[0], dtype=bool)
-            self.not_in_contact_mask = jnp.ones_like(self.in_contact_mask)
             
             if len(self.selected_points) > self.num_kelvinlet_points:
                 self.selected_points.pop(0)
@@ -222,6 +221,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
                 self.stent_visualization_actors.pop(0)
                 self.current_stent_radius = self.undeployed_stent_radius
                 self.update_current_stent_radius()
+                self.GetInteractor().GetRenderWindow().Render()
 
             self.update_selected_point_radius_text()
         self.OnLeftButtonDown()
@@ -234,25 +234,41 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
         sphereSource = vtkSphereSource()
         sphereSource.SetRadius(0.01)  # Adjust radius as needed.
-        sphereSource.SetThetaResolution(4)
-        sphereSource.SetPhiResolution(4)
+        sphereSource.SetThetaResolution(8)
+        sphereSource.SetPhiResolution(8)
         sphereSource.Update()
 
-        glyphFilter = vtkGlyph3D()
-        glyphFilter.SetSourceConnection(sphereSource.GetOutputPort())
-        glyphFilter.SetInputData(polydata)
-        # Disable data-driven scaling if you want uniform sphere sizes.
-        glyphFilter.SetScaleModeToDataScalingOff()
-        glyphFilter.Update()
+        # glyphFilter = vtkGlyph3D()
+        # glyphFilter.SetSourceConnection(sphereSource.GetOutputPort())
+        # glyphFilter.SetInputData(polydata)
+        # # Disable data-driven scaling if you want uniform sphere sizes.
+        # glyphFilter.SetScaleModeToDataScalingOff()
+        # glyphFilter.Update()
 
-        glyphMapper = vtkPolyDataMapper()
-        glyphMapper.SetInputConnection(glyphFilter.GetOutputPort())
+        # glyphMapper = vtkPolyDataMapper()
+        # glyphMapper.SetInputConnection(glyphFilter.GetOutputPort())
 
-        glyphActor = vtkActor()
-        glyphActor.SetMapper(glyphMapper)
-        glyphActor.GetProperty().SetColor(0.0, 1.0, 0.0)
-        self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(glyphActor)
-        self.glyph_actor = glyphActor
+        # glyphActor = vtkActor()
+        # glyphActor.SetMapper(glyphMapper)
+        # glyphActor.GetProperty().SetColor(0.0, 1.0, 0.0)
+
+        # 2. Use the GPU glyph mapper instead of vtkGlyph3D
+        self.glyphMapper = vtkGlyph3DMapper()
+        self.glyphMapper.SetSourceConnection(sphereSource.GetOutputPort())
+        self.glyphMapper.SetInputData(self.centerline_actor.GetMapper().GetInput())
+        self.glyphMapper.ScalingOff()               # uniform size
+        self.glyphMapper.SetStatic(1)               # no per‐glyph data changes expected
+        # optionally tweak:
+        # self.glyphMapper.SetResolveCoincidentTopologyToPolygonOffset()
+        # self.glyphMapper.SetScalarVisibility(0)
+
+        # 3. Create the actor once
+        self.glyphActor = vtkActor()
+        self.glyphActor.SetMapper(self.glyphMapper)
+        self.glyphActor.GetProperty().SetColor(0,1,0)
+
+        self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(self.glyphActor)
+        # self.glyph_actor = glyphActor
         self.mesh_actor.GetProperty().SetOpacity(0.3)
         self.centerline_actor.SetPickable(1)
         self.GetInteractor().GetRenderWindow().Render()
@@ -293,7 +309,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         if self.roi_text_actor is None:
             return
         self.roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius:.4f}")
-        self.GetInteractor().GetRenderWindow().Render()
 
     def compute_prescribed_stent(self):
         # total_length = 3.0 # cm 3.0
@@ -721,9 +736,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
                 # opacity
                 stent_segment_geometry = stent_segment_actor.geometrySource
                 stent_segment_geometry.SetRadius(self.current_stent_radius)
-
         self.update_roi_text()
-        self.GetInteractor().GetRenderWindow().Render()
 
     def update_selected_point(self):
         if len(self.selected_points) == 0:
@@ -952,7 +965,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # self.total_displacement_distance += displacement_distance
         # print(f"Total displacement distance: {self.total_displacement_distance}")
         self.update_current_stent_radius()
+        start_time = time.time()
         self.GetInteractor().GetRenderWindow().Render()
+        print(f"Time for doing this stuff: {time.time() - start_time:.4f} seconds")
 
     def run_aneyrusm_parallel(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
@@ -1220,8 +1235,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
         # --- Load Polydata ---
         load_start_time = time.time()
-        centerline_polydata = self.centerline  # Loaded from self attributes
-        surface_polydata = self.mesh
+        # centerline_polydata = self.centerline  # Loaded from self attributes
+        # surface_polydata = self.mesh
         print(f"Time for reading surface polydata: {time.time() - load_start_time:.4f} seconds")
 
         # --- Define Points and Nodes ---
@@ -1234,7 +1249,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
         calc_displacement_start_time = time.time()
-        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, simulation_data["nodes"]["force_center_point_id"])
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(self.centerline, simulation_data["nodes"]["force_center_point_id"])
         print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
         cross_section_time = time.time()
         original_radius = 0.42
@@ -1252,14 +1267,17 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         print("eps = ", eps, "force_scale = ", force_scale)
         # , centerline_displacements
-        surface_displacements, step_size = scaling.get_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
+        surface_displacements, centerline_displacements, step_size = scaling.get_sdf_contact_surface_and_centerline_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
         self.current_stent_radius += step_size
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         
         # --- Scale Displacements to Match Desired Area ---
         displacement_start_time = time.time()
         simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
-        surface_polydata = common.update_polydata_with_points(surface_polydata, simulation_data, "surface")
+        simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
+        common.update_polydata_with_points(self.mesh, simulation_data, "surface")
+        common.update_polydata_with_points(self.centerline, simulation_data, "centerline")
+
         print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
         total_simulation_time = time.time() - total_start_time
         print(f"Total simulation time: {total_simulation_time:.4f} seconds")

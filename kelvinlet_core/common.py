@@ -3,7 +3,7 @@
 import vtk
 # import math
 import copy
-# from time import perf_counter
+import time
 # import textwrap
 import numpy as np
 import functools
@@ -41,9 +41,10 @@ def get_radius_at_point(centerline_polydata, point_id):
     return radius
 
 def update_polydata_with_points(polydata, data, mesh_type):
-    polypoints = polydata.GetPoints()
-    polypoints.SetData(n2v(data["points"][mesh_type]))
-    polydata.Modified()
+    # polypoints = polydata.GetPoints()
+    # polypoints.SetData(n2v(data["points"][mesh_type]))
+    polydata.GetPoints().Modified()
+    # polydata.Modified()
     return polydata
 
 def update_polydata_with_points_jonathan(polydata, data, mesh_type):

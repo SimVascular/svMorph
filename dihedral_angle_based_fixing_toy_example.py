@@ -10,6 +10,7 @@ from scipy.spatial import cKDTree
 # Global variables for file paths (unused in this minimal example if you switch to manually created polydata)
 FILE_PATH1 = "/home/bohanjeffli/mesh-complete-exterior.vtp"
 FILE_PATH = "/home/bohanjeffli/march-24-SI-Test-Two.vtp"
+FILE_PATH = "/home/bohanjeffli/pymeshfix-output-may-7-minimum-fix-0.001-movement.vtp"
 # FILE_PATH = "/home/bohanjeffli/SU0243-stented-SI-test.vtp"
 # FILE_PATH = "/home/bohanjeffli/march-24-SI-Test-Fine-Mesh.vtp"
 # FILE_PATH = "/home/bohanjeffli/march-21-SI-Test-Two.vtp"
@@ -751,7 +752,7 @@ def correct_self_intersections_callback(obj, event):
     normals_filter.SplittingOff()
     normals_filter.Update()
     global_polydata.ShallowCopy(normals_filter.GetOutput())
-    global_cell_colors = highlight_flat_cells(global_polydata, global_edge_dict, angle_threshold=20)
+    global_cell_colors = highlight_flat_cells(global_polydata, global_edge_dict, angle_threshold=40)
     global_polydata.GetCellData().SetScalars(global_cell_colors)
     global_renderWindow.Render()
     new_glyph_actor = create_normals_glyph_actor(global_polydata, scale_factor=0.1)
@@ -834,6 +835,7 @@ def save_mesh_callback(obj, event):
     file_name = "april-14-SI-Laplacian-Fixed-perpendicular-typical-scale-test.vtp"
     file_name = "may-7-minimum-fix-0.001-movement.vtp"
     file_name = "may-7-march-24-SI-Test-Two-0.001-movement.vtp"
+    file_name = "05-13-2025-dihedral-fixed-pymeshfix-minimum-fix-0.001.vtp"
 
     writer.SetFileName(file_name)
     writer.SetInputData(global_polydata)
@@ -1026,7 +1028,7 @@ def main():
     # Build the oriented edge list.
     global_edge_dict = build_oriented_edge_list(global_polydata)
     # Highlight cells based on bending angle.
-    global_cell_colors = highlight_flat_cells(global_polydata, global_edge_dict, angle_threshold=15)
+    global_cell_colors = highlight_flat_cells(global_polydata, global_edge_dict, angle_threshold=40)
 
     # Create a normals glyph actor.
     glyph_actor = create_normals_glyph_actor(global_polydata, scale_factor=0.1)

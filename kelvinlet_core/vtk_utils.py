@@ -52,8 +52,8 @@ def polydata_to_np_jnp_data(surface_polydata, centerline_polydata):
         "points": {
             "surface_points_view_np": surface_points_view_np,
             "centerline_points_view_np": centerline_points_view_np,
-            "surface": surface_points_jnp,
-            "centerline": centerline_points_jnp
+            "surface": surface_points_view_np,
+            "centerline": centerline_points_view_np
         },
         "nodes": {
             "all_indices": [],
@@ -183,7 +183,7 @@ def sample_stent_axis_vertices(points, parent_tip_map, segment_base_mask, starti
             break  # desired total length achieved, exit loop
 
         i = next_i
-    print(f"subsegment_points = {subsegment_points}")
+    # print(f"subsegment_points = {subsegment_points}")
     effective_total_length = cumulative_length
     if effective_total_length < desired_total_length:
         print(f"Subsegment truncated due to jump. Best achieved length = {effective_total_length:.4f} cm")
