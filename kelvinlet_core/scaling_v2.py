@@ -1613,7 +1613,8 @@ def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_verti
     num_kelvinlet_points = 1
     doi = 0.65
     doc = 0.01
-    f_scale = 0.25 * doi * 0.1
+    # f_scale = 0.25 * doi * 0.1
+    f_scale = 0.01
     start_time = time.time()
     sbb_mask = stent_bounding_box(data_points, stent_vertices, target_stent_radius, doi, doc)
     cbb_mask = stent_bounding_box(centerline_points, stent_vertices, target_stent_radius, doi, doc)

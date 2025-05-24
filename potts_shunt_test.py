@@ -228,18 +228,16 @@ class MainWindow(QMainWindow):
         self.animated_aneurysm_button.released.connect(self.stop_animated_deformation)
 
         # Add continuous aneurysm apply button
-        self.continuous_run_button = QPushButton("Continuous Aneurysm Apply")
+        self.continuous_run_button = QPushButton("Continuous Contact Apply")
         self.continuous_run_button.setFixedWidth(200)
         self.controls_layout.addWidget(self.continuous_run_button)
         # Timer for continuous deformation
-        self.timer.timeout.connect(self.run_deformation)
+        self.timer.timeout.connect(self.run_deformation_sdf)
         # Connect button press and release events
         self.continuous_run_button.pressed.connect(self.start_continuous_deformation)
         self.continuous_run_button.released.connect(self.stop_continuous_deformation)
-        self.animation_timer.timeout.connect(self.interleave_update_selected_points)
 
         self.controls_layout5 = QHBoxLayout() 
-        
         # Epsilon slider 
         # Add stenosis controls
         self.stenosis_slider_label = QLabel("Epsilon Negative Exponent:")
@@ -282,6 +280,17 @@ class MainWindow(QMainWindow):
         self.simultaneous_apply_button.clicked.connect(self.run_deformation_simultaneous)
         # self.animated_aneurysm_button.pressed.connect(self.start_animated_deformation)
         # self.animated_aneurysm_button.released.connect(self.stop_animated_deformation)
+
+        self.continuous_run_button = QPushButton("Continuous Aneurysm Apply")
+        self.continuous_run_button.setFixedWidth(200)
+        self.controls_layout5.addWidget(self.continuous_run_button)
+        # Timer for continuous deformation
+        self.timer.timeout.connect(self.run_deformation)
+        # Connect button press and release events
+        self.continuous_run_button.pressed.connect(self.start_continuous_deformation)
+        self.continuous_run_button.released.connect(self.stop_continuous_deformation)
+        self.animation_timer.timeout.connect(self.interleave_update_selected_points)
+
         self.layout.addLayout(self.controls_layout5)
 
         # VTK Setup
