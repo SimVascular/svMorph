@@ -449,26 +449,28 @@ def kelvinlets_stent_edge(rv, a, b, eps, s, direction, w, r_target):
 def kelvinlets_truncated_sphere_warp_sculp(rv, a, b, eps, s, r_target):
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     # Extract components of rv
-    f_scale = 0.5 
+    f_scale = 0.01
+    # eps = 0.001
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
     # Compute re with epsilon added
     # re = jnp.sqrt(rx**2 + ry**2 + rz**2 + eps**2)
     re = jnp.sqrt(rx**2 + ry**2 + rz**2)
-    mask = (re <= r_target).astype(int)
+    # mask = (re <= r_target).astype(int)
     assert re.shape == (num_mesh_points, num_kelvinlet_points)
-    assert mask.shape == (num_mesh_points, num_kelvinlet_points)
+    # assert mask.shape == (num_mesh_points, num_kelvinlet_points)
     # Expand re and tile to match the dimensions of rv
     re = jnp.expand_dims(re, 2)
     # Compute powers of re for the displacement formula
-    # re3 = re**3
-    # re5 = re**5
+    re3 = re**3
+    re5 = re**5
     # Calculate displacements
     rv = rv.at[:, :, 2].set(0 * rv[:, :, 2])
     
-    displacements = f_scale * r_target * ((re / r_target) ** 2 - 1) ** 2 * (-s) * rv
-    displacements = displacements * mask[:, :, None]
-    # displacements = (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
+    # displacements = f_scale * r_target * ((re / r_target) ** 2 - 1) ** 2 * (-s) * rv
+    # displacements = displacements * mask[:, :, None]
+    displacements = f_scale * (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
     assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
+    print("displacements norms: ", jnp.linalg.norm(displacements))
 
     return displacements
 
@@ -1009,7 +1011,7 @@ def get_rotation_matrix_v2_jonathan(data, first_centerline_point_id, last_center
 
     return rotation_matrix, centerline_axis_vector
 
-@jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
+#@jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
 def get_affine_laplacian_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, w, r_target):
     num_mesh_points = data_points.shape[0]
     # Prepare xs and centers using broadcasting
@@ -1164,8 +1166,8 @@ def get_affine_displacements_v3(data, a, b, eps, s, phi_type, mesh_type, surface
     # Prepare other data
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
-    # rotation_matrix, _ = get_rotation_matrix_v2(data, left_index, right_index - 1, "z", data_points.shape[0])
-    rotation_matrix = None
+    rotation_matrix, _ = get_rotation_matrix_v2(data, left_index, right_index - 1, "z", data_points.shape[0])
+    # rotation_matrix = None
     # num_kelvinlet_points = 1
     num_kelvinlet_points = right_index - left_index
     # print("left_index: ", left_index)
@@ -1179,7 +1181,7 @@ def get_affine_displacements_v3(data, a, b, eps, s, phi_type, mesh_type, surface
     centers = jnp.expand_dims(centerline_points[left_index:right_index, :], 0)
     # Call the JIT-compiled function
     displacement = get_affine_displacements_inner(
-        data_points, centerline_points, rotation_matrix, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+        data_points, rotation_matrix, xs, centers, a, b, eps, s, surface_mesh_scale_factor
     ) / num_kelvinlet_points
     return displacement
 
@@ -1211,12 +1213,12 @@ def get_affine_displacements_point(data, a, b, eps, s, phi_type, mesh_type, surf
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
     # rotation_matrices = [compute_householder_matrix(normal) for normal in kelvinlet_points_normals]
     # Call the JIT-compiled function
-    displacement, average_displacement_distance = get_affine_laplacian_displacements_inner(
-        data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, stent_halflength
-    ) / num_kelvinlet_points
-    # displacement = get_affine_displacements_inner(
-    #     data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+    # displacement, average_displacement_distance = get_affine_laplacian_displacements_inner(
+    #     data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, stent_halflength
     # ) / num_kelvinlet_points
+    displacement = get_affine_displacements_inner(
+        data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
+    ) / num_kelvinlet_points
     return displacement
 
 def get_parallell_displacements(data, a, b, eps, s, surface_mesh_scale_factor, kelvinlet_points_normals, stent_halflength, stent_radius):
@@ -1274,7 +1276,7 @@ def get_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_cente
     #     centerline_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
     # )
     # print("average_displacement_distance = ", average_displacement_distance)
-    return displacements, average_displacement_distance#, centerline_displacements
+    return np.array(displacements), average_displacement_distance#, centerline_displacements
 
 def get_stent_edge_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal, direction, w, r_target):
     # Resolve all_indices and force_center_point_id outside JIT

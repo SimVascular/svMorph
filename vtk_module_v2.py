@@ -209,6 +209,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             self.operation_count = 0
             self.total_displacement_distance = 0.0
             self.place_highlight_sphere(sphere_center, pointID)
+            # if self.roi_visible:
             self.compute_prescribed_stent()
             
             if len(self.selected_points) > self.num_kelvinlet_points:
@@ -302,7 +303,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             pointID = self.selected_points[-1]
             area = self.centerline_section_areas[pointID]
             radius = np.sqrt(area / np.pi)
-        self.radius_text_actor.SetInput(f"local lumen radius = {radius:.4f}")
+        self.radius_text_actor.SetInput(f"lumen effective radius = {radius:.4f}")
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_roi_text(self):
@@ -1047,16 +1048,12 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
         print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
         # --- Load Polydata ---
-        load_start_time = time.time()
-        centerline_polydata = self.centerline  # Loaded from self attributes
-        surface_polydata = self.mesh
-        print(f"Time for reading surface polydata: {time.time() - load_start_time:.4f} seconds")
 
         # --- Define Points and Nodes ---
         setup_start_time = time.time()
         other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-        simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
-        simulation_data = scaling.define_nodes_affine(simulation_data, node_point_indices)
+        # simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = scaling.define_nodes_affine(self.data, node_point_indices)
         simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
         print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
         
@@ -1067,7 +1064,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
         calc_displacement_start_time = time.time()
-        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, simulation_data["nodes"]["force_center_point_id"])
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(self.centerline, simulation_data["nodes"]["force_center_point_id"])
         print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
         cross_section_time = time.time()
         original_radius = 0.42
@@ -1086,12 +1083,15 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         print("eps = ", eps, "force_scale = ", force_scale)
         # , centerline_displacements
         surface_displacements, average_displacement_distance = scaling.get_displacements(simulation_data, a, b, eps, force_scale, None, normal, stent_halflength, stent_radius)
+        # surface_displacements = scaling.get_affine_displacements_point(simulation_data, a, b, eps, 1000, None, None, None, normal, stent_halflength)
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
+        average_displacement_distance = 0
+        # self.current_stent_radius += average_displacement_distance
         
         # --- Scale Displacements to Match Desired Area ---
         displacement_start_time = time.time()
         simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
-        surface_polydata = common.update_polydata_with_points(surface_polydata, simulation_data, "surface")
+        common.update_polydata_with_points(self.mesh, simulation_data, "surface")
         # self.mesh = surface_polydata
         # simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
         # centerline_polydata = common.update_polydata_with_points(centerline_polydata, simulation_data, "centerline")

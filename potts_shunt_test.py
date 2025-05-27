@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
 
         # Timer for continuous deformation and animated deformation
         self.timer = QTimer(self)
+        self.kelvinlet_timer = QTimer(self)
         self.stent_edge_timer = QTimer(self)
         self.animation_timer = QTimer(self)
         
@@ -285,10 +286,10 @@ class MainWindow(QMainWindow):
         self.continuous_run_button.setFixedWidth(200)
         self.controls_layout5.addWidget(self.continuous_run_button)
         # Timer for continuous deformation
-        self.timer.timeout.connect(self.run_deformation)
+        self.kelvinlet_timer.timeout.connect(self.run_deformation)
         # Connect button press and release events
-        self.continuous_run_button.pressed.connect(self.start_continuous_deformation)
-        self.continuous_run_button.released.connect(self.stop_continuous_deformation)
+        self.continuous_run_button.pressed.connect(self.start_continuous_kelvinlet_deformation)
+        self.continuous_run_button.released.connect(self.stop_continuous_kelvinlet_deformation)
         self.animation_timer.timeout.connect(self.interleave_update_selected_points)
 
         self.layout.addLayout(self.controls_layout5)
@@ -308,7 +309,7 @@ class MainWindow(QMainWindow):
         self.mesh_file = "/home/bohanjeffli/SU0243-preop-cm.vtp" 
         # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
         # self.centerline_file = "/home/bohanjeffli/centerline.vtp"
-        self.centerline_file = "/home/bohanjeffli/SU0243-preop-centerlines-cm.vtp"
+        self.centerline_file = "/home/bohanjeffli/MarsdenLab/my-vtk/corrected-SU0243-preop-centerlines-cm.vtp"
         ######################## DEMO 1 ########################
         # self.mesh_file = "/home/bohanjeffli/potts/potts_geometry_remeshed.vtp"
         # self.mesh_file = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed_scaled_down_10x.vtp"
@@ -487,6 +488,12 @@ class MainWindow(QMainWindow):
 
     def stop_continuous_deformation(self):
         self.timer.stop()
+
+    def start_continuous_kelvinlet_deformation(self):
+        self.kelvinlet_timer.start(50)
+        
+    def stop_continuous_kelvinlet_deformation(self):
+        self.kelvinlet_timer.stop()
 
     def start_animated_deformation(self):
         self.timer.start(50)
