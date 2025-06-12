@@ -306,10 +306,10 @@ class MainWindow(QMainWindow):
         # self.mesh_file = "/home/bohanjeffli/Unstented-Full-Tree-PA.vtp"
         # self.mesh_file = "/home/bohanjeffli/Unstented-Fully-Remeshed-002.vtp"
         # self.mesh_file = "/home/bohanjeffli/pymeshfix-output-Unstented-Fully-Remeshed-002.vtp"
-        self.mesh_file = "/home/bohanjeffli/SU0243-preop-cm.vtp" 
+        self.mesh_file = "SU0243-preop-cm.vtp" 
         # self.mesh_file = "/home/bohanjeffli/mesh-complete-exterior.vtp"
         # self.centerline_file = "/home/bohanjeffli/centerline.vtp"
-        self.centerline_file = "/home/bohanjeffli/MarsdenLab/my-vtk/corrected-SU0243-preop-centerlines-cm.vtp"
+        self.centerline_file = "corrected-SU0243-preop-centerlines-cm.vtp"
         ######################## DEMO 1 ########################
         # self.mesh_file = "/home/bohanjeffli/potts/potts_geometry_remeshed.vtp"
         # self.mesh_file = "/home/bohanjeffli/MarsdenLab/my-vtk/input/potts_geometry_remeshed_scaled_down_10x.vtp"
@@ -441,7 +441,7 @@ class MainWindow(QMainWindow):
         falloff_type = "regular"
         weight_regularized_laplacian = 1        
         print(f"Running stenosis with area percent change: {area_percent_change}, num ring points: {num_ring_points}")
-        self.style.deform_mesh_stenosis(area_percent_change, num_ring_points, falloff_type, weight_regularized_laplacian)
+        self.style.deform_mesh_stenosis(area_percent_change)
         # self.vtk_widget.GetRenderWindow().Render()
         # self.ren.Render()
 

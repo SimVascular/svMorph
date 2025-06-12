@@ -109,6 +109,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # print("centerline tangents length: ", len(self.centerline_tangents))
         # print("a few of the entries of centerline tangents: ", self.centerline_tangents[:5])
         self.centerline_section_areas = vtk_utils.get_centerline_cross_section_areas_np(centerline)
+        self.maximum_inscribed_sphere_radius = vtk_utils.get_maximum_inscribed_sphere_radius_np(centerline)
         self.mesh_filename = mesh_filename
         self.centerline_filename = centerline_filename
         self.mesh_actor = mesh_actor
@@ -278,7 +279,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         radius = 0.0
         # Create a text actor to display the radius at selected point
         selected_point_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
-        selected_point_text_actor.SetInput(f"local lumen radius = {radius:.4f}")
+        selected_point_text_actor.SetInput(f"MIS radius = {radius:.4f}, lumen effective radius = {radius:.4f}")
         selected_point_text_actor.GetTextProperty().SetColor(0.0, 0.0, 0.0)
         selected_point_text_actor.GetTextProperty().SetFontSize(16)
         selected_point_text_actor.SetPosition(10, 28)
@@ -303,7 +304,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             pointID = self.selected_points[-1]
             area = self.centerline_section_areas[pointID]
             radius = np.sqrt(area / np.pi)
-        self.radius_text_actor.SetInput(f"lumen effective radius = {radius:.4f}")
+        self.radius_text_actor.SetInput(f"MIS radius = {self.maximum_inscribed_sphere_radius[pointID]:.4f}, lumen effective radius = {radius:.4f}")
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_roi_text(self):
@@ -970,6 +971,17 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
         print(f"Time for doing this stuff: {time.time() - start_time:.4f} seconds")
 
+    def deform_mesh_stenosis(self, area_percent_change):
+        if len(self.selected_points) < 1:
+            print("Please select 1 point along the centerline.")
+            return
+        if len(self.selected_points) > 1:
+            print("Using only the most recent point picked.")
+            self.selected_points = self.selected_points[-1:]
+
+        self.create_aneurysm(self.mesh_filename, self.centerline_filename, self.selected_points, area_percent_change)
+        self.GetInteractor().GetRenderWindow().Render()
+
     def run_aneyrusm_parallel(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
@@ -1504,17 +1516,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             surface_polydata_copy = common.update_polydata_with_points(surface_polydata_copy, data_surface_copy, "surface")
             current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
 
-    def deform_mesh_jonathan(self, area_percent_change):
-        if len(self.selected_points) < 3:
-            print("Please select at least 3 points along the centerline.")
-            return
-        if len(self.selected_points) > 3:
-            print("Using only the most recent 3 points picked.")
-            self.selected_points = self.selected_points[-3:]
-
-        create_aneurysm(self.mesh_filename, self.centerline_filename, self.selected_points, area_percent_change)
-        self.update_mesh_viewer()
-
     def update_mesh_viewer(self):
         # updated_mesh = load_vtp_file("obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp")
         # updated_centerline = load_vtp_file("obtained_aneurysm_centerline_aneurysm_constant_uniscale_1.vtp")
@@ -1556,34 +1557,96 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         ren.GetRenderWindow().Render()
         '''
 
-def create_aneurysm(mesh_filename, centerline_filename, selected_points, area_percent_change, model="test_aneurysm"):
-    # centerline_polydata_input_file_name = centerline_filename
-    # surface_polydata_input_file_name = mesh_filename
-    centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
-    surface_polydata_output_file_name = "obtained_aneurysm_surface"
+    def create_aneurysm(self, mesh_filename, centerline_filename, selected_points, area_percent_change, model="test_aneurysm"):
+        # centerline_polydata_input_file_name = centerline_filename
+        # surface_polydata_input_file_name = mesh_filename
+        centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
+        surface_polydata_output_file_name = "obtained_aneurysm_surface"
 
-    list_of_other_geometry_polydata_input_file_names = []
-    list_of_other_geometry_polydata_output_file_names = []
+        list_of_other_geometry_polydata_input_file_names = []
+        list_of_other_geometry_polydata_output_file_names = []
 
-    # to make sure the selected points are in order regardless of picking order
-    selected_points.sort()
-    force_center_point_id = selected_points[1]
-    list_of_node_point_indices = selected_points
-    # area_percent_change = 500
-    phi_type = "constant"
-    affine_params = {"eps": {model: 1.0}, "scale": {model: 1.1}}
+        # to make sure the selected points are in order regardless of picking order
+        selected_points.sort()
+        force_center_point_id = selected_points[0]
+        list_of_node_point_indices = selected_points
+        # area_percent_change = 500
+        phi_type = "constant"
+        affine_params = {"eps": {model: 1.0}, "scale": {model: 1.1}}
+        force_scale = 10
 
-    mu = 1
-    nu = 0.4
-    num_time_steps = 25
-    num_time_steps = 1
+        mu = 1
+        nu = 0.4
+        num_time_steps = 25
+        num_time_steps = 1
 
-    # write_vtp_file(centerline, centerline_polydata_input_file_name)
-    # write_vtp_file(mesh, surface_polydata_input_file_name)
+        # write_vtp_file(centerline, centerline_polydata_input_file_name)
+        # write_vtp_file(mesh, surface_polydata_input_file_name)
 
-    scaling.run_aneurysm(
-        affine_params, model, centerline_filename, mesh_filename,
-        centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
-        force_center_point_id, area_percent_change, num_time_steps, list_of_node_point_indices, 
-        list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names
-    )
+        self.run_stenosis(
+            affine_params, model, centerline_filename, mesh_filename,
+            centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
+            force_center_point_id, force_scale, area_percent_change, num_time_steps, list_of_node_point_indices, 
+            list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names
+        )
+
+    def run_stenosis(self, affine_params, model, centerline_polydata_input_file_name, 
+                            surface_polydata_input_file_name, centerline_polydata_output_file_name, 
+                            surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, s, area_percent_change, 
+                            num_time_steps, node_point_indices,
+                            other_geometry_input_files, other_geometry_output_files):
+            # --- Initialization and Parameter Setup ---
+            total_start_time = time.time()  # Start total timer
+            affine_type = "aneurysm"
+            # nu = 0.1
+            a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+            print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
+            # --- Load Polydata ---
+            load_start_time = time.time()
+            # centerline_polydata = self.centerline  # Loaded from self attributes
+            # surface_polydata = self.mesh
+            print(f"Time for reading surface polydata: {time.time() - load_start_time:.4f} seconds")
+
+            # --- Define Points and Nodes ---
+            setup_start_time = time.time()
+            other_geometry_polydatas = []  # Placeholder for additional geometries if needed
+            # simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+            simulation_data = scaling.define_nodes_affine(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
+            simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+            print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
+            
+            # --- Calculate Initial Displacements --- CURENTLY the longest step 
+            calc_displacement_start_time = time.time()
+            origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(self.centerline, simulation_data["nodes"]["force_center_point_id"])
+            print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
+            cross_section_time = time.time()
+            original_radius = self.maximum_inscribed_sphere_radius[force_center_point_id]
+            # original_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+            print(f"Initial cross sectional radius is measured to be: {original_radius}")
+            print(f"Time for getting cross sectional radius: {time.time() - cross_section_time:.4f} seconds")
+            get_displacement_time = time.time()
+            print(f"Time for computing initial radius and displacement: {time.time() - get_displacement_time:.4f} seconds")
+            
+            # --- Compute Initial Force Matrix and Displacements ---
+            step_start_time = time.time()
+            eps = affine_params["eps"][model] * original_radius
+            # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
+            print("eps = ", eps, "area_percent_change = ", area_percent_change)
+            # , centerline_displacements
+            # s = 1.0
+            surface_displacements, step_size = scaling.get_stenosis_displacements(simulation_data, a, b, eps, s, normal)
+            self.current_stent_radius += step_size
+            print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
+            
+            # --- Scale Displacements to Match Desired Area ---
+            displacement_start_time = time.time()
+            simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
+            # simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
+            common.update_polydata_with_points(self.mesh, simulation_data, "surface")
+            # common.update_polydata_with_points(self.centerline, simulation_data, "centerline")
+
+            print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
+            total_simulation_time = time.time() - total_start_time
+            print(f"Total simulation time: {total_simulation_time:.4f} seconds")
+            print(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
+            return step_size
