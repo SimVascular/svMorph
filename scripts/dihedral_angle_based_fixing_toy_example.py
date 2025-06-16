@@ -8,13 +8,13 @@ from vtk.util.numpy_support import vtk_to_numpy
 from scipy.spatial import cKDTree
 
 # Global variables for file paths (unused in this minimal example if you switch to manually created polydata)
-FILE_PATH1 = "/home/bohanjeffli/mesh-complete-exterior.vtp"
-FILE_PATH = "/home/bohanjeffli/march-24-SI-Test-Two.vtp"
-FILE_PATH = "/home/bohanjeffli/pymeshfix-output-may-7-minimum-fix-0.001-movement.vtp"
-# FILE_PATH = "/home/bohanjeffli/SU0243-stented-SI-test.vtp"
-# FILE_PATH = "/home/bohanjeffli/march-24-SI-Test-Fine-Mesh.vtp"
-# FILE_PATH = "/home/bohanjeffli/march-21-SI-Test-Two.vtp"
-# FILE_PATH = "/home/bohanjeffli/april-14-SI-perpendicular-typical-scale-test.vtp"
+FILE_PATH1 = "mesh-complete-exterior.vtp"
+FILE_PATH = "march-24-SI-Test-Two.vtp"
+FILE_PATH = "pymeshfix-output-may-7-minimum-fix-0.001-movement.vtp"
+# FILE_PATH = "SU0243-stented-SI-test.vtp"
+# FILE_PATH = "march-24-SI-Test-Fine-Mesh.vtp"
+# FILE_PATH = "march-21-SI-Test-Two.vtp"
+# FILE_PATH = "april-14-SI-perpendicular-typical-scale-test.vtp"
 
 # Global variables for sharing data with callbacks.
 global_polydata = None

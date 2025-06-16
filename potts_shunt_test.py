@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPu
 from PyQt6.QtCore import Qt
 import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-from vtk_module_v2 import VTKHandler
+from kelvinlet_core.vtk_module_v2 import VTKHandler
 from PyQt6.QtCore import QTimer
 import math
 MAX_STENT_SIZE = 1.0 # 1cm = 10mm diameter
@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         # Timer for continuous deformation and animated deformation
         self.timer = QTimer(self)
         self.kelvinlet_timer = QTimer(self)
+        self.stenosis_timer = QTimer(self)
         self.stent_edge_timer = QTimer(self)
         self.animation_timer = QTimer(self)
         
@@ -153,11 +154,13 @@ class MainWindow(QMainWindow):
         self.stent_diameter_slider.valueChanged.connect(lambda value: (self.stent_diameter_value.setText(
             f"{MIN_STENT_SIZE + (value/STENT_DIAMETER_NUM_STEPS)*(MAX_STENT_SIZE-MIN_STENT_SIZE):.4f}"), self.style.update_prescribed_stent_radius((MIN_STENT_SIZE + (value/STENT_DIAMETER_NUM_STEPS)*(MAX_STENT_SIZE-MIN_STENT_SIZE))/2.0)))
         self.stent_diameter_value.textChanged.connect(self.update_stent_diameter_slider)
-        
+        self.layout.addLayout(self.controls_layout2)
+
+        # Third row of buttons
+        self.controls_layout3 = QHBoxLayout()
         self.run_stenosis_button = QPushButton("Stenosis Apply")
         self.run_stenosis_button.setFixedWidth(120)
-        self.controls_layout2.addWidget(self.run_stenosis_button)
-        self.layout.addLayout(self.controls_layout2)
+        self.controls_layout3.addWidget(self.run_stenosis_button)
         # Connect the slider and QLineEdit for stenosis area
         # self.stenosis_area_slider.valueChanged.connect(lambda value: self.stenosis_slider_value.setText(f"{value}"))
         # self.stenosis_slider_value.textChanged.connect(lambda text: self.stenosis_area_slider.setValue(int(text)))
@@ -165,16 +168,32 @@ class MainWindow(QMainWindow):
         # self.num_ring_points_slider.valueChanged.connect(lambda value: self.num_ring_points_value.setText(f"{value}"))
         # self.num_ring_points_value.textChanged.connect(lambda text: self.num_ring_points_slider.setValue(int(text)))
         # Connect the button to the run_stenosis method
-        self.run_stenosis_button.clicked.connect(self.run_stenosis)
+        # add a text box where user can input floating point number to specify the desired target stenosis radius:
+        self.stenosis_radius_label = QLabel("Stenosis Minimum Radius:")
+        self.controls_layout3.addWidget(self.stenosis_radius_label)
+        self.stenosis_radius_value = QLineEdit()
+        self.stenosis_radius_value.setPlaceholderText("e.g. 0.1")
+        self.stenosis_radius_value.setFixedWidth(60)
+        self.controls_layout3.addWidget(self.stenosis_radius_value)
+        self.stenosis_length_label = QLabel("Stenosis Region Length:")
+        self.controls_layout3.addWidget(self.stenosis_length_label)
+        self.stenosis_length_value = QLineEdit()
+        self.stenosis_length_value.setPlaceholderText("e.g. 0.3")
+        self.stenosis_length_value.setFixedWidth(60)
+        self.controls_layout3.addWidget(self.stenosis_length_value)
+        self.controls_layout3.addStretch(1)
+        # Optionally, connect to a handler if you want to use this value in run_stenosis or elsewhere
 
-        # Third row of buttons
-        # self.controls_layout3 = QHBoxLayout()
-        # self.animated_aneurysm_button = QPushButton("Animated Aneurysm Apply")
-        # self.animated_aneurysm_button.setFixedWidth(200)
-        # self.controls_layout3.addStretch(1)
-        # self.controls_layout3.addWidget(self.animated_aneurysm_button)
-        # self.layout.addLayout(self.controls_layout3)
-        # self.animated_aneurysm_button.clicked.connect(self.run_deformation)
+        self.run_stenosis_button.clicked.connect(self.run_stenosis)
+        self.continuous_stenosis_button = QPushButton("Continuous Stenosis Apply")
+        self.continuous_stenosis_button.setFixedWidth(200)
+        
+        self.controls_layout3.addWidget(self.continuous_stenosis_button)
+        self.stenosis_timer.timeout.connect(self.run_stenosis)
+        # Connect button press and release events
+        self.continuous_stenosis_button.pressed.connect(self.start_continuous_stenosis_deformation)
+        self.continuous_stenosis_button.released.connect(self.stop_continuous_stenosis_deformation)
+        self.layout.addLayout(self.controls_layout3)
 
         # To add a fourth row of buttons, add another QHBoxLayout and add it to the main layout
         self.controls_layout4 = QHBoxLayout()
@@ -392,11 +411,9 @@ class MainWindow(QMainWindow):
         # self.vtk_widget.GetRenderWindow().Render()
     
     def run_deformation_sdf(self):
-        # area_percent_change = self.area_slider.value()
         force_scale = -self.force_scale_slider_to_value(self.area_slider.value())
-        print(f"Haha Running stent with force scale: {force_scale}")
         epsilon = self.stenosis_area_slider.value() / 100.0
-        print(f"Running stent with epsilon: {epsilon}")
+        print(f"Running stent with GUI input force scale: {force_scale}, epsilon: {epsilon}")
         # self.style.deform_mesh_sdf(epsilon, force_scale)
         self.style.deform_mesh_sdf_contact(epsilon, force_scale)
     
@@ -435,15 +452,23 @@ class MainWindow(QMainWindow):
         if self.vtk_handler is None:
             print("Please import both mesh and centerline files before running the stenosis.")
             return
-
         area_percent_change = self.stenosis_area_slider.value()
         num_ring_points = 25
         falloff_type = "regular"
         weight_regularized_laplacian = 1        
-        print(f"Running stenosis with area percent change: {area_percent_change}, num ring points: {num_ring_points}")
-        self.style.deform_mesh_stenosis(area_percent_change)
-        # self.vtk_widget.GetRenderWindow().Render()
-        # self.ren.Render()
+        try:
+            stenosis_radius = float(self.stenosis_radius_value.text())
+        except ValueError:
+            print("Invalid stenosis radius value. Please enter a valid number.")
+            return
+        try:
+            stenosis_length = float(self.stenosis_length_value.text())
+        except ValueError:
+            print("Invalid stenosis length value. Please enter a valid number.")
+            return
+        force_scale = self.force_scale_slider_to_value(self.area_slider.value())
+        print(f"Running stenosis with GUI input force_scale: {force_scale}, stenosis radius: {stenosis_radius}, stenosis length: {stenosis_length}")
+        self.style.deform_mesh_stenosis(force_scale, area_percent_change, stenosis_radius, stenosis_length)
 
     def toggle_interleave_mode(self):
         if self.toggle_interleave_mode_button.styleSheet() == "background-color: #d84005;":
@@ -494,6 +519,12 @@ class MainWindow(QMainWindow):
         
     def stop_continuous_kelvinlet_deformation(self):
         self.kelvinlet_timer.stop()
+
+    def start_continuous_stenosis_deformation(self):
+        self.stenosis_timer.start(25)
+        
+    def stop_continuous_stenosis_deformation(self):
+        self.stenosis_timer.stop()
 
     def start_animated_deformation(self):
         self.timer.start(50)

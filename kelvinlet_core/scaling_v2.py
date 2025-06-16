@@ -446,36 +446,36 @@ def kelvinlets_stent_edge(rv, a, b, eps, s, direction, w, r_target):
 
     return displacements
 
-def kelvinlets_truncated_sphere_warp_shrink(rv, a, b, eps, s, r_target):
+def kelvinlets_truncated_sphere_warp_shrink(rv, a, b, eps, f_scale, s, r_min, r_max, r_original):
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     # Extract components of rv
-    f_scale = 0.1
-    r_target = 0.05
-    r_max = 0.3
+    # r_target = 0.05
+    # r_max = 0.3
     # eps = 0.001
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
     # Compute re with epsilon added
     # re = jnp.sqrt(rx**2 + ry**2 + rz**2 + eps**2)
     re = jnp.sqrt(rx**2 + ry**2 + rz**2)
     re_no_z = jnp.sqrt(rx**2 + ry**2)
-    inner_mask = (re_no_z >= r_target).astype(int)
+    # rz_magnitude = jnp.sqrt(rz**2)
+    inner_mask = (re_no_z >= r_min).astype(int)
     outer_mask = (re <= r_max).astype(int)
+    # vessel_selection_mask = (re_no_z <= r_original * 2.0 ).astype(int)
     assert re.shape == (num_mesh_points, num_kelvinlet_points)
     # assert mask.shape == (num_mesh_points, num_kelvinlet_points)
     # Expand re and tile to match the dimensions of rv
     re = jnp.expand_dims(re, 2)
     # Compute powers of re for the displacement formula
-    re3 = re**3
-    re5 = re**5
+    # re3 = re**3
+    # re5 = re**5
     # Calculate displacements
     rv = rv.at[:, :, 2].set(0 * rv[:, :, 2])
     # displacements = f_scale * (r_max - r_target) * (((re-r_max) / (r_target-r_max)) ** 2 - 1) ** 2 * (-s) * rv
-    s = 1.0
-    displacements = f_scale * (r_max - r_target) * ((re / (r_max)) ** 2 - 1) ** 2 * (-s) * rv
+    displacements = f_scale * (r_max - r_min) * ((re / (r_max)) ** 2 - 1) ** 2 * (-s) * rv
     displacements = displacements * inner_mask[:, :, None] * outer_mask[:, :, None]
     # displacements = f_scale * (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
     assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
-    print("displacements norms: ", jnp.linalg.norm(displacements))
+    # print("average_cross_section_displacement_distance: ", average_cross_section_displacement_distance)
     return displacements
     
 def kelvinlets_truncated_sphere_warp_sculp(rv, a, b, eps, s, r_target):
@@ -1109,8 +1109,32 @@ def get_stent_edge_displacements_inner(data_points, rotation_matrices, xs, cente
         displacement *= surface_mesh_scale_factor
     return displacement
 
+def find_stenosis_minimum_radius_representative(data_points, rotation_matrices, xs, centers, original_radius):
+    num_mesh_points = data_points.shape[0]
+    # Prepare xs and centers using broadcasting
+    centers = np.tile(centers, (num_mesh_points, 1, 1))
+    # Compute rv in the local frame
+    rv = xs - centers
+    # Rotate rv to the global frame
+    rotation_matrices = np.expand_dims(rotation_matrices, 0)
+    rv = np.einsum('...ij,...j->...i', rotation_matrices, rv)
+    num_mesh_points, num_kelvinlet_points, ndims = rv.shape
+    rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+    rz_magnitude = np.sqrt(rz**2)
+    radial_maginitude_squared = (rx**2 + ry**2) 
+    # Compute mask for rx^2 + ry^2 <= (original_radius * 1.1)^2
+    mask = ((original_radius * 1.1) ** 2 <= radial_maginitude_squared) * (radial_maginitude_squared <= (original_radius * 1.2) ** 2)
+    # Set rz_magnitude to a large value where mask is False so they are not selected as min
+    rz_magnitude_masked = np.where(mask, rz_magnitude, jnp.inf)
+    index_for_min_rz = np.argmin(rz_magnitude_masked, axis=0)
+    print("index_for_min_rz: ", index_for_min_rz)
+    print("rx, ry, rz for min_rz: ", rx[index_for_min_rz], ry[index_for_min_rz], rz[index_for_min_rz])
+    return index_for_min_rz
+    
+
+
 @jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
-def get_stenosis_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s):
+def get_stenosis_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s, r_min, r_max, r_original):
     r_target = 0.05
     num_mesh_points = data_points.shape[0]
     # Prepare xs and centers using broadcasting
@@ -1121,13 +1145,15 @@ def get_stenosis_displacements_inner(data_points, rotation_matrices, xs, centers
     rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
     centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
     # Compute Kelvinlet displacements
-    average_displacement_distance = 0
-    displacement_local = kelvinlets_truncated_sphere_warp_shrink(centerline_aligned_rv, a, b, eps, s, r_target)
+    f_scale = 0.01 / (r_max - r_min)
+    step_size = f_scale * (r_max - r_min) * s
+    # print("step_size: ", step_size)
+    displacement_local = kelvinlets_truncated_sphere_warp_shrink(centerline_aligned_rv, a, b, eps, f_scale, s, r_min, r_max, r_original)
     # displacement_local = kelvinlets_affine_laplacian(centerline_aligned_rv, a, b, eps, s, 1, 0.8)
     displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     # Aggregate and normalize TODO: below use of sum is unnecessary if there is only 1 kelvinlet point
     displacement = jnp.sum(displacement_global, axis=1)
-    return displacement, average_displacement_distance
+    return displacement, step_size
 
 @jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
 def get_sdf_displacements_inner(data_points, xs, centers, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, w, r_target, r_current):
@@ -1362,26 +1388,25 @@ def get_stent_edge_displacements(data, a, b, eps, s, surface_mesh_scale_factor, 
     # )
     return displacements#, centerline_displacements
 
-def get_stenosis_displacements(data, a, b, eps, s, force_center_normal):
+def get_stenosis_displacements(data, a, b, eps, s, force_center_normal, r_min, r_max, r_original):
     # Resolve all_indices and force_center_point_id outside JIT
     force_center_point_id = data["nodes"]["force_center_point_id"]
-    print("force center: ", force_center_point_id)
+    print("selected stenosis center point ID: ", force_center_point_id)
     # Prepare other data
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
     xs = jnp.expand_dims(data_points, 1)
     xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
-    print("num_kelvinlet_points: ", num_kelvinlet_points)
-    print("xs shape: ", xs.shape)
+    # print("num_kelvinlet_points: ", num_kelvinlet_points)
+    # print("xs shape: ", xs.shape)
     centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
     kelvinlet_points_normals = jnp.array([force_center_normal])
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
     # Call the JIT-compiled function
-    displacements, average_displacement_distance = get_stenosis_displacements_inner(
-        data_points, rotation_matrices, xs, centers, a, b, eps, s
+    displacements, step_size = get_stenosis_displacements_inner(
+        data_points, rotation_matrices, xs, centers, a, b, eps, s, r_min, r_max, r_original
     )
-    # print("displacement: ", displacements)
     # print("to see which entry of displacement has a large numerical entry: ")
     # large_entries = jnp.where(jnp.abs(displacements) > 1)
     # print("large entries: ", large_entries)
@@ -1396,7 +1421,7 @@ def get_stenosis_displacements(data, a, b, eps, s, force_center_normal):
     #     centerline_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor
     # )
     # print("average_displacement_distance = ", average_displacement_distance)
-    return np.array(displacements), average_displacement_distance#, centerline_displacements
+    return np.array(displacements), step_size#, centerline_displacements
 
 def get_sdf_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
     # Resolve all_indices and force_center_point_id outside JIT
@@ -1697,12 +1722,12 @@ def get_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surface_me
 
 def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
     force_center_point_id = data["nodes"]["force_center_point_id"]
-    print("force center: ", force_center_point_id)
+    print("selected point ID: ", force_center_point_id)
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
-    doi = 0.15
-    doc = 0.01
+    doi = 0.65
+    doc = 0.001
     # f_scale = 0.25 * doi * 0.1
     f_scale = 0.01
     start_time = time.time()
@@ -1744,8 +1769,8 @@ def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_verti
     centerline_points_dist_to_surface = combined_final_dist_to_surface[num_in_bb_mesh_points:]
     centerline_points_final_direction = combined_final_direction[num_in_bb_mesh_points:]
     centerline_outside_stent_mask = (centerline_points_dist_to_surface[:, 0] > 0).astype(bool)
-    print("centerline_points_masked shape: ", centerline_points_masked.shape)
-    print("centerline_outside_stent_mask shape: ", centerline_outside_stent_mask.shape)
+    # print("centerline_points_masked shape: ", centerline_points_masked.shape)
+    # print("centerline_outside_stent_mask shape: ", centerline_outside_stent_mask.shape)
     movables_centerline_points = centerline_points_masked[centerline_outside_stent_mask]
     movables_centerline_points_dist_to_surface = centerline_points_dist_to_surface[centerline_outside_stent_mask]
     movables_centerline_points_final_direction = centerline_points_final_direction[centerline_outside_stent_mask]
@@ -1758,8 +1783,7 @@ def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_verti
     # surface_xs = xs_np[:num_in_bb_mesh_points]
     start_time = time.time()
     in_contact_vertices = data_points_masked[new_contact_mask[:,0]]
-    # print("surface xs shape: ", surface_xs.shape)
-    print("in_contact_vertices shape: ", in_contact_vertices.shape)
+    # print("in_contact_vertices shape: ", in_contact_vertices.shape)
     print("time taken to obtain in_contact vertices subslice: ", time.time() - start_time)
     if in_contact_vertices.shape[0] == 0: # things are in contact <=> things are in influence
         step_size = f_scale * (-s)
@@ -1769,13 +1793,13 @@ def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_verti
     contact_tree = cKDTree(in_contact_vertices, leafsize=32)
     xs = np.concatenate((data_points_masked, movables_centerline_points), axis=0)
     dist_min, _ = contact_tree.query(xs, k=1, distance_upper_bound=doi)
-    print("dist_min shape: ", dist_min.shape)
-    print("time for KD Tree query: ", time.time() - start_time)
+    # print("dist_min shape: ", dist_min.shape)
+    print("time for KD Tree construction and query: ", time.time() - start_time)
     start_time = time.time()
     in_influence_mask = dist_min < doi
     # print("in_influence_mask shape: ", in_influence_mask.shape)
     in_influence_indices = np.flatnonzero(in_influence_mask)
-    print("in_influence_indices shape: ", in_influence_indices.shape)
+    # print("in_influence_indices shape: ", in_influence_indices.shape)
     print("time taken to flattennonzero: ", time.time() - start_time)
     
     start_time = time.time()
@@ -1797,16 +1821,20 @@ def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_verti
     in_influence_vertices_blended_alpha_mask[in_influence_indices] = in_influence_vertices_blended_alpha
     print("time taken to compute blended alpha mask in np: ", time.time() - start_time)
     start_time = time.time()
-    displacements = f_scale * ((final_movables_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * final_movables_direction * doi_mask * in_influence_vertices_blended_alpha_mask[:, None]
+    print("raw number of negative values in final_movables_dist_to_surface: ", np.sum(final_movables_dist_to_surface < 0))
+    interior_points_offset = np.maximum(-final_movables_dist_to_surface, 0.0)
+    final_movables_dist_to_surface = np.maximum(final_movables_dist_to_surface, 0.0)  # Clip the interior points to the surface
+    # displacements = f_scale * ((final_movables_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * doi_mask * in_influence_vertices_blended_alpha_mask[:, None] * final_movables_direction
+    displacements_magnitude = f_scale * ((final_movables_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * doi_mask * in_influence_vertices_blended_alpha_mask[:, None] 
+    displacements_magnitude += interior_points_offset
+    displacements = displacements_magnitude * final_movables_direction
     full_surface_displacements = np.zeros((num_mesh_points, 3))
     full_surface_displacements[sbb_mask] = displacements[:num_in_bb_mesh_points]
     full_centerline_displacements = np.zeros((num_centerline_points, 3))
     full_centerline_displacements[full_centerline_points_mask] = displacements[num_in_bb_mesh_points:]
-
     # displacements = f_scale * force_kernel(1.99, 0.88, 2.3, final_dist_to_surface) * (-s) * final_direction * doi_mask * in_influence_vertices_blended_alpha_mask[:, None]
     step_size = f_scale * (-s)
     print("time taken to compute rest of the displacements: ", time.time() - start_time)   
-    # displacement is of type jnp array
 
     return full_surface_displacements, full_centerline_displacements, step_size
 
