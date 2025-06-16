@@ -395,6 +395,13 @@ class MainWindow(QMainWindow):
         self.import_centerline_button.clicked.connect(self.import_centerline)
         self.controls_layout4.addWidget(self.import_centerline_button)
 
+        # Save button
+        self.controls_layout4.addStretch(1)
+        self.run_save_button = QPushButton("Save")
+        self.run_save_button.setFixedWidth(BUTTON_WIDTH_SMALL)
+        self.controls_layout4.addWidget(self.run_save_button)
+        self.run_save_button.clicked.connect(self.save_mesh)
+
         # Mode control buttons
         self.toggle_camera_lock_button = QPushButton("Camera Lock")
         self.toggle_camera_lock_button.setFixedWidth(BUTTON_WIDTH_SMALL)
@@ -424,13 +431,6 @@ class MainWindow(QMainWindow):
         self.controls_layout4.addWidget(self.animated_aneurysm_button)
         self.animated_aneurysm_button.pressed.connect(self.start_animated_deformation)
         self.animated_aneurysm_button.released.connect(self.stop_animated_deformation)
-
-        # Right-aligned save button
-        self.controls_layout4.addStretch(1)
-        self.run_save_button = QPushButton("Save")
-        self.run_save_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout4.addWidget(self.run_save_button)
-        self.run_save_button.clicked.connect(self.save_mesh)
 
         self.layout.addLayout(self.controls_layout4)
 
