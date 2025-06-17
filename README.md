@@ -129,7 +129,7 @@ QTimer
 
 1. Run the main PyQt application:
    ```bash
-   python full_production_mode_test.py
+   python main.py
    ```
 
 2. Explore the various functionalities provided by the scripts for VTK data processing and visualization.
