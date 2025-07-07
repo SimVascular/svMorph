@@ -29,6 +29,7 @@ import jax as jx
 import jax.numpy as jnp
 import time
 import numpy as np
+from vtkmodules.vtkCommonCore import vtkUnsignedCharArray
 
 
 def load_vtp_file(filename): # this is a less robust version of vtk_utils.read_polydata_file, TODO: replace usage with vtk_utils.read_polydata_file
@@ -79,6 +80,24 @@ class VTKHandler:
         self.renderer.AddActor(self.mesh_actor)
         self.renderer.AddActor(self.centerline_actor)
         self.renderer.SetBackground(0.1, 0.1, 0.1)
+
+        # temporary code to overlay the reference mesh
+        self.reference_mesh = vtk_utils.read_polydata_file("SU0243-postop-estimated-cm.vtp")
+        self.reference_mesh_mapper = vtkPolyDataMapper()
+        self.reference_mesh_mapper.SetInputData(self.reference_mesh)
+        self.reference_mesh_actor = vtkActor()
+        self.reference_mesh_actor.SetMapper(self.reference_mesh_mapper)
+        self.reference_mesh_actor.GetProperty().SetColor(0.5, 0.0, 0.0)
+        colors = vtkUnsignedCharArray()
+        colors.SetNumberOfComponents(3)
+        colors.SetName("RGB")
+        num_pts = self.reference_mesh.GetNumberOfPoints()
+        for _ in range(num_pts):
+            colors.InsertNextTuple3(255, 0, 0)
+        self.reference_mesh.GetPointData().SetScalars(colors)
+        self.reference_mesh_actor.GetProperty().SetOpacity(0.3)
+        self.renderer.AddActor(self.reference_mesh_actor)
+        # to be deleted later
 
     def get_renderer(self):
         return self.renderer
@@ -274,7 +293,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
         self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(self.glyphActor)
         # self.glyph_actor = glyphActor
-        self.mesh_actor.GetProperty().SetOpacity(0.3)
+        # self.mesh_actor.GetProperty().SetOpacity(0.3) # original opacity
+        self.mesh_actor.GetProperty().SetOpacity(0.8) # temporarily increased opacity to delete
         self.centerline_actor.SetPickable(1)
         self.GetInteractor().GetRenderWindow().Render()
 
@@ -316,7 +336,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius:.4f}")
 
     def compute_prescribed_stent(self):
-        # total_length = 3.0 # cm 3.0
         segment_length = 0.1 # cm 0.1
         self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], self.stent_length, segment_length, jump_threshold=1.0, sampling_direction=self.sampling_direction)
         print(f"num vertices for stent of length {self.stent_length}cm, segment length {segment_length}cm: {len(self.stent_axis_vertices)}")

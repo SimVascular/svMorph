@@ -1726,7 +1726,9 @@ def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_verti
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
+    doi = 0.9
     doi = 0.65
+    doc = 0.01
     doc = 0.001
     # f_scale = 0.25 * doi * 0.1
     f_scale = 0.01
@@ -1814,11 +1816,11 @@ def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_verti
 
     in_influence_vertices_blended_alpha_mask = np.zeros(num_final_movables)
     # in_influence_vertices_blended_alpha = smin_sdf_capsule_contact_sculp_part_two_KD(in_influence_vertices, in_contact_vertices, doi)
-    # in_influence_vertices_blended_alpha = (1 - in_influence_to_in_contact_distances / doi)  # linear blending
+    in_influence_vertices_blended_alpha = (1 - in_influence_to_in_contact_distances / doi)  # linear blending
     # in_influence_vertices_blended_alpha = (1 - (in_influence_to_in_contact_distances / doi) ** 2) ** 2 # quadratic blending
     # in_influence_vertices_blended_alpha = in_influence_to_in_contact_distances / in_influence_to_in_contact_distances # no blending
-    k = -2.0
-    in_influence_vertices_blended_alpha = (np.exp(k*in_influence_to_in_contact_distances) - np.exp(k*doi)) / (1 - np.exp(k*doi))  # exponential blending
+    # k = -2.0
+    # in_influence_vertices_blended_alpha = (np.exp(k*in_influence_to_in_contact_distances) - np.exp(k*doi)) / (1 - np.exp(k*doi))  # exponential blending
 
     print("time taken to compute JIT sculpt part two: ", time.time() - start_time)
     start_time = time.time()
