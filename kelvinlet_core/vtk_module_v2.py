@@ -145,7 +145,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.radius_of_influence = 0.0
         self.stent_radius = 0.4
         self.stent_length = 3.0
-        self.undeployed_stent_radius = 0.05
+        self.smoothing_k = 0.01
+        self.undeployed_stent_radius = 0.05 - self.smoothing_k
         # self.undeployed_stent_radius = 0.43
         self.current_stent_radius = self.undeployed_stent_radius
         self.stent_unit_section_halflength = 0.2
@@ -309,7 +310,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.radius_text_actor = selected_point_text_actor
         # Create another text actor to display the radius of influence below it
         roi_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
-        roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius:.4f}")
+        roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius + self.smoothing_k:.4f}")
         roi_text_actor.GetTextProperty().SetColor(0.0, 0.0, 0.0)
         roi_text_actor.GetTextProperty().SetFontSize(16)
         roi_text_actor.SetPosition(10, 4)
@@ -333,7 +334,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def update_roi_text(self):
         if self.roi_text_actor is None:
             return
-        self.roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius:.4f}")
+        self.roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius + self.smoothing_k:.4f}")
 
     def compute_prescribed_stent(self):
         segment_length = 0.1 # cm 0.1
