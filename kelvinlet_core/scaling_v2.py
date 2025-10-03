@@ -1123,7 +1123,7 @@ def find_stenosis_minimum_radius_representative(data_points, rotation_matrices, 
     rz_magnitude = np.sqrt(rz**2)
     radial_maginitude_squared = (rx**2 + ry**2) 
     # Compute mask for rx^2 + ry^2 <= (original_radius * 1.1)^2
-    mask = ((original_radius * 1.0) ** 2 <= radial_maginitude_squared) * (radial_maginitude_squared <= (original_radius * 1.2) ** 2)
+    mask = ((original_radius * 1.0) ** 2 <= radial_maginitude_squared) * (radial_maginitude_squared <= (original_radius * 1.1) ** 2)
     # Set rz_magnitude to a large value where mask is False so they are not selected as min
     rz_magnitude_masked = np.where(mask, rz_magnitude, jnp.inf)
     index_for_min_rz = np.argmin(rz_magnitude_masked, axis=0)

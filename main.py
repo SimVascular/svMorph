@@ -34,11 +34,11 @@ from functools import wraps
 # Stent parameter ranges and steps
 MAX_STENT_SIZE = 1.0  # 1cm = 10mm diameter
 MIN_STENT_SIZE = 0.1  # 0.1cm = 1mm diameter
-STENT_DIAMETER_NUM_STEPS = 900
+STENT_DIAMETER_NUM_STEPS = 1000
 
 MAX_STENT_LENGTH = 8.0  # 80mm length
 MIN_STENT_LENGTH = 1.0  # 20mm length
-STENT_LENGTH_NUM_STEPS = 700
+STENT_LENGTH_NUM_STEPS = 70
 
 # UI Constants
 WINDOW_WIDTH = 1200
@@ -64,12 +64,12 @@ FORCE_SCALE_SLIDER_RANGE = (-1000, 1000)
 FORCE_SCALE_DEFAULT = 1
 EPSILON_SLIDER_RANGE = (0, 500)
 EPSILON_DEFAULT = 20
-STENT_DIAMETER_DEFAULT = 0.8  # 8mm stent
-STENT_LENGTH_DEFAULT = 3.0  # 30mm stent
+STENT_DIAMETER_DEFAULT = 0.9  # 9mm stent
+STENT_LENGTH_DEFAULT = 1.7  # 17mm stent
 
 # File paths for demo data
-DEFAULT_MESH_FILE = "SU0243-preop-cm.vtp"
-DEFAULT_CENTERLINE_FILE = "corrected-SU0243-preop-centerlines-cm.vtp"
+DEFAULT_MESH_FILE = "input/TST-STAN-5-trimmed-and-perfected.vtp" #"SU0243-preop-cm.vtp"
+DEFAULT_CENTERLINE_FILE = "input/TST-STAN-5-trimmed-and-perfected-centerlines.vtp" #"corrected-SU0243-preop-centerlines-cm.vtp"
 
 # Colors and styling
 ACTIVE_BUTTON_COLOR = "#d84005"
@@ -419,12 +419,12 @@ class MainWindow(QMainWindow):
         self.reverse_animation_button.clicked.connect(self.reverse_animation_direction)
 
         # Additional action buttons
-        self.stent_edge_button = QPushButton("Stent Edge")
+        self.stent_edge_button = QPushButton("Place Stent") # originally the "Stent Edge" button
         self.stent_edge_button.setFixedWidth(BUTTON_WIDTH_SMALL)
         self.controls_layout4.addWidget(self.stent_edge_button)
-        self.stent_edge_timer.timeout.connect(self.run_stent_edge)
-        self.stent_edge_button.pressed.connect(self.start_stent_edge_deformation)
-        self.stent_edge_button.released.connect(self.stop_stent_edge_deformation)
+        # self.stent_edge_timer.timeout.connect(self.run_stent_edge)
+        self.stent_edge_button.pressed.connect(self.save_current_stent)
+        # self.stent_edge_button.released.connect(self.stop_stent_edge_deformation)
 
         self.animated_aneurysm_button = QPushButton("Animated Aneurysm Apply")
         self.animated_aneurysm_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
@@ -556,6 +556,7 @@ class MainWindow(QMainWindow):
 
         self.ren = self.vtk_handler.get_renderer()
         self.ren.SetBackground(1, 1, 1)
+        # self.ren.SetBackground(0.1, 0.1, 0.1)
         if self.vtk_widget.GetRenderWindow().GetRenderers().GetNumberOfItems() > 0:
             self.vtk_widget.GetRenderWindow().GetRenderers().RemoveAllItems()
         self.vtk_widget.GetRenderWindow().AddRenderer(self.ren)
@@ -746,6 +747,14 @@ class MainWindow(QMainWindow):
     def stop_stent_edge_deformation(self):
         """Stop stent edge deformation timer"""
         self.stent_edge_timer.stop()
+    
+    def save_current_stent(self):
+        """Save the current stent configuration"""
+        if hasattr(self, "style") and self.style:
+            self.style.save_current_stent()
+            print("Current stent placed.")
+        else:
+            print("VTK handler not initialized. Cannot place stent.")
 
     def update_stent_diameter_slider(self, text):
         """Update stent diameter slider from text input"""

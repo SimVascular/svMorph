@@ -70,6 +70,7 @@ class VTKHandler:
         self.mesh_actor.SetMapper(self.mesh_mapper)
         # self.mesh_actor.GetProperty().SetColor(1.0, 0.8, 0.8)
         self.mesh_actor.GetProperty().SetOpacity(0.8)
+        # self.mesh_actor.GetProperty().SetOpacity(0.1)
         self.mesh_actor.SetPickable(0)
 
         self.centerline_actor = vtkActor()
@@ -79,24 +80,24 @@ class VTKHandler:
         self.renderer = vtkRenderer()
         self.renderer.AddActor(self.mesh_actor)
         self.renderer.AddActor(self.centerline_actor)
-        self.renderer.SetBackground(0.1, 0.1, 0.1)
+        self.renderer.SetBackground(1.0, 1.0, 1.0)
 
         # temporary code to overlay the reference mesh
-        self.reference_mesh = vtk_utils.read_polydata_file("SU0243-postop-estimated-cm.vtp")
-        self.reference_mesh_mapper = vtkPolyDataMapper()
-        self.reference_mesh_mapper.SetInputData(self.reference_mesh)
-        self.reference_mesh_actor = vtkActor()
-        self.reference_mesh_actor.SetMapper(self.reference_mesh_mapper)
-        self.reference_mesh_actor.GetProperty().SetColor(0.5, 0.0, 0.0)
-        colors = vtkUnsignedCharArray()
-        colors.SetNumberOfComponents(3)
-        colors.SetName("RGB")
-        num_pts = self.reference_mesh.GetNumberOfPoints()
-        for _ in range(num_pts):
-            colors.InsertNextTuple3(255, 0, 0)
-        self.reference_mesh.GetPointData().SetScalars(colors)
-        self.reference_mesh_actor.GetProperty().SetOpacity(0.3)
-        self.renderer.AddActor(self.reference_mesh_actor)
+        # self.reference_mesh = vtk_utils.read_polydata_file("SU0243-postop-estimated-cm.vtp")
+        # self.reference_mesh_mapper = vtkPolyDataMapper()
+        # self.reference_mesh_mapper.SetInputData(self.reference_mesh)
+        # self.reference_mesh_actor = vtkActor()
+        # self.reference_mesh_actor.SetMapper(self.reference_mesh_mapper)
+        # self.reference_mesh_actor.GetProperty().SetColor(0.5, 0.0, 0.0)
+        # colors = vtkUnsignedCharArray()
+        # colors.SetNumberOfComponents(3)
+        # colors.SetName("RGB")
+        # num_pts = self.reference_mesh.GetNumberOfPoints()
+        # for _ in range(num_pts):
+        #     colors.InsertNextTuple3(255, 0, 0)
+        # self.reference_mesh.GetPointData().SetScalars(colors)
+        # self.reference_mesh_actor.GetProperty().SetOpacity(0.3)
+        # self.renderer.AddActor(self.reference_mesh_actor)
         # to be deleted later
 
     def get_renderer(self):
@@ -143,14 +144,15 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.epsilon = 0.2
         self.force_scale = -1.0
         self.radius_of_influence = 0.0
-        self.stent_radius = 0.4
-        self.stent_length = 3.0
+        self.stent_radius = 0.45
+        self.stent_length = 1.7
         self.smoothing_k = 0.01
         self.undeployed_stent_radius = 0.05 - self.smoothing_k
         # self.undeployed_stent_radius = 0.43
         self.current_stent_radius = self.undeployed_stent_radius
         self.stent_unit_section_halflength = 0.2
         self.previous_stenosis_minimum_radius = None
+        self.previous_aneurysm_maximum_radius = None
 
         self.stent_visualization_actors = []
         self.roi_actors = []
@@ -242,8 +244,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
                 self.redHighlightActors.pop(0)
                 renderer.RemoveActor(self.roi_actors[0])
                 self.roi_actors.pop(0)
-                renderer.RemoveActor(self.stent_visualization_actors[0])
-                self.stent_visualization_actors.pop(0)
+                if len(self.stent_visualization_actors) >= 2:
+                    renderer.RemoveActor(self.stent_visualization_actors[0])
+                    self.stent_visualization_actors.pop(0)
                 self.current_stent_radius = self.undeployed_stent_radius
                 self.update_current_stent_radius()
                 self.GetInteractor().GetRenderWindow().Render()
@@ -290,12 +293,13 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # 3. Create the actor once
         self.glyphActor = vtkActor()
         self.glyphActor.SetMapper(self.glyphMapper)
-        self.glyphActor.GetProperty().SetColor(0,1,0)
+        # self.glyphActor.GetProperty().SetColor(0.0, 1.0, 0.0)
+        self.glyphActor.GetProperty().SetColor(0.0, 1.0, 1.0)
 
         self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(self.glyphActor)
         # self.glyph_actor = glyphActor
-        # self.mesh_actor.GetProperty().SetOpacity(0.3) # original opacity
-        self.mesh_actor.GetProperty().SetOpacity(0.8) # temporarily increased opacity to delete
+        self.mesh_actor.GetProperty().SetOpacity(0.2) # original opacity
+        # self.mesh_actor.GetProperty().SetOpacity(0.8) # temporarily increased opacity to delete
         self.centerline_actor.SetPickable(1)
         self.GetInteractor().GetRenderWindow().Render()
 
@@ -338,7 +342,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
     def compute_prescribed_stent(self):
         segment_length = 0.1 # cm 0.1
-        self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], self.stent_length, segment_length, jump_threshold=1.0, sampling_direction=self.sampling_direction)
+        self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], self.stent_length, segment_length, 2*self.stent_radius, sampling_direction=self.sampling_direction)
         print(f"num vertices for stent of length {self.stent_length}cm, segment length {segment_length}cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
         
@@ -358,6 +362,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.stenosis_minimum_radius_representative = scaling.find_stenosis_minimum_radius_representative(data_points, rotation_matrices, xs, centers, original_radius)
         print(f"Stenosis minimum radius representative index found: {self.stenosis_minimum_radius_representative}")
         self.previous_stenosis_minimum_radius = original_radius
+        self.previous_aneurysm_maximum_radius = original_radius
 
     # def place_visualization_sphere(self, position, pointID):
     #     sphere = vtkSphereSource()
@@ -426,51 +431,53 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # Create a single assembly to group all stent visualization parts
         stent_assembly = vtkAssembly()
 
-        for i in range(len(self.stent_axis_vertices) - 1):
-            # Get consecutive vertices
-            p0 = np.array(self.stent_axis_vertices[i])
-            p1 = np.array(self.stent_axis_vertices[i+1])
-            diff = p1 - p0
-            length = np.linalg.norm(diff)
-            if length < 1e-6:
-                continue
-            midpoint = (p0 + p1) / 2.0
+        for i in range(len(self.stent_axis_vertices)):
+            if i < len(self.stent_axis_vertices) - 1:
+                # Get consecutive vertices
+                p0 = np.array(self.stent_axis_vertices[i])
+                p1 = np.array(self.stent_axis_vertices[i+1])
+                diff = p1 - p0
+                length = np.linalg.norm(diff)
+                if length < 1e-6:
+                    continue
+                midpoint = (p0 + p1) / 2.0
 
-            # Default cylinder is along (0,1,0)
-            default_axis = np.array([0, 1, 0])
-            direction = diff / length
-            rotation_axis = np.cross(default_axis, direction)
-            if np.linalg.norm(rotation_axis) < 1e-6:
-                angle = 0.0
-                rotation_axis = [0, 0, 1]
-            else:
-                angle = np.degrees(np.arccos(np.dot(default_axis, direction)))
+                # Default cylinder is along (0,1,0)
+                default_axis = np.array([0, 1, 0])
+                direction = diff / length
+                rotation_axis = np.cross(default_axis, direction)
+                if np.linalg.norm(rotation_axis) < 1e-6:
+                    angle = 0.0
+                    rotation_axis = [0, 0, 1]
+                else:
+                    angle = np.degrees(np.arccos(np.dot(default_axis, direction)))
 
-            # Create cylinder between p0 and p1
-            cylinder = vtkCylinderSource()
-            cylinder.SetRadius(self.current_stent_radius)
-            cylinder.SetHeight(length)
-            cylinder.SetResolution(50)
-            # Create transform: rotate and translate the cylinder so that its center is at midpoint
-            transform = vtkTransform()
-            transform.Translate(midpoint)
-            if angle != 0.0:
-                transform.RotateWXYZ(angle, rotation_axis)
-            transform_filter = vtkTransformPolyDataFilter()
-            transform_filter.SetInputConnection(cylinder.GetOutputPort())
-            transform_filter.SetTransform(transform)
-            transform_filter.Update()
+                # Create cylinder between p0 and p1
+                cylinder = vtkCylinderSource()
+                cylinder.SetRadius(self.current_stent_radius)
+                cylinder.SetHeight(length)
+                cylinder.SetResolution(50)
+                # Create transform: rotate and translate the cylinder so that its center is at midpoint
+                transform = vtkTransform()
+                transform.Translate(midpoint)
+                if angle != 0.0:
+                    transform.RotateWXYZ(angle, rotation_axis)
+                transform_filter = vtkTransformPolyDataFilter()
+                transform_filter.SetInputConnection(cylinder.GetOutputPort())
+                transform_filter.SetTransform(transform)
+                transform_filter.Update()
 
-            mapper = vtkPolyDataMapper()
-            mapper.SetInputConnection(transform_filter.GetOutputPort())
-            actor = vtkActor()
-            actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(0.9, 0.9, 0.9)
-            # actor.GetProperty().SetOpacity(abs(self.force_scale) * 0.95)
-            actor.GetProperty().SetOpacity(1)
-            actor.geometrySource = cylinder
-            # Instead of adding directly to the renderer, add to the assembly
-            stent_assembly.AddPart(actor)
+                mapper = vtkPolyDataMapper()
+                mapper.SetInputConnection(transform_filter.GetOutputPort())
+                actor = vtkActor()
+                actor.SetMapper(mapper)
+                actor.GetProperty().SetColor(0.8, 0.8, 0.8)
+                # actor.GetProperty().SetColor(0.0, 0.0, 1.0)
+                # actor.GetProperty().SetOpacity(abs(self.force_scale) * 0.95)
+                actor.GetProperty().SetOpacity(0.8)
+                actor.geometrySource = cylinder
+                # Instead of adding directly to the renderer, add to the assembly
+                stent_assembly.AddPart(actor)
 
             vertex = self.stent_axis_vertices[i]
             # Place a sphere at each vertex with the same radius
@@ -485,32 +492,29 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             mapper.SetInputConnection(sphere.GetOutputPort())
             actor = vtkActor()
             actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(1.0, 0.0, 0.0)
-            actor.GetProperty().SetOpacity(abs(self.force_scale) * 1)
+            actor.GetProperty().SetColor(0.0, 1.0, 1.0)
+            actor.GetProperty().SetOpacity(0.0)
+            # actor.GetProperty().SetOpacity(abs(self.force_scale) * 1)
             actor.geometrySource = sphere
             stent_assembly.AddPart(actor)
 
-            last_vertex = self.stent_axis_vertices[len(self.stent_axis_vertices) - 1]
-            # Place a sphere at each vertex with the same radius
-            sphere = vtkSphereSource()
-            sphere.SetCenter(last_vertex)
-            sphere.SetRadius(self.current_stent_radius)
-            sphere.SetThetaResolution(20)
-            sphere.SetPhiResolution(20)
-            sphere.Update()
-            
-            mapper = vtkPolyDataMapper()
-            mapper.SetInputConnection(sphere.GetOutputPort())
-            actor = vtkActor()
-            actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(1.0, 0.0, 0.0)
-            actor.GetProperty().SetOpacity(abs(self.force_scale) * 1)
-            actor.geometrySource = sphere
-            stent_assembly.AddPart(actor)
         # Add the entire assembly to the renderer and store it for easy removal/recreation.
         renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         renderer.AddActor(stent_assembly)
         self.stent_visualization_actors.append(stent_assembly)
+
+    def save_current_stent(self):
+        if len(self.stent_visualization_actors) == 0:
+            return
+        # Remove the last stent visualization assembly from the renderer
+        renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+        last_stent_assembly = self.stent_visualization_actors[-1]
+        # renderer.RemoveActor(last_stent_assembly)
+        # Add it back to the renderer to make it persist
+        renderer.AddActor(last_stent_assembly)
+        # Clear the list so that new stent visualizations can be added without removing this one
+        self.stent_visualization_actors.pop(0)
+        self.GetInteractor().GetRenderWindow().Render()
 
     @staticmethod
     @jx.jit
@@ -891,7 +895,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         mu = 1
         nu = 0.2 # (0, 0.5), 0.4 originally
         num_time_steps = 1
-        displacement_distance = self.run_aneyrusm_parallel(
+        displacement_distance = self.run_aneurysm_parallel(
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius,
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
@@ -921,7 +925,11 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         mu = 1
         nu = 0.2 # (0, 0.5), 0.4 originally
         num_time_steps = 1
-        displacement_distance = self.run_aneyrusm_sequential(
+        aneurysm_radius = 0.5
+        if self.previous_aneurysm_maximum_radius >= aneurysm_radius - 2e-3:
+            print("Target aneurysm radius reached.")
+            return
+        displacement_distance = self.run_aneurysm_sequential(
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius,
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
@@ -968,7 +976,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         mu = 1
         nu = 0.2 # (0, 0.5), 0.4 originally
         num_time_steps = 1
-        step_size = self.run_aneyrusm_sdf(
+        step_size = self.run_aneurysm_sdf(
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius,
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
@@ -999,7 +1007,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         mu = 1
         nu = 0.2 # (0, 0.5), 0.4 originally
         num_time_steps = 1
-        step_size = self.run_aneyrusm_sdf_contact(
+        step_size = self.run_aneurysm_sdf_contact(
         affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
         force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius,
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
@@ -1018,10 +1026,13 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             print("Using only the most recent point picked.")
             self.selected_points = self.selected_points[-1:]
 
+        if self.previous_stenosis_minimum_radius <= stenosis_radius + 2e-3:
+            print("Target stenosis radius reached.")
+
         self.create_stenosis(self.mesh_filename, self.centerline_filename, self.selected_points, force_scale, area_percent_change, stenosis_radius, stenosis_length)
         self.GetInteractor().GetRenderWindow().Render()
 
-    def run_aneyrusm_parallel(self, affine_params, model, centerline_polydata_input_file_name, 
+    def run_aneurysm_parallel(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
                         force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius, 
@@ -1087,7 +1098,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         print(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
         return average_displacement_distance
 
-    def run_aneyrusm_sequential(self, affine_params, model, centerline_polydata_input_file_name, 
+    def run_aneurysm_sequential(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
                         force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius, 
@@ -1146,6 +1157,15 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # self.mesh = surface_polydata
         # simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
         # centerline_polydata = common.update_polydata_with_points(centerline_polydata, simulation_data, "centerline")
+        aneurysm_representative = simulation_data['points']['surface'][self.stenosis_minimum_radius_representative]
+        selected_point = simulation_data['points']['centerline'][force_center_point_id]
+        # print(f"Stenosis representative point: {stenosis_representative}")
+        # print(f"Selected point: {selected_point}")
+        current_aneurysm_maximum_radius = np.linalg.norm(aneurysm_representative - selected_point)
+        print(f"Current aneurysm maximum radius: {current_aneurysm_maximum_radius} cm")
+        print(f"Delta to previous step: {current_aneurysm_maximum_radius - self.previous_aneurysm_maximum_radius} cm")
+        self.previous_aneurysm_maximum_radius = current_aneurysm_maximum_radius
+
         print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
         total_simulation_time = time.time() - total_start_time
         print(f"Total simulation time: {total_simulation_time:.4f} seconds")
@@ -1207,7 +1227,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         print(f"Total simulation time: {total_simulation_time:.4f} seconds")
         print(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
 
-    def run_aneyrusm_sdf(self, affine_params, model, centerline_polydata_input_file_name, 
+    def run_aneurysm_sdf(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
                         force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius, 
@@ -1273,7 +1293,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         print(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
         return step_size
     
-    def run_aneyrusm_sdf_contact(self, affine_params, model, centerline_polydata_input_file_name, 
+    def run_aneurysm_sdf_contact(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
                         force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius,

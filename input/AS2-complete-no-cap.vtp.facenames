@@ -1,0 +1,5 @@
+global gPolyDataFaceNames
+global gPolyDataFaceNamesInfo
+set gPolyDataFaceNamesInfo(timestamp) {1500000000}
+set gPolyDataFaceNamesInfo(model_file_name) {AS2-complete-no-cap.vtp}
+set gPolyDataFaceNames(1) {noname_1}

@@ -120,7 +120,7 @@ def polydata_to_parent_tip_map(centerline_polydata):
     # print("unit test: parent id for 7745 = ", point_to_parent_tip[7745])
     return point_to_parent_tip, segment_base_mask
 
-def sample_stent_axis_vertices(points, parent_tip_map, segment_base_mask, starting_point_idx, desired_total_length, desired_segment_length, jump_threshold=1.0, sampling_direction=-1):
+def sample_stent_axis_vertices_old(points, parent_tip_map, segment_base_mask, starting_point_idx, desired_total_length, desired_segment_length, sampling_direction=-1):
     """
     Extracts and resamples a subsegment of a polyline.
     
@@ -210,6 +210,119 @@ def sample_stent_axis_vertices(points, parent_tip_map, segment_base_mask, starti
         interpolated_vertex = (1 - t) * subsegment_points[j] + t * subsegment_points[j+1]
         new_vertices.append(interpolated_vertex)
     
+    return jnp.array(new_vertices)
+
+def sample_stent_axis_vertices(points, parent_tip_map, segment_base_mask, starting_point_idx, desired_total_length, desired_segment_length, stent_diameter, sampling_direction=-1):
+    """
+    Extract + resample a polyline subsegment whose *effective cylinder length*
+    reaches `desired_total_length`, accounting for bend-induced extra length:
+        deff = d + r * theta
+    where d is segment length, r = stent_diameter / 2, and theta is the turning
+    angle between consecutive segment tangents.  Parent-tip 'jumps' are treated
+    as contiguous geometry, i.e. theta is computed across them as well.
+    """
+    if sampling_direction not in (-1, 1):
+        raise ValueError("sampling_direction must be integer -1 or +1")
+    if len(points) < 2:
+        raise ValueError("Not enough points to form a polyline.")
+
+    r = 0.5 * float(stent_diameter)
+    pts = np.asarray(points, dtype=float)
+    n_points = len(pts)
+
+    def seg_len(a, b):
+        return float(np.linalg.norm(b - a))
+
+    def unit(v):
+        n = np.linalg.norm(v)
+        return v / n if n > 0 else v
+
+    # def turn_angle(t_prev, t_next):
+    #     dot = float(np.clip(np.dot(t_prev, t_next), -1.0, 1.0))
+    #     return float(np.arccos(dot))
+    
+    def turn_angle(t_prev, t_next):
+        if np.allclose(t_prev, 0) or np.allclose(t_next, 0):
+            return 0.0 # assume it is straight if one of the tangents is zero
+        return float(np.arctan2(np.linalg.norm(np.cross(t_prev, t_next)), np.dot(t_prev, t_next)))
+
+    sub_pts = [pts[starting_point_idx]]
+    L_eff = 0.0  # accumulated effective (cylinder) length
+
+    i = starting_point_idx
+    idx_end = 0 if sampling_direction == -1 else n_points - 1
+
+    have_prev_tan = False
+    prev_tan = None
+
+    while i != idx_end:
+        # step to next index (handle parent-tip connectivity)
+        if segment_base_mask[i]:
+            next_i = parent_tip_map[i]
+        else:
+            next_i = i + sampling_direction
+
+        cur = pts[i]
+        nxt = pts[next_i]
+        d = seg_len(cur, nxt)
+        if d == 0.0:
+            i = next_i
+            continue
+
+        cur_tan = unit(nxt - cur)
+        theta = turn_angle(prev_tan, cur_tan) if have_prev_tan else 0.0
+
+        # effective length increment for this step
+        vertex_penalty = r * theta
+        deff = vertex_penalty + d
+
+        if L_eff + deff < desired_total_length:
+            # take full step
+            L_eff += deff
+            sub_pts.append(nxt)
+            i = next_i
+            have_prev_tan = True
+            prev_tan = cur_tan
+        else:
+            # finish inside this step
+            remaining = desired_total_length - L_eff
+            if remaining <= vertex_penalty + 1e-12:
+                # stop exactly at current vertex
+                break
+            leftover_linear = remaining - vertex_penalty
+            s = np.clip(leftover_linear / d, 0.0, 1.0)
+            new_pt = (1.0 - s) * cur + s * nxt
+            sub_pts.append(new_pt)
+            L_eff = desired_total_length
+            break
+
+    subsegment_points = np.array(sub_pts)
+
+    # resample uniformly by arclength along extracted subsegment
+    if len(subsegment_points) == 1:
+        return jnp.array(subsegment_points)
+
+    diffs = np.diff(subsegment_points, axis=0)
+    seg_lengths = np.linalg.norm(diffs, axis=1)
+    cumu = np.concatenate(([0.0], np.cumsum(seg_lengths)))
+    total = cumu[-1]
+
+    if total == 0.0:
+        return jnp.array(subsegment_points[:1])
+
+    new_s = np.arange(0.0, total, float(desired_segment_length))
+    if new_s.size == 0 or new_s[-1] < total:
+        new_s = np.append(new_s, total)
+
+    new_vertices = []
+    j = 0
+    for s in new_s:
+        while j < len(cumu) - 2 and cumu[j+1] < s:
+            j += 1
+        seg_delta = cumu[j+1] - cumu[j]
+        t = 0.0 if seg_delta == 0.0 else (s - cumu[j]) / seg_delta
+        new_vertices.append((1.0 - t) * subsegment_points[j] + t * subsegment_points[j+1])
+
     return jnp.array(new_vertices)
 
 def get_closest_surface_point_to_centerline_point(data, centerline_polydata, surface_polydata, centerline_point_id):
