@@ -81,6 +81,8 @@ def polydata_to_parent_tip_map(centerline_polydata):
     #  -- unique_rows  :   (n_segments, n_components)
     #  -- inverse      :   length N vector   point i --> segment_id
     unique_rows, inverse = np.unique(flags, axis=0, return_inverse=True)
+    if unique_rows.shape[0] == 1:
+        return {pointId: -1 for pointId in range(flags.shape[0])}, np.zeros(flags.shape[0], dtype=bool)
     # n_segments = unique_rows.shape[0]
     segment_points = defaultdict(list)          # seg_id -> [pt_id, ...]
     for pointId, seg_id in enumerate(inverse):

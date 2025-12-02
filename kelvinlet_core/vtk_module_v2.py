@@ -765,6 +765,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     
     def update_prescribed_stent_length(self, length):
         self.stent_length = length
+        if len(self.selected_points) == 0:
+            return
         self.compute_prescribed_stent()
         renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         renderer.RemoveActor(self.stent_visualization_actors[0])
@@ -925,7 +927,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         mu = 1
         nu = 0.2 # (0, 0.5), 0.4 originally
         num_time_steps = 1
-        aneurysm_radius = 0.5
+        aneurysm_radius = 0.5 # 20
+        # force_scale = force_scale * 50000
         if self.previous_aneurysm_maximum_radius >= aneurysm_radius - 2e-3:
             print("Target aneurysm radius reached.")
             return

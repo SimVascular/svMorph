@@ -68,8 +68,8 @@ STENT_DIAMETER_DEFAULT = 0.9  # 9mm stent
 STENT_LENGTH_DEFAULT = 1.7  # 17mm stent
 
 # File paths for demo data
-DEFAULT_MESH_FILE = "input/TST-STAN-5-trimmed-and-perfected.vtp" #"SU0243-preop-cm.vtp"
-DEFAULT_CENTERLINE_FILE = "input/TST-STAN-5-trimmed-and-perfected-centerlines.vtp" #"corrected-SU0243-preop-centerlines-cm.vtp"
+DEFAULT_MESH_FILE = "input/TST-STAN-5/TST-STAN-5-trimmed-and-perfected.vtp" #"SU0243-preop-cm.vtp"
+DEFAULT_CENTERLINE_FILE = "input/TST-STAN-5/TST-STAN-5-trimmed-and-perfected-centerlines.vtp" #"corrected-SU0243-preop-centerlines-cm.vtp"
 
 # Colors and styling
 ACTIVE_BUTTON_COLOR = "#d84005"
