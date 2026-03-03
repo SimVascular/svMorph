@@ -1423,6 +1423,7 @@ def get_stenosis_displacements(data, a, b, eps, s, force_center_normal, r_min, r
     # print("average_displacement_distance = ", average_displacement_distance)
     return np.array(displacements), step_size#, centerline_displacements
 
+# no longer being used by anything
 def get_sdf_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
     # Resolve all_indices and force_center_point_id outside JIT
     force_center_point_id = data["nodes"]["force_center_point_id"]
@@ -1637,7 +1638,7 @@ def stent_bounding_box(data_points, stent_vertices, target_stent_radius, doi, do
     mask = jnp.all((data_points >= min_coords) & (data_points <= max_coords), axis=1)
     return mask
 
-def get_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
+def get_sdf_contact_displacements_doi_unoptimized(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
     force_center_point_id = data["nodes"]["force_center_point_id"]
     print("force center: ", force_center_point_id)
     data_points = data["points"]["surface"]
@@ -1720,16 +1721,94 @@ def get_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surface_me
 
     return full_displacements, step_size
 
+def get_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
+    force_center_point_id = data["nodes"]["force_center_point_id"]
+    print("force center: ", force_center_point_id)
+    data_points = data["points"]["surface"]
+    num_kelvinlet_points = 1
+    doi = 0.65
+    doc = 0.01
+    f_scale = 0.25 * doi * 0.1
+    start_time = time.time()
+    bb_mask = stent_bounding_box(data_points, stent_vertices, target_stent_radius, doi, doc)
+    print("time taken to compute bounding box: ", time.time() - start_time)
+    start_time = time.time()
+    bb_mask = np.array(bb_mask)
+    data_points = np.array(data_points)
+    data_points_masked = data_points[bb_mask]
+    print("time taken to cast to numpy and mask out bounding box: ", time.time() - start_time)
+
+    xs_np = np.expand_dims(data_points_masked, 1)
+    xs = np.tile(xs_np, (1, num_kelvinlet_points, 1))
+    num_mesh_points = data_points.shape[0]
+    start_time = time.time()
+    total_num_vertices = xs.shape[0]
+    print("total_num_vertices: ", total_num_vertices)
+    final_dist_to_surface, final_direction = smin_sdf_capsule_contact_sculp(xs, a, b, stent_vertices, eps, s, target_stent_radius, current_stent_radius) #JIT-compiled
+    new_contact_mask = (final_dist_to_surface < doc).astype(bool)
+    print("time taken to compute new_contact points: ", time.time() - start_time)
+    xs = xs_np
+    new_contact_mask = np.array(new_contact_mask)
+    start_time = time.time()
+    in_contact_vertices = xs[new_contact_mask, :]
+    print("in_contact_vertices type: ", type(in_contact_vertices))
+    print("time taken to obtain in_contact vertices subslice: ", time.time() - start_time)
+    if in_contact_vertices.shape[0] == 0: # things are in contact <=> things are in influence
+        step_size = f_scale * (-s)
+        displacements, step_size = jnp.zeros((num_mesh_points, 3)), step_size
+        return displacements, step_size 
+    
+    start_time = time.time()
+    contact_tree = cKDTree(in_contact_vertices, leafsize=32)
+    dist_min, _ = contact_tree.query(xs[:, 0, :], k=1, distance_upper_bound=doi)
+    print("dist_min shape: ", dist_min.shape)
+    print("time for KD Tree query: ", time.time() - start_time)
+    start_time = time.time()
+    in_influence_mask = dist_min < doi
+    # print("in_influence_mask shape: ", in_influence_mask.shape)
+    in_influence_indices = np.flatnonzero(in_influence_mask)
+    print("in_influence_indices shape: ", in_influence_indices.shape)
+    print("time taken to flatnonzero: ", time.time() - start_time)
+    
+    start_time = time.time()
+    in_influence_to_in_contact_distances = dist_min[in_influence_mask]
+    print("time taken to obtain in-influence vertices: ", time.time() - start_time)
+    part_two_start_time = time.time()
+    
+    print("time for converting to jnp arrays: ", time.time() - part_two_start_time)
+    start_time = time.time()
+    doi_mask = final_dist_to_surface < doi
+    in_influence_vertices_blended_alpha_mask = np.zeros(total_num_vertices)
+    in_influence_vertices_blended_alpha = (1 - in_influence_to_in_contact_distances / doi)
+    print("time taken to compute JIT sculpt part two: ", time.time() - start_time)
+    start_time = time.time()
+    in_influence_vertices_blended_alpha = np.array(in_influence_vertices_blended_alpha)
+    in_influence_vertices_blended_alpha_mask[in_influence_indices] = in_influence_vertices_blended_alpha
+    print("time taken to compute blended alpha mask in np: ", time.time() - start_time)
+    start_time = time.time()
+    displacements = f_scale * ((final_dist_to_surface[doi_mask] / doi) ** 2 - 1) ** 2 * (-s) * final_direction[doi_mask] * in_influence_vertices_blended_alpha_mask[doi_mask, None]
+    full_displacements = np.zeros((num_mesh_points, 3))
+    bb_indices = np.flatnonzero(bb_mask)
+    doi_indices = bb_indices[doi_mask]
+    full_displacements[doi_indices] = displacements
+    # displacements = f_scale * force_kernel(1.99, 0.88, 2.3, final_dist_to_surface) * (-s) * final_direction * doi_mask * in_influence_vertices_blended_alpha_mask[:, None]
+    step_size = f_scale * (-s)
+    print("time taken to compute rest of the displacements: ", time.time() - start_time)   
+    # displacement is of type jnp array
+
+    return full_displacements, step_size
+
 def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
     force_center_point_id = data["nodes"]["force_center_point_id"]
     print("selected point ID: ", force_center_point_id)
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
-    doi = 0.9
+    # doi = 0.9
     doi = 0.65
-    doc = 0.01
+    # doc = 0.01
     doc = 0.001
+    # doc = 0.1
     # f_scale = 0.25 * doi * 0.1
     f_scale = 0.01
     start_time = time.time()
@@ -1840,6 +1919,194 @@ def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_verti
     full_centerline_displacements = np.zeros((num_centerline_points, 3))
     full_centerline_displacements[full_centerline_points_mask] = displacements[num_in_bb_mesh_points:]
     # displacements = f_scale * force_kernel(1.99, 0.88, 2.3, final_dist_to_surface) * (-s) * final_direction * doi_mask * in_influence_vertices_blended_alpha_mask[:, None]
+    step_size = f_scale * (-s)
+    print("time taken to compute rest of the displacements: ", time.time() - start_time)   
+
+    return full_surface_displacements, full_centerline_displacements, step_size
+
+def get_sdf_contact_surface_and_centerline_displacements_new_optimized(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
+    force_center_point_id = data["nodes"]["force_center_point_id"]
+    print("selected point ID: ", force_center_point_id)
+    data_points = data["points"]["surface"]
+    centerline_points = data["points"]["centerline"]
+    
+    # --- Constants ---
+    num_kelvinlet_points = 1
+    # doi = 0.9
+    doi = 0.65
+    # doc = 0.1
+    # doc = 0.01
+    doc = 0.001
+    # f_scale = 0.25 * doi * 0.1
+    f_scale = 0.01
+
+    # --- Bounding Box Filtering ---
+    start_time = time.time()
+    sbb_mask = stent_bounding_box(data_points, stent_vertices, target_stent_radius, doi, doc)
+    cbb_mask = stent_bounding_box(centerline_points, stent_vertices, target_stent_radius, doi, doc)
+    print("time taken to compute bounding box: ", time.time() - start_time)
+
+    # --- Numpy Casting & Masking ---
+    start_time = time.time()
+    sbb_mask = np.array(sbb_mask)
+    cbb_mask = np.array(cbb_mask)
+    data_points = np.array(data_points)
+    centerline_points = np.array(centerline_points)
+
+    data_points_masked = data_points[sbb_mask]
+    centerline_points_masked = centerline_points[cbb_mask]
+    print("time taken to cast to numpy and mask out bounding box: ", time.time() - start_time)
+
+    num_mesh_points = data_points.shape[0]
+    num_centerline_points = centerline_points.shape[0]
+    
+    # Store the split point to separate Surface vs Centerline later
+    num_in_bb_mesh_points = data_points_masked.shape[0] 
+
+    data_and_centerline_points_masked = np.concatenate((data_points_masked, centerline_points_masked), axis=0)
+    
+    # --- Prepare for JIT SDF Calculation ---
+    xs_np = np.expand_dims(data_and_centerline_points_masked, 1)
+    xs = np.tile(xs_np, (1, num_kelvinlet_points, 1))
+
+    start_time = time.time()
+    total_num_vertices = xs.shape[0]
+    print("num surface points and centerline points combined: ", total_num_vertices)
+    
+    # JIT-compiled SDF calculation
+    combined_final_dist_to_surface, combined_final_direction = smin_sdf_capsule_contact_sculp(
+        xs, a, b, stent_vertices, eps, s, target_stent_radius, current_stent_radius, doi, doc
+    ) 
+    combined_final_dist_to_surface = np.array(combined_final_dist_to_surface)
+    combined_final_direction = np.array(combined_final_direction)
+
+    # --- Split Results Back to Surface and Centerline ---
+    final_dist_to_surface = combined_final_dist_to_surface[:num_in_bb_mesh_points]
+    final_direction = combined_final_direction[:num_in_bb_mesh_points]
+    
+    # Surface Contact Logic
+    new_contact_mask = (final_dist_to_surface < doc).astype(bool)
+    print("time taken to compute new_contact points: ", time.time() - start_time)
+
+    # Centerline Logic (Filter out points inside the stent)
+    centerline_points_dist_to_surface = combined_final_dist_to_surface[num_in_bb_mesh_points:]
+    centerline_points_final_direction = combined_final_direction[num_in_bb_mesh_points:]
+    centerline_outside_stent_mask = (centerline_points_dist_to_surface[:, 0] > 0).astype(bool)
+
+    # Filter Centerline Movables
+    movables_centerline_points = centerline_points_masked[centerline_outside_stent_mask]
+    movables_centerline_points_dist_to_surface = centerline_points_dist_to_surface[centerline_outside_stent_mask]
+    movables_centerline_points_final_direction = centerline_points_final_direction[centerline_outside_stent_mask]
+
+    # Combine Surface + Valid Centerline for final calculations
+    final_movables_dist_to_surface = np.concatenate((final_dist_to_surface, movables_centerline_points_dist_to_surface))
+    final_movables_direction = np.concatenate((final_direction, movables_centerline_points_final_direction))
+    
+    # Create a global mask for centerline points that are active
+    full_centerline_points_mask = np.zeros(num_centerline_points, dtype=bool)
+    full_centerline_points_mask[cbb_mask] = centerline_outside_stent_mask
+
+    # --- Contact Analysis (KD Tree) ---
+    start_time = time.time()
+    in_contact_vertices = data_points_masked[new_contact_mask[:,0]]
+    print("time taken to obtain in_contact vertices subslice: ", time.time() - start_time)
+    
+    if in_contact_vertices.shape[0] == 0: 
+        step_size = f_scale * (-s)
+        return np.zeros((num_mesh_points, 3)), np.zeros((num_centerline_points, 3)), step_size 
+    
+    start_time = time.time()
+    contact_tree = cKDTree(in_contact_vertices, leafsize=32)
+    
+    # --- KD Tree Pruning Logic (Optimization) ---
+    # Query using Surface Points + Movable Centerline Points, but only those close enough by SDF
+    xs_query = np.concatenate((data_points_masked, movables_centerline_points), axis=0)
+    
+    # 1. Identify candidates: If SDF distance > DOI, they cannot possibly be in influence.
+    # We add a 10% safety margin (1.1) to account for discretization/approximation error.
+    potential_contact_mask = (final_movables_dist_to_surface < (doi * 1.1)).reshape(-1)
+    
+    # 2. Initialize all distances to "infinity" (outside DOI)
+    dist_min = np.full(xs_query.shape[0], doi + 1.0)
+    
+    # 3. Only query the subset of points that passed the SDF check
+    xs_query_subset = xs_query[potential_contact_mask]
+    
+    if xs_query_subset.shape[0] > 0:
+        dist_min_subset, _ = contact_tree.query(xs_query_subset, k=1, distance_upper_bound=doi)
+        # Map the subset results back to the full array
+        dist_min[potential_contact_mask] = dist_min_subset
+
+    print("time for KD Tree construction and query: ", time.time() - start_time)
+
+    # --- Influence Calculation ---
+    start_time = time.time()
+    in_influence_mask = dist_min < doi
+    in_influence_indices = np.flatnonzero(in_influence_mask)
+    print("time taken to flatnonzero: ", time.time() - start_time)
+    
+    start_time = time.time()
+    in_influence_to_in_contact_distances = dist_min[in_influence_mask]
+    
+    # --- Blending & Displacement (Optimized) ---
+    start_time = time.time()
+
+    # Create mask for DOI filtering on the concatenated [Surface + Movable Centerline] array
+    doi_mask = (final_movables_dist_to_surface < doi).astype(bool).reshape(-1)
+
+    # Compute blending alpha only for points in influence
+    in_influence_vertices_blended_alpha_mask = np.zeros(final_movables_dist_to_surface.shape[0])
+    in_influence_vertices_blended_alpha = (1 - in_influence_to_in_contact_distances / doi)  # linear blending
+    # in_influence_vertices_blended_alpha = (1 - (in_influence_to_in_contact_distances / doi) ** 2) ** 2 # quadratic blending
+    # in_influence_vertices_blended_alpha = in_influence_to_in_contact_distances / in_influence_to_in_contact_distances # no blending
+    # k = -2.0
+    # in_influence_vertices_blended_alpha = (np.exp(k*in_influence_to_in_contact_distances) - np.exp(k*doi)) / (1 - np.exp(k*doi))  # exponential blending
+    # in_influence_vertices_blended_alpha = smin_sdf_capsule_contact_sculp_part_two_KD(in_influence_vertices, in_contact_vertices, doi)
+    in_influence_vertices_blended_alpha = np.array(in_influence_vertices_blended_alpha)
+    
+    # Map the computed alphas back to the blended mask (still in compressed local space)
+    in_influence_vertices_blended_alpha_mask[in_influence_indices] = in_influence_vertices_blended_alpha
+    print("time taken to compute blended alpha mask in np: ", time.time() - start_time)
+    start_time = time.time()
+    
+    print("raw number of negative values in final_movables_dist_to_surface: ", np.sum(final_movables_dist_to_surface < 0))
+    # Handle interior points offset
+    interior_points_offset = np.maximum(-final_movables_dist_to_surface, 0.0)
+    final_movables_dist_to_surface = np.maximum(final_movables_dist_to_surface, 0.0) # Clip the interior points to the surface
+    # displacements = f_scale * ((final_movables_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * doi_mask * in_influence_vertices_blended_alpha_mask[:, None] * final_movables_direction
+
+    # --- CALCULATION (Compact Arrays) ---
+    # Only perform math on indices where doi_mask is True
+    print("doi mask shape", doi_mask.shape)
+    displacements_magnitude = f_scale * ((final_movables_dist_to_surface[doi_mask] / doi) ** 2 - 1) ** 2 * (-s) * in_influence_vertices_blended_alpha_mask[doi_mask, None] 
+    displacements_magnitude += interior_points_offset[doi_mask]
+    displacements = displacements_magnitude * final_movables_direction[doi_mask]
+
+    # --- ASSIGNMENT ---
+    
+    # 1. Split the DOI mask into Surface part and Centerline part
+    surface_doi_mask = doi_mask[:num_in_bb_mesh_points]
+    centerline_doi_mask = doi_mask[num_in_bb_mesh_points:]
+    
+    # 2. Determine the split index for the compact 'displacements' array
+    num_surface_doi_points = np.sum(surface_doi_mask)
+    
+    # 3. Assign Surface Displacements
+    full_surface_displacements = np.zeros((num_mesh_points, 3))
+    sbb_indices = np.flatnonzero(sbb_mask)
+    
+    # Map: Global Surface Indices -> filtered by Bounding Box -> filtered by DOI
+    doi_indices_surface = sbb_indices[surface_doi_mask]
+    full_surface_displacements[doi_indices_surface] = displacements[:num_surface_doi_points]
+
+    # 4. Assign Centerline Displacements
+    full_centerline_displacements = np.zeros((num_centerline_points, 3))
+    full_center_line_points_indices = np.flatnonzero(full_centerline_points_mask)
+    
+    # Map: Global Centerline Indices -> filtered by BB & Outside Stent -> filtered by DOI
+    doi_indices_centerline = full_center_line_points_indices[centerline_doi_mask]
+    full_centerline_displacements[doi_indices_centerline] = displacements[num_surface_doi_points:]
+
     step_size = f_scale * (-s)
     print("time taken to compute rest of the displacements: ", time.time() - start_time)   
 

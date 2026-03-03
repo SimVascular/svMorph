@@ -32,9 +32,9 @@ from functools import wraps
 
 # Application Constants
 # Stent parameter ranges and steps
-MAX_STENT_SIZE = 1.0  # 1cm = 10mm diameter
+MAX_STENT_SIZE = 2.0  # 1cm = 10mm diameter
 MIN_STENT_SIZE = 0.1  # 0.1cm = 1mm diameter
-STENT_DIAMETER_NUM_STEPS = 1000
+STENT_DIAMETER_NUM_STEPS = 190
 
 MAX_STENT_LENGTH = 8.0  # 80mm length
 MIN_STENT_LENGTH = 1.0  # 20mm length
@@ -64,12 +64,12 @@ FORCE_SCALE_SLIDER_RANGE = (-1000, 1000)
 FORCE_SCALE_DEFAULT = 1
 EPSILON_SLIDER_RANGE = (0, 500)
 EPSILON_DEFAULT = 20
-STENT_DIAMETER_DEFAULT = 0.9  # 9mm stent
+STENT_DIAMETER_DEFAULT = 0.8  # 9mm stent
 STENT_LENGTH_DEFAULT = 1.7  # 17mm stent
 
 # File paths for demo data
-DEFAULT_MESH_FILE = "input/TST-STAN-5/TST-STAN-5-trimmed-and-perfected.vtp" #"SU0243-preop-cm.vtp"
-DEFAULT_CENTERLINE_FILE = "input/TST-STAN-5/TST-STAN-5-trimmed-and-perfected-centerlines.vtp" #"corrected-SU0243-preop-centerlines-cm.vtp"
+DEFAULT_MESH_FILE = "input/TST-STAN-5/TST-STAN-5-preop-FINAL-030226.vtp" #"SU0243-preop-cm.vtp"
+DEFAULT_CENTERLINE_FILE = "input/TST-STAN-5/TST-STAN-5-preop-FINAL-030226-centerlines.vtp" #"corrected-SU0243-preop-centerlines-cm.vtp"
 
 # Colors and styling
 ACTIVE_BUTTON_COLOR = "#d84005"
@@ -474,7 +474,7 @@ class MainWindow(QMainWindow):
             self.display_centerline_nodes_select_multiple
         )
 
-        self.simultaneous_apply_button = QPushButton("Simultaneous Apply")
+        self.simultaneous_apply_button = QPushButton("Straighten Apply")
         self.simultaneous_apply_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
         self.controls_layout5.addWidget(self.simultaneous_apply_button)
         self.simultaneous_apply_button.clicked.connect(
@@ -620,7 +620,8 @@ class MainWindow(QMainWindow):
         )
         epsilon = self.stenosis_area_slider.value() / 100.0
         print(f"Running stent with force scale: {force_scale}, epsilon: {epsilon}")
-        self.style.deform_mesh_parallel(epsilon, force_scale)
+        # self.style.deform_mesh_parallel(epsilon, force_scale)
+        self.style.deform_mesh_with_straightening(epsilon, force_scale)
 
     def run_stent_edge(self):
         """Run stent edge deformation"""

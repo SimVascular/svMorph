@@ -238,10 +238,6 @@ def sample_stent_axis_vertices(points, parent_tip_map, segment_base_mask, starti
     def unit(v):
         n = np.linalg.norm(v)
         return v / n if n > 0 else v
-
-    # def turn_angle(t_prev, t_next):
-    #     dot = float(np.clip(np.dot(t_prev, t_next), -1.0, 1.0))
-    #     return float(np.arccos(dot))
     
     def turn_angle(t_prev, t_next):
         if np.allclose(t_prev, 0) or np.allclose(t_next, 0):
@@ -325,6 +321,122 @@ def sample_stent_axis_vertices(points, parent_tip_map, segment_base_mask, starti
         t = 0.0 if seg_delta == 0.0 else (s - cumu[j]) / seg_delta
         new_vertices.append((1.0 - t) * subsegment_points[j] + t * subsegment_points[j+1])
 
+    return jnp.array(new_vertices)
+
+def sample_stent_axis_vertices_straight_line(points, parent_tip_map, segment_base_mask, starting_point_idx, desired_total_length, desired_segment_length, sampling_direction=-1):
+    """
+    Extracts and resamples a subsegment of a polyline based on Euclidean distance from start.
+    
+    Parameters:
+      points (np.array): Nx3 array of 3D coordinates representing the polyline.
+      desired_segment_length (float): The spacing (in cm) between resampled points (output resolution).
+      starting_point_idx (int): Index in points where the subsegment starts.
+      desired_total_length (float): The maximum straight-line distance (in cm) allowed 
+                                    between the start point and the end of the subsegment.
+    
+    Returns:
+      jax.numpy.array: A new array of 3D coordinates representing the resampled subsegment.
+    """
+    if sampling_direction not in (-1, 1):
+        raise ValueError("sampling_direction must be integer -1 or +1")
+    if len(points) < 2:
+        raise ValueError("Not enough points to form a polyline.")
+    
+    subsegment_points = []
+    start_point = points[starting_point_idx]
+    subsegment_points.append(start_point)
+    
+    n_points = len(points)
+    
+    # Walk along the polyline starting from starting_point_idx.
+    i = starting_point_idx
+    idx_end = 0 if sampling_direction == -1 else n_points - 1
+    next_point_idx_offset = -1 if sampling_direction == -1 else 0
+    
+    while i != idx_end:
+        # Determine the next index based on hierarchy (parent_tip_map) or linear traversal
+        if segment_base_mask[i]:
+            next_i = parent_tip_map[i]
+        else:
+            next_i = i + sampling_direction
+
+        # Get the actual coordinates
+        p_curr = points[i]
+        p_next = points[next_i]
+
+        # Calculate distance from the ORIGINAL start point to the NEXT point
+        dist_from_start_to_next = np.linalg.norm(p_next - start_point)
+
+        if dist_from_start_to_next < desired_total_length:
+            # The next point is still within the desired radius
+            subsegment_points.append(p_next)
+        else:
+            # The next point is outside the radius. 
+            # We need to find t such that ||(p_curr + t * (p_next - p_curr)) - start_point|| = desired_total_length
+            # Let U = p_curr - start_point
+            # Let V = p_next - p_curr (the segment vector)
+            # We solve ||U + tV||^2 = R^2 for t
+            
+            U = p_curr - start_point
+            V = p_next - p_curr
+            R = desired_total_length
+            
+            # Quadratic coefficients: At^2 + Bt + C = 0
+            A = np.dot(V, V)
+            B = 2 * np.dot(U, V)
+            C = np.dot(U, U) - R**2
+            
+            # Calculate discriminant
+            delta = B**2 - 4*A*C
+            
+            if delta >= 0 and A > 1e-8:
+                # We want the positive root that usually falls between 0 and 1 for forward intersection
+                t = (-B + np.sqrt(delta)) / (2*A)
+                
+                # Clamp t to [0, 1] just in case of precision issues, though math should hold
+                t = max(0.0, min(1.0, t))
+                
+                new_point = p_curr + t * V
+                subsegment_points.append(new_point)
+            else:
+                # Fallback if calculation fails (e.g. A=0), just take the current point
+                subsegment_points.append(p_curr)
+            
+            break # Stop immediately after adding the interpolated end point
+
+        i = next_i
+
+    # Convert the subsegment to a numpy array.
+    subsegment_points = np.array(subsegment_points)
+
+    # --- Resampling Logic (Remains unchanged) ---
+    # Now resample the subsegment to have points uniformly spaced by desired_segment_length.
+    
+    diffs = np.diff(subsegment_points, axis=0)
+    seg_lengths = np.linalg.norm(diffs, axis=1)
+    cumu_length = np.concatenate(([0.0], np.cumsum(seg_lengths)))
+    total_length = cumu_length[-1]
+    
+    if total_length == 0:
+        return jnp.array([start_point])
+
+    # Generate new arc-length values from 0 to total_length
+    new_s = np.arange(0, total_length, desired_segment_length)
+    # Ensure the final point is included if it's not close to the last step
+    if len(new_s) == 0 or (total_length - new_s[-1] > 1e-6):
+        new_s = np.append(new_s, total_length)
+        
+    new_vertices = []
+    j = 0  
+    for s in new_s:
+        # Find the segment that contains arc-length s.
+        while j < len(cumu_length) - 2 and cumu_length[j+1] < s:
+            j += 1
+        seg_delta = cumu_length[j+1] - cumu_length[j]
+        t = 0 if seg_delta == 0 else (s - cumu_length[j]) / seg_delta
+        interpolated_vertex = (1 - t) * subsegment_points[j] + t * subsegment_points[j+1]
+        new_vertices.append(interpolated_vertex)
+    
     return jnp.array(new_vertices)
 
 def get_closest_surface_point_to_centerline_point(data, centerline_polydata, surface_polydata, centerline_point_id):

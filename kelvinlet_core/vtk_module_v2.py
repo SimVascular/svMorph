@@ -454,7 +454,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
                 # Create cylinder between p0 and p1
                 cylinder = vtkCylinderSource()
-                cylinder.SetRadius(self.current_stent_radius)
+                cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
                 cylinder.SetHeight(length)
                 cylinder.SetResolution(50)
                 # Create transform: rotate and translate the cylinder so that its center is at midpoint
@@ -483,7 +483,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             # Place a sphere at each vertex with the same radius
             sphere = vtkSphereSource()
             sphere.SetCenter(vertex)
-            sphere.SetRadius(self.current_stent_radius)
+            sphere.SetRadius(self.current_stent_radius + self.smoothing_k)
             sphere.SetThetaResolution(50)
             sphere.SetPhiResolution(50)
             sphere.Update()
@@ -539,7 +539,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         time_start = time.time()
         if self.stent_axis_vertices is None:
             return
-        r = self.current_stent_radius               # capsule radius
+        r = self.current_stent_radius + self.smoothing_k            # capsule radius
         r_render = r + 0.1
         # Define the sampling grid.
         nx, ny, nz = 100, 100, 100
@@ -589,7 +589,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         cylinder = vtkCylinderSource()
         # cylinder.SetCenter(position)
         # cylinder.SetRadius(self.radius_of_influence)
-        cylinder.SetRadius(self.current_stent_radius)
+        cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
         cylinder.SetHeight(2 * self.stent_unit_section_halflength)
         cylinder.SetResolution(100)
 
@@ -777,13 +777,39 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     def update_current_stent_radius(self):
         for roi_actor in self.roi_actors[-1:]:
             roi_cylinder = roi_actor.cylinderSource
-            roi_cylinder.SetRadius(self.current_stent_radius)
+            roi_cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
         for stent_visualization_assembly in self.stent_visualization_actors[-1:]:
             for stent_segment_actor in stent_visualization_assembly.GetParts():
                 # opacity
                 stent_segment_geometry = stent_segment_actor.geometrySource
-                stent_segment_geometry.SetRadius(self.current_stent_radius)
+                stent_segment_geometry.SetRadius(self.current_stent_radius + self.smoothing_k)
         self.update_roi_text()
+    
+    def update_current_stent_curvature(self):
+        straightening_strength = 0.075
+        def lerp(vertices, start_point, end_point, strength):
+            direction = end_point - start_point
+            length = jnp.linalg.norm(direction)
+            if length < 1e-6:
+                return vertices
+            direction /= length
+            for i in range(len(vertices)):
+                point = vertices[i]
+                to_start = point - start_point
+                projection_length = jnp.dot(to_start, direction)
+                closest_point_on_line = start_point + projection_length * direction
+                displacement = closest_point_on_line - point
+                vertices = vertices.at[i].set(point + strength * displacement)
+            return vertices
+        
+        start_point = self.stent_axis_vertices[0]
+        end_point = self.stent_axis_vertices[-1]
+        self.stent_axis_vertices = lerp(self.stent_axis_vertices, start_point, end_point, straightening_strength)
+        self.place_sdf_stent_visualization()
+        renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
+        renderer.RemoveActor(self.stent_visualization_actors[0])
+        self.stent_visualization_actors.pop(0)
+
 
     def update_selected_point(self):
         if len(self.selected_points) == 0:
@@ -907,7 +933,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     
     def deform_mesh_sequential(self, epsilon, force_scale):
         if len(self.selected_points) < 1:
-            print("Please select the center of the stent along the centerline.")
+            print("Please select the distal start of the stent along the centerline.")
             return
         # local_area = self.centerline_section_areas[self.selected_points[-1]]
         # local_radius = np.sqrt(local_area / np.pi)
@@ -942,7 +968,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
     def deform_mesh_stent_edge(self, epsilon, force_scale):
         if len(self.selected_points) < 1:
-            print("Please select the center of the stent along the centerline.")
+            print("Please select the distal start of the stent along the centerline.")
             return
         force_center_point_id = self.selected_points[self.force_center_idx]
         list_of_node_point_indices = self.selected_points
@@ -959,7 +985,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
     def deform_mesh_sdf(self, epsilon, force_scale):
         if len(self.selected_points) < 1:
-            print("Please select the center of the stent along the centerline.")
+            print("Please select the distal start of the stent along the centerline.")
             return
         # local_area = self.centerline_section_areas[self.selected_points[-1]]
         # local_radius = np.sqrt(local_area / np.pi)
@@ -990,7 +1016,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
     
     def deform_mesh_sdf_contact(self, epsilon, force_scale):
         if len(self.selected_points) < 1:
-            print("Please select the center of the stent along the centerline.")
+            print("Please select the distal start of the stent along the centerline.")
             return
         # local_area = self.centerline_section_areas[self.selected_points[-1]]
         # local_radius = np.sqrt(local_area / np.pi)
@@ -1034,6 +1060,33 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
         self.create_stenosis(self.mesh_filename, self.centerline_filename, self.selected_points, force_scale, area_percent_change, stenosis_radius, stenosis_length)
         self.GetInteractor().GetRenderWindow().Render()
+
+    def deform_mesh_with_straightening(self, epsilon, force_scale):
+        if len(self.selected_points) < 1:
+            print("Please select the distal start of the stent along the centerline.")
+            return
+        centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
+        surface_polydata_output_file_name = "obtained_aneurysm_surface"
+        list_of_other_geometry_polydata_input_file_names = []
+        list_of_other_geometry_polydata_output_file_names = []
+        force_center_point_id = self.selected_points[self.force_center_idx]
+        list_of_node_point_indices = self.selected_points
+        # area_percent_change = 500
+        phi_type = "point"
+        model = "test_aneurysm"
+        affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
+        mu = 1
+        nu = 0.2 # (0, 0.5), 0.4 originally
+        num_time_steps = 1
+        displacement_distance = self.run_stent_with_straightening(
+        affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
+        force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius,
+        list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
+        self.update_current_stent_radius()
+        self.update_current_stent_curvature()
+        start_time = time.time()
+        self.GetInteractor().GetRenderWindow().Render()
+        print(f"Time for rendering new frame: {time.time() - start_time:.4f} seconds")
 
     def run_aneurysm_parallel(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 
@@ -1575,6 +1628,66 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             data_surface_copy = {"points" : {"surface" : copy.deepcopy(v2n(surface_polydata.GetPoints().GetData()))}}
             surface_polydata_copy = common.update_polydata_with_points(surface_polydata_copy, data_surface_copy, "surface")
             current_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+
+    def run_stent_with_straightening(self, affine_params, model, centerline_polydata_input_file_name, 
+                        surface_polydata_input_file_name, centerline_polydata_output_file_name, 
+                        surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
+                        force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius, 
+                        other_geometry_input_files, other_geometry_output_files):
+        # --- Initialization and Parameter Setup ---
+        total_start_time = time.time()  # Start total timer
+        affine_type = "aneurysm"
+        # nu = 0.1
+        a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+        print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
+        # --- Load Polydata ---
+        load_start_time = time.time()
+        # centerline_polydata = self.centerline  # Loaded from self attributes
+        # surface_polydata = self.mesh
+        print(f"Time for reading surface polydata: {time.time() - load_start_time:.4f} seconds")
+
+        # --- Define Points and Nodes ---
+        setup_start_time = time.time()
+        other_geometry_polydatas = []  # Placeholder for additional geometries if needed
+        # simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = scaling.define_nodes_affine(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
+        simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+        print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
+        
+        # --- Calculate Initial Displacements --- CURENTLY the longest step 
+        calc_displacement_start_time = time.time()
+        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(self.centerline, simulation_data["nodes"]["force_center_point_id"])
+        print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
+        cross_section_time = time.time()
+        # original_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        # vertices = simulation_data["points"]["surface"]
+        # original_radius, sorted_indices = vtk_utils.estimate_radius(vertices, origin, normal, 1)
+        print(f"Time for getting cross sectional radius: {time.time() - cross_section_time:.4f} seconds")
+        get_displacement_time = time.time()
+        print(f"Time for computing initial radius and displacement: {time.time() - get_displacement_time:.4f} seconds")
+        
+        # --- Compute Initial Force Matrix and Displacements ---
+        step_start_time = time.time()
+        eps = affine_params["eps"][model]
+        # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
+        print("Main loop eps = ", eps, "force_scale = ", force_scale)
+        # , centerline_displacements
+        surface_displacements, centerline_displacements, step_size = scaling.get_sdf_contact_surface_and_centerline_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
+        self.current_stent_radius += step_size
+        print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
+        
+        # --- Scale Displacements to Match Desired Area ---
+        displacement_start_time = time.time()
+        simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
+        simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
+        common.update_polydata_with_points(self.mesh, simulation_data, "surface")
+        common.update_polydata_with_points(self.centerline, simulation_data, "centerline")
+
+        print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
+        total_simulation_time = time.time() - total_start_time
+        print(f"Total simulation time: {total_simulation_time:.4f} seconds")
+        print(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
+        return step_size
 
     def update_mesh_viewer(self):
         # updated_mesh = load_vtp_file("obtained_aneurysm_surface_aneurysm_constant_uniscale_1.vtp")
