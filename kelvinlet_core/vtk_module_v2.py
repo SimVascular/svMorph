@@ -315,6 +315,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # Create another text actor to display the radius of influence below it
         roi_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
         roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius + self.smoothing_k:.4f}")
+        # roi_text_actor.SetInput(f"{self.current_stent_radius + self.smoothing_k:.4f}")
         roi_text_actor.GetTextProperty().SetColor(0.0, 0.0, 0.0)
         roi_text_actor.GetTextProperty().SetFontSize(16)
         roi_text_actor.SetPosition(10, 4)
@@ -339,10 +340,17 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         if self.roi_text_actor is None:
             return
         self.roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius + self.smoothing_k:.4f}")
+        # self.roi_text_actor.SetInput(f"{self.current_stent_radius + self.smoothing_k:.4f}")
 
     def compute_prescribed_stent(self):
-        segment_length = 0.1 # cm 0.1
-        self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], self.stent_length, segment_length, 2*self.stent_radius, sampling_direction=self.sampling_direction)
+        segment_length = 0.1 # cm
+        # self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], self.stent_length, segment_length, 2*self.stent_radius, sampling_direction=self.sampling_direction)
+        foreshortening_percentage = 0.1 # 10%
+        # foreshortening_percentage = 0.1032258065 # 0225
+        # foreshortening_percentage = 0.135 # 0234
+        # foreshortening_percentage = 0.12 # 0235
+        deployed_stent_length = self.stent_length * (1 - foreshortening_percentage)
+        self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices_new(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, segment_length, sampling_direction=self.sampling_direction)
         print(f"num vertices for stent of length {self.stent_length}cm, segment length {segment_length}cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
         
