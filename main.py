@@ -25,11 +25,6 @@ Dependencies:
 - kelvinlet_core: Custom deformation algorithms
 """
 
-# Profiling to check the bottleneck
-import cProfile
-import pstats
-from functools import wraps
-
 # Application Constants
 # Stent parameter ranges and steps
 MAX_STENT_SIZE = 2.0  # 1cm = 10mm diameter
@@ -66,10 +61,6 @@ EPSILON_SLIDER_RANGE = (0, 500)
 EPSILON_DEFAULT = 20
 STENT_DIAMETER_DEFAULT = 0.8  # 9mm stent
 STENT_LENGTH_DEFAULT = 1.7  # 17mm stent
-
-# File paths for demo data
-DEFAULT_MESH_FILE = "input/TST-STAN-5/TST-STAN-5-preop-FINAL-030226.vtp" #"SU0243-preop-cm.vtp"
-DEFAULT_CENTERLINE_FILE = "input/TST-STAN-5/TST-STAN-5-preop-FINAL-030226-centerlines.vtp" #"corrected-SU0243-preop-centerlines-cm.vtp"
 
 # Colors and styling
 ACTIVE_BUTTON_COLOR = "#d84005"
@@ -153,23 +144,6 @@ class UIStyleManager:
         return not is_active
 
 
-def profile_func(func):
-    """Decorator for profiling function performance"""
-
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        profiler = cProfile.Profile()
-        profiler.enable()
-        result = func(self)
-        profiler.disable()
-        # Print profiling results
-        ps = pstats.Stats(profiler)
-        ps.strip_dirs().sort_stats("cumulative").print_stats(10)
-        return result
-
-    return wrapper
-
-
 ###### Full VTK Integration ######
 import sys
 from PyQt6.QtWidgets import (
@@ -189,7 +163,6 @@ import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from kelvinlet_core.vtk_module import VTKHandler
 from PyQt6.QtCore import QTimer
-import math
 
 
 class MainWindow(QMainWindow):
@@ -204,7 +177,6 @@ class MainWindow(QMainWindow):
         self._setup_timers()
         self._setup_ui_controls()
         self._setup_vtk_components()
-        # self._load_default_files()
         self.initialize_vtk_handler()
 
     def _setup_window_geometry(self):
@@ -225,7 +197,6 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.kelvinlet_timer = QTimer(self)
         self.stenosis_timer = QTimer(self)
-        self.stent_edge_timer = QTimer(self)
         self.animation_timer = QTimer(self)
 
     def _setup_ui_controls(self):
@@ -422,9 +393,7 @@ class MainWindow(QMainWindow):
         self.stent_edge_button = QPushButton("Place Stent") # originally the "Stent Edge" button
         self.stent_edge_button.setFixedWidth(BUTTON_WIDTH_SMALL)
         self.controls_layout4.addWidget(self.stent_edge_button)
-        # self.stent_edge_timer.timeout.connect(self.run_stent_edge)
         self.stent_edge_button.pressed.connect(self.save_current_stent)
-        # self.stent_edge_button.released.connect(self.stop_stent_edge_deformation)
 
         self.animated_aneurysm_button = QPushButton("Animated Aneurysm Apply")
         self.animated_aneurysm_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
@@ -443,9 +412,8 @@ class MainWindow(QMainWindow):
         self.controls_layout5.addWidget(self.stenosis_slider_label)
 
         self.stenosis_area_slider = QSlider(Qt.Orientation.Horizontal)
-        # self.stenosis_area_slider.setRange(-3, 6)
-        self.stenosis_area_slider.setRange(0, 500)
-        self.stenosis_area_slider.setValue(20)
+        self.stenosis_area_slider.setRange(*EPSILON_SLIDER_RANGE)
+        self.stenosis_area_slider.setValue(EPSILON_DEFAULT)
         self.controls_layout5.addWidget(self.stenosis_area_slider)
 
         self.stenosis_slider_value = QLineEdit()
@@ -456,11 +424,6 @@ class MainWindow(QMainWindow):
         self.controls_layout5.addWidget(self.stenosis_slider_value)
 
         self.controls_layout5.addStretch(1)
-
-        # Additional function buttons
-        self.detect_self_intersection_button = QPushButton("Detect Self-Intersection")
-        self.detect_self_intersection_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
-        self.controls_layout5.addWidget(self.detect_self_intersection_button)
 
         self.render_sdf_button = QPushButton("Render SDF")
         self.render_sdf_button.setFixedWidth(BUTTON_WIDTH_SMALL)
@@ -505,11 +468,6 @@ class MainWindow(QMainWindow):
         self.vtk_handler = None
         self.mesh_file = None
         self.centerline_file = None
-
-    def _load_default_files(self):
-        """Load default mesh and centerline files for development"""
-        self.mesh_file = DEFAULT_MESH_FILE
-        self.centerline_file = DEFAULT_CENTERLINE_FILE
 
     def _on_stent_length_slider_change(self, value):
         """Handle stent length slider changes"""
@@ -634,15 +592,6 @@ class MainWindow(QMainWindow):
         # self.style.deform_mesh_parallel(epsilon, force_scale)
         self.style.deform_mesh_with_straightening(epsilon, force_scale)
 
-    def run_stent_edge(self):
-        """Run stent edge deformation"""
-        force_scale = -SliderMapper.force_scale_slider_to_value(
-            self.area_slider.value()
-        )
-        epsilon = self.stenosis_area_slider.value() / 100.0
-        print(f"Shaping stent edge with epsilon: {epsilon}")
-        self.style.deform_mesh_stent_edge(epsilon, force_scale)
-
     def update_selected_point(self):
         """Update selected point for animation - shifts to next centerline node"""
         self.style.update_selected_point()
@@ -656,7 +605,6 @@ class MainWindow(QMainWindow):
         UIStyleManager.toggle_button_style(self.reverse_animation_button)
         self.style.reverse_animation_direction()
 
-    # @profile_func
     def run_stenosis(self):
         """Run stenosis deformation with user-specified parameters"""
         if self.vtk_handler is None:
@@ -684,7 +632,7 @@ class MainWindow(QMainWindow):
 
     def toggle_interleave_mode(self):
         """Toggle interleave mode and update button styling"""
-        is_active = UIStyleManager.toggle_button_style(
+        UIStyleManager.toggle_button_style(
             self.toggle_interleave_mode_button
         )
 
@@ -752,14 +700,6 @@ class MainWindow(QMainWindow):
         self.timer.stop()
         self.animation_timer.stop()
 
-    def start_stent_edge_deformation(self):
-        """Start stent edge deformation timer"""
-        self.stent_edge_timer.start(DEFORMATION_TIMER_INTERVAL)
-
-    def stop_stent_edge_deformation(self):
-        """Stop stent edge deformation timer"""
-        self.stent_edge_timer.stop()
-    
     def save_current_stent(self):
         """Save the current stent configuration"""
         if hasattr(self, "style") and self.style:
