@@ -1,10 +1,12 @@
+# Python cache files
 __pycache__/
 *.pyc
 
 0115_H_PULM_ALGS/
 input/
 obtained/
-
+# Geometry and mesh files
+*.vtp
 SU0243-postop-estimated-cm.vtp
 SU0243-preop-centerlines-cm.vtp
 SU0243-preop-cm.vtp

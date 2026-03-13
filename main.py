@@ -204,7 +204,7 @@ class MainWindow(QMainWindow):
         self._setup_timers()
         self._setup_ui_controls()
         self._setup_vtk_components()
-        self._load_default_files()
+        # self._load_default_files()
         self.initialize_vtk_handler()
 
     def _setup_window_geometry(self):
@@ -503,6 +503,8 @@ class MainWindow(QMainWindow):
         """Initialize VTK-related components"""
         self.vtk_interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
         self.vtk_handler = None
+        self.mesh_file = None
+        self.centerline_file = None
 
     def _load_default_files(self):
         """Load default mesh and centerline files for development"""
@@ -549,6 +551,15 @@ class MainWindow(QMainWindow):
     def initialize_vtk_handler(self):
         """Initialize VTK handler and setup the visualization pipeline"""
         if not self.mesh_file or not self.centerline_file:
+            # No data loaded yet — show an empty white viewport
+            if not hasattr(self, 'ren'):
+                self.ren = vtk.vtkRenderer()
+                self.ren.SetBackground(1, 1, 1)
+                self.vtk_widget.GetRenderWindow().AddRenderer(self.ren)
+                self.vtk_interactor.SetRenderWindow(self.vtk_widget.GetRenderWindow())
+                self.vtk_widget.GetRenderWindow().Render()
+                self.vtk_interactor.Initialize()
+                self.vtk_interactor.Start()
             print("Both mesh and centerline files are required.")
             return
 
