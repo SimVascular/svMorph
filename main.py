@@ -187,7 +187,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-from kelvinlet_core.vtk_module_v2 import VTKHandler
+from kelvinlet_core.vtk_module import VTKHandler
 from PyQt6.QtCore import QTimer
 import math
 
