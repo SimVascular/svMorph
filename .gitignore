@@ -1,3 +1,6 @@
+__pycache__/
+*.pyc
+
 0115_H_PULM_ALGS/
 input/
 obtained/
