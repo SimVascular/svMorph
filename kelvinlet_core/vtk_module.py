@@ -1305,7 +1305,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             eps = affine_params["eps"][model]
             print("Main loop eps = ", eps, "s = ", s)
             surface_displacements, step_size = scaling.get_stenosis_displacements(simulation_data, a, b, eps, s, normal, stenosis_radius, stenosis_length, original_radius)
-            self.current_stent_radius += step_size
             print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
             
             # --- Scale Displacements to Match Desired Area ---
