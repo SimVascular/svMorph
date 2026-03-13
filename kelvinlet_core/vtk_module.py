@@ -20,7 +20,6 @@ from vtkmodules.vtkIOXML import vtkXMLPolyDataReader, vtkXMLPolyDataWriter
 from kelvinlet_core import scaling
 from kelvinlet_core import vtk_utils
 from kelvinlet_core import common
-from scripts import calculate_radius_of_influence
 import numpy as np
 from vtk.util.numpy_support import numpy_to_vtk, get_vtk_array_type
 import jax as jx
@@ -141,7 +140,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
         self.epsilon = 0.2
         self.force_scale = -1.0
-        self.radius_of_influence = 0.0
         self.stent_radius = 0.45
         self.stent_length = 1.7
         self.smoothing_k = 0.01
@@ -572,8 +570,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
     def place_radius_of_influence_cylinder(self, position, pointID):
         cylinder = vtkCylinderSource()
-        # cylinder.SetCenter(position)
-        # cylinder.SetRadius(self.radius_of_influence)
         cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
         cylinder.SetHeight(2 * self.stent_unit_section_halflength)
         cylinder.SetResolution(100)
@@ -614,8 +610,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
     def place_stent_cylinder(self, position, pointID):
         cylinder = vtkCylinderSource()
-        # cylinder.SetCenter(position)
-        # cylinder.SetRadius(self.radius_of_influence)
         cylinder.SetRadius(self.stent_radius)
         cylinder.SetHeight(2 * self.stent_unit_section_halflength)
         cylinder.SetResolution(100)
@@ -731,11 +725,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         b = 0.0331572798108
         self.epsilon = epsilon
         self.force_scale = force_scale
-        self.radius_of_influence = calculate_radius_of_influence.get_radius_of_influence(a, b, epsilon, force_scale)
-        print(f"Updated epsilon: {epsilon}, force_scale: {force_scale}, radius_of_influence: {self.radius_of_influence}")
+        # print(f"Updated epsilon: {epsilon}, force_scale: {force_scale}")
         for roi_actor in self.roi_actors[-1:]:
             roi_cylinder = roi_actor.cylinderSource
-            # roi_cylinder.SetRadius(self.radius_of_influence)
             roi_actor.GetProperty().SetOpacity(abs(force_scale) * 0.7)
         self.update_roi_text()
         self.GetInteractor().GetRenderWindow().Render()
@@ -885,11 +877,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         if len(self.selected_points) < 1:
             print("Please select the distal start of the stent along the centerline.")
             return
-        # local_area = self.centerline_section_areas[self.selected_points[-1]]
-        # local_radius = np.sqrt(local_area / np.pi)
-        # if self.total_displacement_distance + local_radius >= self.radius_of_influence - 0.01:
-            # print("Prescribed radius reached.")
-            # return
         centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
         surface_polydata_output_file_name = "obtained_aneurysm_surface"
         list_of_other_geometry_polydata_input_file_names = []
@@ -937,11 +924,6 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         if len(self.selected_points) < 1:
             print("Please select the distal start of the stent along the centerline.")
             return
-        # local_area = self.centerline_section_areas[self.selected_points[-1]]
-        # local_radius = np.sqrt(local_area / np.pi)
-        # if self.total_displacement_distance + local_radius >= self.radius_of_influence - 0.01:
-            # print("Prescribed radius reached.")
-            # return
         centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
         surface_polydata_output_file_name = "obtained_aneurysm_surface"
         list_of_other_geometry_polydata_input_file_names = []
