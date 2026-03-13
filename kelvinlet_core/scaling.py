@@ -516,7 +516,7 @@ def get_sdf_contact_surface_and_centerline_displacements(data, a, b, stent_verti
     start_time = time.time()
     contact_tree = cKDTree(in_contact_vertices, leafsize=32)
     xs = np.concatenate((data_points_masked, movables_centerline_points), axis=0)
-    dist_min, _ = contact_tree.query(xs, k=1, distance_upper_bound=doi)
+    dist_min, _ = contact_tree.query(xs, k=1, distance_upper_bound=doi, workers=-1)
     # print("dist_min shape: ", dist_min.shape)
     print("time for KD Tree construction and query: ", time.time() - start_time)
     start_time = time.time()
