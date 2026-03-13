@@ -15,7 +15,6 @@ np.set_printoptions(linewidth=np.inf)
 
 from kelvinlet_core import vtk_utils
 from kelvinlet_core import common
-from kelvinlet_core import ring_points_optimizer
 
 import jax as jx
 import jax.numpy as jnp
