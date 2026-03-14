@@ -159,7 +159,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-from kelvinlet_core.vtk_module import VTKHandler
+from svmorph.visualization.renderer import SceneManager
 from PyQt6.QtCore import QTimer
 
 
@@ -494,7 +494,7 @@ class MainWindow(QMainWindow):
             print("Both mesh and centerline files are required.")
             return
 
-        self.vtk_handler = VTKHandler(self.mesh_file, self.centerline_file)
+        self.vtk_handler = SceneManager(self.mesh_file, self.centerline_file)
 
         self.ren = self.vtk_handler.get_renderer()
         self.ren.SetBackground(1, 1, 1)

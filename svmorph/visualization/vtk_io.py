@@ -6,6 +6,21 @@ import vtk
 import numpy as np
 import jax.numpy as jnp
 from vtk.util.numpy_support import vtk_to_numpy as v2n
+from vtkmodules.vtkIOXML import vtkXMLPolyDataReader, vtkXMLPolyDataWriter
+
+
+def read_vtp(filename):
+    reader = vtkXMLPolyDataReader()
+    reader.SetFileName(filename)
+    reader.Update()
+    return reader.GetOutput()
+
+
+def write_vtp(polydata, filename):
+    writer = vtkXMLPolyDataWriter()
+    writer.SetFileName(filename)
+    writer.SetInputData(polydata)
+    writer.Write()
 
 
 def extract_mesh_arrays(surface_polydata, centerline_polydata):

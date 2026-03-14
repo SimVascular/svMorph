@@ -60,6 +60,23 @@ def compute_min_dist_and_direction(d, dir):
     (final_d, final_dir), _ = jx.lax.scan(fold_smin, (d[0], dir[0]), (d[1:], dir[1:]))
     return final_d, final_dir
 
+@jx.jit
+def capsule_sdf(p, stent_vertices, r):
+    ba_all = jnp.diff(stent_vertices, axis=0)
+    pa_all = p - stent_vertices[None, :-1, :]
+    ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
+    ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
+    h_all = jnp.clip(ba_dot_pa_all / ba_dot_ba_all, 0, 1)
+    axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
+    dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
+    direction_all = axis_to_point_all / dist_all
+    dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments)
+    dist_to_surface_all = dist_all_squeezed - r
+    final_dist_to_surface, _ = jx.vmap(compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
+    final_dist_to_surface = final_dist_to_surface[:, None]
+    sdf = final_dist_to_surface
+    return sdf
+
 def kelvinlets_stent_edge(rv, a, b, eps, s, direction, w, r_target):
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     # Extract components of rv
