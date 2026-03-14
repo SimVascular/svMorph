@@ -482,8 +482,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_deformation_parameters(self, epsilon, force_scale):
-        a = 0.0795774715459 # TODO: dont hard code this lol
-        b = 0.0331572798108
         self.epsilon = epsilon
         self.force_scale = force_scale
         for roi_actor in self.roi_actors[-1:]:
@@ -592,10 +590,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
     def toggle_interleave_mode(self):
         self.interleave_mode = not self.interleave_mode
         self.num_kelvinlet_points = 2 if self.interleave_mode else 1
-        if self.interleave_mode:
-            self.num_kelvinlet_points = 2
-        else:
-            self.num_kelvinlet_points = 1
+        if not self.interleave_mode:
             if len(self.selected_points) > 1:
                 self.selected_points.pop(0)
                 renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
@@ -745,14 +740,11 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                         other_geometry_input_files, other_geometry_output_files):
         # --- Initialization and Parameter Setup ---
         total_start_time = time.time()  # Start total timer
-        affine_type = "aneurysm"
         a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")
-        # --- Load Polydata ---
 
         # --- Define Points and Nodes ---
         setup_start_time = time.time()
-        other_geometry_polydatas = []  # Placeholder for additional geometries if needed
         simulation_data = deformation.set_node_indices(self.data, node_point_indices)
         simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
@@ -796,19 +788,17 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
     def run_stent_edge(self, affine_params, model, mu, nu, phi_type, force_center_point_id, force_scale, node_point_indices, direction, stent_halflength, stent_radius):
         # --- Initialization and Parameter Setup ---
         total_start_time = time.time()  # Start total timer
-        affine_type = "aneurysm"
         a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")
         # --- Load Polydata ---
         load_start_time = time.time()
-        centerline_polydata = self.centerline  # Loaded from self attributes
+        centerline_polydata = self.centerline
         surface_polydata = self.mesh
         logger.timing(f"Reading surface polydata: {time.time() - load_start_time:.4f} s")
 
         # --- Define Points and Nodes ---
         setup_start_time = time.time()
-        other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-        simulation_data = vtk_io.create_data_from_polydata(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = vtk_io.create_data_from_polydata(centerline_polydata, surface_polydata, [])
         simulation_data = deformation.set_node_indices(simulation_data, node_point_indices)
         simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
@@ -818,7 +808,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         origin, normal = vtk_io.get_centerline_point_and_normal(centerline_polydata, simulation_data["nodes"]["force_center_point_id"])
         logger.timing(f"Getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} s")
         cross_section_time = time.time()
-        original_radius = 0.42 # TODO, account for this
+        original_radius = 0.42
         logger.info(f"Cross sectional radius estimated: {original_radius}")
         logger.timing(f"Getting cross sectional radius: {time.time() - cross_section_time:.4f} s")
         get_displacement_time = time.time()
@@ -847,17 +837,12 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                         other_geometry_input_files, other_geometry_output_files):
         # --- Initialization and Parameter Setup ---
         total_start_time = time.time()  # Start total timer
-        affine_type = "aneurysm"
         a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")
-        # --- Load Polydata ---
-        load_start_time = time.time()
-        logger.timing(f"Reading surface polydata: {time.time() - load_start_time:.4f} s")
 
         # --- Define Points and Nodes ---
         setup_start_time = time.time()
-        other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-        simulation_data = deformation.set_node_indices(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
+        simulation_data = deformation.set_node_indices(self.data, node_point_indices)
         simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
         
@@ -874,7 +859,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         step_start_time = time.time()
         eps = affine_params["eps"][model]
         logger.debug(f"Main loop eps={eps}, force_scale={force_scale}")
-        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
+        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
         
@@ -898,17 +883,12 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                         other_geometry_input_files, other_geometry_output_files):
         # --- Initialization and Parameter Setup ---
         total_start_time = time.time()  # Start total timer
-        affine_type = "aneurysm"
         a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")
-        # --- Load Polydata ---
-        load_start_time = time.time()
-        logger.timing(f"Reading surface polydata: {time.time() - load_start_time:.4f} s")
 
         # --- Define Points and Nodes ---
         setup_start_time = time.time()
-        other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-        simulation_data = deformation.set_node_indices(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
+        simulation_data = deformation.set_node_indices(self.data, node_point_indices)
         simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
         
@@ -925,7 +905,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         step_start_time = time.time()
         eps = affine_params["eps"][model]
         logger.debug(f"Main loop eps={eps}, force_scale={force_scale}")
-        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
+        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
         
@@ -972,17 +952,12 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                             other_geometry_input_files, other_geometry_output_files):
             # --- Initialization and Parameter Setup ---
             total_start_time = time.time()  # Start total timer
-            affine_type = "aneurysm"
             a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
             logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")
-            # --- Load Polydata ---
-            load_start_time = time.time()
-            logger.timing(f"Reading surface polydata: {time.time() - load_start_time:.4f} s")
 
             # --- Define Points and Nodes ---
             setup_start_time = time.time()
-            other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-            simulation_data = deformation.set_node_indices(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
+            simulation_data = deformation.set_node_indices(self.data, node_point_indices)
             simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
             logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
             

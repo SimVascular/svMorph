@@ -219,7 +219,6 @@ def create_data_from_polydata(centerline_polydata, surface_polydata, other_geome
         assert data["centerline_coordinate"].shape[0] == num_centerline_points
     else:
         logger.warning("No centerline_coordinate array found on centerline polydata")
-        # sys.exit("'centerline_coordinate' is not a point array on the centerline polydata.")
     # Process and add other geometry points as JAX arrays
     for ig, polydata in enumerate(other_geometry_polydatas):
         other_geometry_points = jnp.array(copy.deepcopy(v2n(polydata.GetPoints().GetData())))
