@@ -237,9 +237,9 @@ class MainWindow(QMainWindow):
         self.run_button.setFixedWidth(BUTTON_WIDTH_SMALL)
         self.controls_layout.addWidget(self.run_button)
 
-        self.continuous_run_button = QPushButton("Continuous Contact Apply")
-        self.continuous_run_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
-        self.controls_layout.addWidget(self.continuous_run_button)
+        self.continuous_sdf_button = QPushButton("Continuous Contact Apply")
+        self.continuous_sdf_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
+        self.controls_layout.addWidget(self.continuous_sdf_button)
 
         self.layout.addLayout(self.controls_layout)
 
@@ -249,8 +249,8 @@ class MainWindow(QMainWindow):
         self.run_button.clicked.connect(self.run_deformation_sdf)
         self.show_nodes_button.clicked.connect(self.display_centerline_nodes)
         self.timer.timeout.connect(self.run_deformation_sdf)
-        self.continuous_run_button.pressed.connect(self.start_continuous_deformation)
-        self.continuous_run_button.released.connect(self.stop_continuous_deformation)
+        self.continuous_sdf_button.pressed.connect(self.start_continuous_deformation)
+        self.continuous_sdf_button.released.connect(self.stop_continuous_deformation)
 
     def _setup_stent_parameter_controls(self):
         """Setup stent length and diameter controls (second row)"""
@@ -413,14 +413,14 @@ class MainWindow(QMainWindow):
             self.run_deformation_simultaneous
         )
 
-        self.continuous_run_button = QPushButton("Continuous Aneurysm Apply")
-        self.continuous_run_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
-        self.controls_layout5.addWidget(self.continuous_run_button)
+        self.continuous_kelvinlet_button = QPushButton("Continuous Aneurysm Apply")
+        self.continuous_kelvinlet_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
+        self.controls_layout5.addWidget(self.continuous_kelvinlet_button)
         self.kelvinlet_timer.timeout.connect(self.run_deformation)
-        self.continuous_run_button.pressed.connect(
+        self.continuous_kelvinlet_button.pressed.connect(
             self.start_continuous_kelvinlet_deformation
         )
-        self.continuous_run_button.released.connect(
+        self.continuous_kelvinlet_button.released.connect(
             self.stop_continuous_kelvinlet_deformation
         )
 
