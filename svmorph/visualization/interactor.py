@@ -652,22 +652,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
         self.GetInteractor().GetRenderWindow().Render()
 
-    def deform_mesh_stent_edge(self, epsilon, force_scale):
-        if len(self.selected_points) < 1:
-            logger.warning("Please select the distal start of the stent along the centerline.")
-            return
-        force_center_point_id = self.selected_points[self.force_center_idx]
-        list_of_node_point_indices = self.selected_points
-        phi_type = "point"
-        model = "test_aneurysm"
-        affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
-        mu = 1
-        nu = 0.2 # (0, 0.5), 0.4 originally
-        self.run_stent_edge(
-        affine_params, model, mu, nu, phi_type, 
-        force_center_point_id, force_scale, list_of_node_point_indices, self.animation_direction, self.stent_unit_section_halflength, self.stent_radius)
-        self.GetInteractor().GetRenderWindow().Render()
-
     def deform_mesh_sdf_contact(self, epsilon, force_scale):
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
@@ -784,51 +768,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Total simulation time: {total_simulation_time:.4f} s")
         logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
         return average_displacement_distance
-
-    def run_stent_edge(self, affine_params, model, mu, nu, phi_type, force_center_point_id, force_scale, node_point_indices, direction, stent_halflength, stent_radius):
-        # --- Initialization and Parameter Setup ---
-        total_start_time = time.time()  # Start total timer
-        a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
-        logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")
-        # --- Load Polydata ---
-        load_start_time = time.time()
-        centerline_polydata = self.centerline
-        surface_polydata = self.mesh
-        logger.timing(f"Reading surface polydata: {time.time() - load_start_time:.4f} s")
-
-        # --- Define Points and Nodes ---
-        setup_start_time = time.time()
-        simulation_data = vtk_io.create_data_from_polydata(centerline_polydata, surface_polydata, [])
-        simulation_data = deformation.set_node_indices(simulation_data, node_point_indices)
-        simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
-        logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
-        
-        # --- Calculate Initial Displacements --- CURENTLY the longest step 
-        calc_displacement_start_time = time.time()
-        origin, normal = vtk_io.get_centerline_point_and_normal(centerline_polydata, simulation_data["nodes"]["force_center_point_id"])
-        logger.timing(f"Getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} s")
-        cross_section_time = time.time()
-        original_radius = 0.42
-        logger.info(f"Cross sectional radius estimated: {original_radius}")
-        logger.timing(f"Getting cross sectional radius: {time.time() - cross_section_time:.4f} s")
-        get_displacement_time = time.time()
-        logger.timing(f"Computing initial radius and displacement: {time.time() - get_displacement_time:.4f} s")
-        
-        # --- Compute Initial Force Matrix and Displacements ---
-        step_start_time = time.time()
-        eps = affine_params["eps"][model] * original_radius
-        logger.debug(f"eps={eps}, force_scale={force_scale}")
-        surface_displacements = deformation.compute_stent_edge_displacements(simulation_data, a, b, eps, force_scale, None, normal, direction, stent_halflength, stent_radius)
-        logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
-        
-        # --- Scale Displacements to Match Desired Area ---
-        displacement_start_time = time.time()
-        simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
-        surface_polydata = vtk_io.sync_polydata(surface_polydata, simulation_data, "surface")
-        logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
-        total_simulation_time = time.time() - total_start_time
-        logger.timing(f"Total simulation time: {total_simulation_time:.4f} s")
-        logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
 
     def run_aneurysm_sdf_contact(self, affine_params, model, centerline_polydata_input_file_name, 
                         surface_polydata_input_file_name, centerline_polydata_output_file_name, 

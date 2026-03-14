@@ -70,30 +70,6 @@ def capsule_sdf(p, stent_vertices, r):
     sdf = final_dist_to_surface
     return sdf
 
-def kelvinlets_stent_edge(rv, a, b, eps, s, direction, w, r_target):
-    num_mesh_points, num_kelvinlet_points, ndims = rv.shape
-    # Extract components of rv
-    f_scale = 0.5
-    rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
-    cap_height_vector = jnp.maximum(0, -direction * rz - w)
-    w_prime = 0.55555
-    cap_height_vector = jnp.minimum(cap_height_vector, w_prime)
-    cap_interface_falloff_mask = interface_falloff(cap_height_vector, w_prime)
-    asymmetry_mask = (-direction * rz < 0).astype(int)
-    rz = rz * asymmetry_mask
-    rv = rv.at[:, :, 2].set(rz)
-    re = jnp.sqrt(rx**2 + ry**2 + rz**2)
-    fall_off_mask = (re <= r_target).astype(int)
-    assert re.shape == (num_mesh_points, num_kelvinlet_points)
-    assert fall_off_mask.shape == (num_mesh_points, 1)
-    re = jnp.expand_dims(re, 2)
-    displacements = f_scale * r_target * ((re / r_target) ** 2 - 1) ** 2 * (-s) * rv
-    displacements = displacements * fall_off_mask[:, :, None]
-    displacements = displacements * cap_interface_falloff_mask[:, :, None]
-    assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
-
-    return displacements
-
 def kelvinlets_truncated_sphere_warp_shrink(rv, a, b, eps, f_scale, s, r_min, r_max, r_original):
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
@@ -162,26 +138,6 @@ def get_affine_laplacian_displacements_inner(data_points, rotation_matrices, xs,
         displacement *= surface_mesh_scale_factor
         average_displacement_distance *= surface_mesh_scale_factor
     return displacement, average_displacement_distance
-
-@jx.jit
-def get_stent_edge_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, direction, w, r_target):
-    num_mesh_points = data_points.shape[0]
-    # Prepare xs and centers using broadcasting
-    centers = jnp.tile(centers, (num_mesh_points, 1, 1))
-    # Compute rv in the local frame
-    rv = xs - centers
-    # Rotate rv to the global frame
-    rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
-    centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
-    # Compute Kelvinlet displacements
-    displacement_local = kelvinlets_stent_edge(centerline_aligned_rv, a, b, eps, s, direction, w, r_target)
-    displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
-    # Aggregate and normalize
-    displacement = jnp.sum(displacement_global, axis=1)
-    # Scale if required
-    if surface_mesh_scale_factor is not None:
-        displacement *= surface_mesh_scale_factor
-    return displacement
 
 def find_stenosis_minimum_radius_representative(data_points, rotation_matrices, xs, centers, original_radius):
     num_mesh_points = data_points.shape[0]
@@ -263,24 +219,6 @@ def compute_aneurysm_displacements(data, a, b, eps, s, surface_mesh_scale_factor
         data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, stent_halflength, stent_radius
     )
     return np.array(displacements), average_displacement_distance
-
-def compute_stent_edge_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal, direction, w, r_target):
-    # Resolve all_indices and force_center_point_id outside JIT
-    force_center_point_id = data["nodes"]["force_center_point_id"]
-    logger.debug(f"Force center: {force_center_point_id}")
-    data_points = data["points"]["surface"]
-    centerline_points = data["points"]["centerline"]
-    num_kelvinlet_points = 1
-    xs = jnp.expand_dims(data_points, 1)
-    xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
-    centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
-    kelvinlet_points_normals = jnp.array([force_center_normal])
-    rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
-    # Call the JIT-compiled function
-    displacements = get_stent_edge_displacements_inner(
-        data_points, rotation_matrices, xs, centers, a, b, eps, s, surface_mesh_scale_factor, direction, w, r_target
-    )
-    return displacements
 
 def compute_stenosis_displacements(data, a, b, eps, s, force_center_normal, r_min, r_max, r_original):
     # Resolve all_indices and force_center_point_id outside JIT

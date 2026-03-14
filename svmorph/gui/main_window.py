@@ -375,10 +375,10 @@ class MainWindow(QMainWindow):
         self.toggle_camera_lock_button.clicked.connect(self.toggle_camera_lock)
 
         # Additional action buttons
-        self.stent_edge_button = QPushButton("Place Stent") # originally the "Stent Edge" button
-        self.stent_edge_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout4.addWidget(self.stent_edge_button)
-        self.stent_edge_button.pressed.connect(self.save_current_stent)
+        self.place_stent_button = QPushButton("Place Stent") # originally the "Stent Edge" button
+        self.place_stent_button.setFixedWidth(BUTTON_WIDTH_SMALL)
+        self.controls_layout4.addWidget(self.place_stent_button)
+        self.place_stent_button.pressed.connect(self.save_current_stent)
 
         self.layout.addLayout(self.controls_layout4)
 
