@@ -17,7 +17,8 @@ from vtkmodules.vtkRenderingCore import (
     vtkAssembly
 )
 from vtkmodules.vtkIOXML import vtkXMLPolyDataReader, vtkXMLPolyDataWriter
-from kelvinlet_core import scaling
+from svmorph.core import deformation
+from svmorph.visualization import vtk_io
 from kelvinlet_core import vtk_utils
 from kelvinlet_core import common
 import numpy as np
@@ -361,9 +362,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         centers = np.expand_dims(np.array([centerline_points[pointID]]), 0)
         force_center_normal = self.centerline_tangents[pointID]
         kelvinlet_points_normals = np.array([force_center_normal])
-        rotation_matrices = scaling.compute_householder_matrices(kelvinlet_points_normals)
+        rotation_matrices = deformation.compute_householder_matrices(kelvinlet_points_normals)
         original_radius = self.maximum_inscribed_sphere_radius[pointID]
-        self.stenosis_minimum_radius_representative, current_radius = scaling.find_stenosis_minimum_radius_representative(data_points, rotation_matrices, xs, centers, original_radius)
+        self.stenosis_minimum_radius_representative, current_radius = deformation.find_stenosis_minimum_radius_representative(data_points, rotation_matrices, xs, centers, original_radius)
         print(f"Stenosis minimum radius representative index found: {self.stenosis_minimum_radius_representative}")
         self.previous_stenosis_minimum_radius = current_radius
         self.previous_aneurysm_maximum_radius = current_radius
@@ -513,7 +514,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments)
         dist_to_surface_all = dist_all_squeezed - r
         # Vectorize the folding over all mesh points:
-        final_dist_to_surface, _ = jx.vmap(scaling.compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
+        final_dist_to_surface, _ = jx.vmap(deformation.compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
         final_dist_to_surface = final_dist_to_surface[:, None]
         sdf = final_dist_to_surface
         return sdf
@@ -1005,9 +1006,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # --- Define Points and Nodes ---
         setup_start_time = time.time()
         other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-        # simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
-        simulation_data = scaling.define_nodes_affine(self.data, node_point_indices)
-        simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+        # simulation_data = vtk_io.create_data_from_polydata(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = deformation.set_node_indices(self.data, node_point_indices)
+        simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
         
         # --- Initialize Centerline Data ---
@@ -1035,7 +1036,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         print("eps = ", eps, "force_scale = ", force_scale)
         # , centerline_displacements
-        surface_displacements, average_displacement_distance = scaling.get_displacements(simulation_data, a, b, eps, force_scale, None, normal, stent_halflength, stent_radius)
+        surface_displacements, average_displacement_distance = deformation.compute_aneurysm_displacements(simulation_data, a, b, eps, force_scale, None, normal, stent_halflength, stent_radius)
         # surface_displacements = scaling.get_affine_displacements_point(simulation_data, a, b, eps, 1000, None, None, None, normal, stent_halflength)
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         average_displacement_distance = 0
@@ -1079,9 +1080,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # --- Define Points and Nodes ---
         setup_start_time = time.time()
         other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-        simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
-        simulation_data = scaling.define_nodes_affine(simulation_data, node_point_indices)
-        simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+        simulation_data = vtk_io.create_data_from_polydata(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = deformation.set_node_indices(simulation_data, node_point_indices)
+        simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
@@ -1104,7 +1105,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         print("eps = ", eps, "force_scale = ", force_scale)
         # , centerline_displacements
-        surface_displacements = scaling.get_stent_edge_displacements(simulation_data, a, b, eps, force_scale, None, normal, direction, stent_halflength, stent_radius)
+        surface_displacements = deformation.compute_stent_edge_displacements(simulation_data, a, b, eps, force_scale, None, normal, direction, stent_halflength, stent_radius)
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         
         # --- Scale Displacements to Match Desired Area ---
@@ -1138,9 +1139,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # --- Define Points and Nodes ---
         setup_start_time = time.time()
         other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-        # simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
-        simulation_data = scaling.define_nodes_affine(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
-        simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+        # simulation_data = vtk_io.create_data_from_polydata(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = deformation.set_node_indices(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
+        simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
@@ -1161,7 +1162,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         print("Main loop eps = ", eps, "force_scale = ", force_scale)
         # , centerline_displacements
-        surface_displacements, centerline_displacements, step_size = scaling.get_sdf_contact_surface_and_centerline_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
+        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
         self.current_stent_radius += step_size
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         
@@ -1198,9 +1199,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # --- Define Points and Nodes ---
         setup_start_time = time.time()
         other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-        # simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
-        simulation_data = scaling.define_nodes_affine(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
-        simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+        # simulation_data = vtk_io.create_data_from_polydata(centerline_polydata, surface_polydata, other_geometry_polydatas)
+        simulation_data = deformation.set_node_indices(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
+        simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
@@ -1221,7 +1222,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         print("Main loop eps = ", eps, "force_scale = ", force_scale)
         # , centerline_displacements
-        surface_displacements, centerline_displacements, step_size = scaling.get_sdf_contact_surface_and_centerline_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
+        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius) # TODO: remove those arguments that has self since can directly access 
         self.current_stent_radius += step_size
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
         
@@ -1285,9 +1286,9 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             # --- Define Points and Nodes ---
             setup_start_time = time.time()
             other_geometry_polydatas = []  # Placeholder for additional geometries if needed
-            # simulation_data = scaling.define_points_affine(centerline_polydata, surface_polydata, other_geometry_polydatas)
-            simulation_data = scaling.define_nodes_affine(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
-            simulation_data = scaling.assign_force_location_affine_v2(simulation_data, force_center_point_id)
+            # simulation_data = vtk_io.create_data_from_polydata(centerline_polydata, surface_polydata, other_geometry_polydatas)
+            simulation_data = deformation.set_node_indices(self.data, node_point_indices) # TODO: this is going to be moved outside to be updated during mouse click selection
+            simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
             print(f"Time for converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} seconds")
             
             # --- Calculate Initial Displacements --- CURENTLY the longest step 
@@ -1304,7 +1305,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             step_start_time = time.time()
             eps = affine_params["eps"][model]
             print("Main loop eps = ", eps, "s = ", s)
-            surface_displacements, step_size = scaling.get_stenosis_displacements(simulation_data, a, b, eps, s, normal, stenosis_radius, stenosis_length, original_radius)
+            surface_displacements, step_size = deformation.compute_stenosis_displacements(simulation_data, a, b, eps, s, normal, stenosis_radius, stenosis_length, original_radius)
             print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
             
             # --- Scale Displacements to Match Desired Area ---
