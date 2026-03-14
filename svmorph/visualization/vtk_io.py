@@ -8,6 +8,10 @@ import jax.numpy as jnp
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 from vtkmodules.vtkIOXML import vtkXMLPolyDataReader, vtkXMLPolyDataWriter
 
+from svmorph.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def read_vtp(filename):
     reader = vtkXMLPolyDataReader()
@@ -56,7 +60,7 @@ def build_parent_tip_map(centerline_polydata):
     if vtk_arr is None:
         raise ValueError("Point array 'CenterlineId' not found.")
     flags = v2n(vtk_arr)            # (N, n_components)
-    print("flags.shape = ", flags.shape)
+    logger.debug(f"flags.shape = {flags.shape}")
     unique_rows, inverse = np.unique(flags, axis=0, return_inverse=True)
     if unique_rows.shape[0] == 1:
         return {pointId: -1 for pointId in range(flags.shape[0])}, np.zeros(flags.shape[0], dtype=bool)
@@ -181,8 +185,8 @@ def get_cross_sectional_area(surface_polydata, origin, normal):
     mid_time = time.time()
     area = get_cross_sectional_area_of_triangulated_slice(triangulated_slice)
     end_time = time.time()
-    print(f"get_triangulated_slice took {mid_time - start_time:.6f} seconds")
-    print(f"get_cross_sectional_area_of_triangulated_slice took {end_time - mid_time:.6f} seconds")
+    logger.timing(f"get_triangulated_slice: {mid_time - start_time:.6f} s")
+    logger.timing(f"get_cross_sectional_area_of_triangulated_slice: {end_time - mid_time:.6f} s")
     return area
 
 
@@ -214,7 +218,7 @@ def create_data_from_polydata(centerline_polydata, surface_polydata, other_geome
         ))
         assert data["centerline_coordinate"].shape[0] == num_centerline_points
     else:
-        print("We sys exited because there was no centerline coords")
+        logger.warning("No centerline_coordinate array found on centerline polydata")
         # sys.exit("'centerline_coordinate' is not a point array on the centerline polydata.")
     # Process and add other geometry points as JAX arrays
     for ig, polydata in enumerate(other_geometry_polydatas):

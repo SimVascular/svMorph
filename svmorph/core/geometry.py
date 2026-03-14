@@ -1,6 +1,10 @@
 import numpy as np
 import jax.numpy as jnp
 
+from svmorph.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def resample_stent_axis(points, parent_tip_map, segment_base_mask, starting_point_idx, desired_total_length, desired_segment_length, sampling_direction=-1):
     """
@@ -57,7 +61,7 @@ def resample_stent_axis(points, parent_tip_map, segment_base_mask, starting_poin
 
     effective_total_length = cumulative_length
     if effective_total_length < desired_total_length:
-        print(f"Subsegment truncated due to jump/end. Best achieved length = {effective_total_length:.4f} cm")
+        logger.warning(f"Subsegment truncated due to jump/end. Best achieved length = {effective_total_length:.4f} cm")
     
     # Convert lists to numpy arrays for vectorized interpolation
     subsegment_points = np.array(subsegment_points)

@@ -40,6 +40,9 @@ from PyQt6.QtCore import Qt, QTimer
 import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from svmorph.visualization.renderer import SceneManager
+from svmorph.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Application Constants
 # Stent parameter ranges and steps
@@ -486,7 +489,7 @@ class MainWindow(QMainWindow):
                 self.vtk_widget.GetRenderWindow().Render()
                 self.vtk_interactor.Initialize()
                 self.vtk_interactor.Start()
-            print("Both mesh and centerline files are required.")
+            logger.warning("Both mesh and centerline files are required.")
             return
 
         self.vtk_handler = SceneManager(self.mesh_file, self.centerline_file)
@@ -534,7 +537,7 @@ class MainWindow(QMainWindow):
             self.area_slider.value()
         )
         epsilon = self.stenosis_area_slider.value() / 100.0
-        print(f"Running stent with force scale: {force_scale}, epsilon: {epsilon}")
+        logger.info(f"Running Kelvinlet deformation with force_scale={force_scale}, epsilon={epsilon}")
         self.style.deform_mesh_sequential(epsilon, force_scale)
 
     def run_deformation_sdf(self):
@@ -543,8 +546,8 @@ class MainWindow(QMainWindow):
             self.area_slider.value()
         )
         epsilon = self.stenosis_area_slider.value() / 100.0
-        print(
-            f"Running stent with GUI input force scale: {force_scale}, epsilon: {epsilon}"
+        logger.info(
+            f"Running SDF contact deformation with force_scale={force_scale}, epsilon={epsilon}"
         )
         self.style.deform_mesh_sdf_contact(epsilon, force_scale)
 
@@ -554,13 +557,13 @@ class MainWindow(QMainWindow):
             self.area_slider.value()
         )
         epsilon = self.stenosis_area_slider.value() / 100.0
-        print(f"Running stent with force scale: {force_scale}, epsilon: {epsilon}")
+        logger.info(f"Running straightening deformation with force_scale={force_scale}, epsilon={epsilon}")
         self.style.deform_mesh_with_straightening(epsilon, force_scale)
 
     def run_stenosis(self):
         """Run stenosis deformation with user-specified parameters"""
         if self.vtk_handler is None:
-            print(
+            logger.warning(
                 "Please import both mesh and centerline files before running the stenosis."
             )
             return
@@ -569,14 +572,14 @@ class MainWindow(QMainWindow):
             stenosis_radius = float(self.stenosis_radius_value.text())
             stenosis_length = float(self.stenosis_length_value.text())
         except ValueError:
-            print("Invalid stenosis parameters. Please enter valid numbers.")
+            logger.warning("Invalid stenosis parameters. Please enter valid numbers.")
             return
 
         force_scale = SliderMapper.force_scale_slider_to_value(self.area_slider.value())
         area_percent_change = self.stenosis_area_slider.value()
 
-        print(
-            f"Running stenosis with force_scale: {force_scale}, stenosis radius: {stenosis_radius}, stenosis length: {stenosis_length}"
+        logger.info(
+            f"Running stenosis with force_scale={force_scale}, stenosis_radius={stenosis_radius}, stenosis_length={stenosis_length}"
         )
         self.style.deform_mesh_stenosis(
             force_scale, area_percent_change, stenosis_radius, stenosis_length
@@ -589,12 +592,12 @@ class MainWindow(QMainWindow):
 
     def display_centerline_nodes(self):
         """Display centerline nodes for single point selection"""
-        print("Please select centerline nodes to generate aneurysm.")
+        logger.info("Please select centerline nodes to generate aneurysm.")
         self.style.display_centerline_vertices()
 
     def render_sdf(self):
         """Display signed distance field visualization"""
-        print("Displaying signed distance field.")
+        logger.info("Displaying signed distance field.")
         self.style.render_sdf()
 
     def start_continuous_deformation(self):
@@ -625,9 +628,9 @@ class MainWindow(QMainWindow):
         """Save the current stent configuration"""
         if hasattr(self, "style") and self.style:
             self.style.save_current_stent()
-            print("Current stent placed.")
+            logger.info("Current stent placed.")
         else:
-            print("VTK handler not initialized. Cannot place stent.")
+            logger.warning("VTK handler not initialized. Cannot place stent.")
 
     def update_stent_diameter_slider(self, text):
         """Update stent diameter slider from text input"""
@@ -683,7 +686,7 @@ class MainWindow(QMainWindow):
         )
         if file_name:
             self.vtk_handler.save_mesh(file_name)
-            print(f"Saved mesh to {file_name}")
+            logger.info(f"Saved mesh to {file_name}")
 
     def import_mesh(self):
         """Import a mesh file and reinitialize if centerline is available"""

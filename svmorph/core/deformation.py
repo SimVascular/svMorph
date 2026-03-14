@@ -5,6 +5,10 @@ import jax as jx
 import jax.numpy as jnp
 import time
 
+from svmorph.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 # @jx.jit
 def compute_householder_matrices(cross_section_normals):
@@ -174,7 +178,7 @@ def kelvinlets_truncated_sphere_warp_sculp(rv, a, b, eps, s, r_target):
     # displacements = displacements * mask[:, :, None]
     displacements = f_scale * (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
     assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
-    print("displacements norms: ", jnp.linalg.norm(displacements))
+    logger.debug(f"displacements norms: {jnp.linalg.norm(displacements)}")
 
     return displacements
 
@@ -283,9 +287,9 @@ def find_stenosis_minimum_radius_representative(data_points, rotation_matrices, 
     # Set rz_magnitude to a large value where mask is False so they are not selected as min
     rz_magnitude_masked = np.where(mask, rz_magnitude, jnp.inf)
     index_for_min_rz = np.argmin(rz_magnitude_masked, axis=0)
-    print("index_for_min_rz: ", index_for_min_rz)
-    print("rx, ry, rz for min_rz: ", rx[index_for_min_rz], ry[index_for_min_rz], rz[index_for_min_rz])
-    print("estimated current radius: ", current_radius)
+    logger.debug(f"index_for_min_rz: {index_for_min_rz}")
+    logger.debug(f"rx, ry, rz for min_rz: {rx[index_for_min_rz]}, {ry[index_for_min_rz]}, {rz[index_for_min_rz]}")
+    logger.debug(f"Estimated current radius: {current_radius}")
     return index_for_min_rz, current_radius
 
 @jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
@@ -313,15 +317,15 @@ def get_stenosis_displacements_inner(data_points, rotation_matrices, xs, centers
 def compute_aneurysm_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, stent_radius):
     # Resolve all_indices and force_center_point_id outside JIT
     force_center_point_id = data["nodes"]["force_center_point_id"]
-    print("force center: ", force_center_point_id)
+    logger.debug(f"Force center: {force_center_point_id}")
     # Prepare other data
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
     xs = jnp.expand_dims(data_points, 1)
     xs = jnp.tile(xs, (1, num_kelvinlet_points, 1))
-    print("num_kelvinlet_points: ", num_kelvinlet_points)
-    print("xs shape: ", xs.shape)
+    logger.debug(f"num_kelvinlet_points: {num_kelvinlet_points}")
+    logger.debug(f"xs shape: {xs.shape}")
     centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
     kelvinlet_points_normals = jnp.array([force_center_normal])
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
@@ -349,7 +353,7 @@ def compute_aneurysm_displacements(data, a, b, eps, s, surface_mesh_scale_factor
 def compute_stent_edge_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal, direction, w, r_target):
     # Resolve all_indices and force_center_point_id outside JIT
     force_center_point_id = data["nodes"]["force_center_point_id"]
-    print("force center: ", force_center_point_id)
+    logger.debug(f"Force center: {force_center_point_id}")
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
@@ -381,7 +385,7 @@ def compute_stent_edge_displacements(data, a, b, eps, s, surface_mesh_scale_fact
 def compute_stenosis_displacements(data, a, b, eps, s, force_center_normal, r_min, r_max, r_original):
     # Resolve all_indices and force_center_point_id outside JIT
     force_center_point_id = data["nodes"]["force_center_point_id"]
-    print("selected stenosis center point ID: ", force_center_point_id)
+    logger.debug(f"Selected stenosis center point ID: {force_center_point_id}")
     # Prepare other data
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
@@ -423,7 +427,7 @@ def stent_bounding_box(data_points, stent_vertices, target_stent_radius, doi, do
 
 def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius):
     force_center_point_id = data["nodes"]["force_center_point_id"]
-    print("selected point ID: ", force_center_point_id)
+    logger.debug(f"Selected point ID: {force_center_point_id}")
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
@@ -437,7 +441,7 @@ def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surfac
     start_time = time.time()
     sbb_mask = stent_bounding_box(data_points, stent_vertices, target_stent_radius, doi, doc)
     cbb_mask = stent_bounding_box(centerline_points, stent_vertices, target_stent_radius, doi, doc)
-    print("time taken to compute bounding box: ", time.time() - start_time)
+    logger.timing(f"Bounding box computation: {time.time() - start_time:.4f} s")
     start_time = time.time()
     sbb_mask = np.array(sbb_mask)
     cbb_mask = np.array(cbb_mask)
@@ -445,7 +449,7 @@ def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surfac
     centerline_points = np.array(centerline_points)
     data_points_masked = data_points[sbb_mask]
     centerline_points_masked = centerline_points[cbb_mask]
-    print("time taken to cast to numpy and mask out bounding box: ", time.time() - start_time)
+    logger.timing(f"NumPy cast and bbox masking: {time.time() - start_time:.4f} s")
     num_mesh_points = data_points.shape[0]
     num_centerline_points = centerline_points.shape[0]
     num_in_bb_mesh_points = data_points_masked.shape[0]
@@ -460,7 +464,7 @@ def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surfac
    
     start_time = time.time()
     total_num_vertices = xs.shape[0]
-    print("num surface points and centerline points combined: ", total_num_vertices)
+    logger.debug(f"Num surface + centerline points combined: {total_num_vertices}")
     combined_final_dist_to_surface, combined_final_direction = smin_sdf_capsule_contact_sculp(xs, a, b, stent_vertices, eps, s, target_stent_radius, current_stent_radius, doi, doc) #JIT-compiled
     combined_final_dist_to_surface = np.array(combined_final_dist_to_surface)
     combined_final_direction = np.array(combined_final_direction)
@@ -469,7 +473,7 @@ def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surfac
     final_direction = combined_final_direction[:num_in_bb_mesh_points]
     new_contact_mask = (final_dist_to_surface < doc).astype(bool)
     # print("new_contact_mask shape: ", new_contact_mask.shape)
-    print("time taken to compute new_contact points: ", time.time() - start_time)
+    logger.timing(f"New contact points computation: {time.time() - start_time:.4f} s")
     centerline_points_dist_to_surface = combined_final_dist_to_surface[num_in_bb_mesh_points:]
     centerline_points_final_direction = combined_final_direction[num_in_bb_mesh_points:]
     centerline_outside_stent_mask = (centerline_points_dist_to_surface[:, 0] > 0).astype(bool)
@@ -488,7 +492,7 @@ def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surfac
     start_time = time.time()
     in_contact_vertices = data_points_masked[new_contact_mask[:,0]]
     # print("in_contact_vertices shape: ", in_contact_vertices.shape)
-    print("time taken to obtain in_contact vertices subslice: ", time.time() - start_time)
+    logger.timing(f"In-contact vertices subslice: {time.time() - start_time:.4f} s")
     if in_contact_vertices.shape[0] == 0: # things are in contact <=> things are in influence
         step_size = f_scale * (-s)
         return np.zeros((num_mesh_points, 3)), np.zeros((num_centerline_points, 3)), step_size 
@@ -498,20 +502,20 @@ def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surfac
     xs = np.concatenate((data_points_masked, movables_centerline_points), axis=0)
     dist_min, _ = contact_tree.query(xs, k=1, distance_upper_bound=doi, workers=-1)
     # print("dist_min shape: ", dist_min.shape)
-    print("time for KD Tree construction and query: ", time.time() - start_time)
+    logger.timing(f"KD-tree construction and query: {time.time() - start_time:.4f} s")
     start_time = time.time()
     in_influence_mask = dist_min < doi
     # print("in_influence_mask shape: ", in_influence_mask.shape)
     in_influence_indices = np.flatnonzero(in_influence_mask)
     # print("in_influence_indices shape: ", in_influence_indices.shape)
-    print("time taken to flattennonzero: ", time.time() - start_time)
+    logger.timing(f"Flatnonzero: {time.time() - start_time:.4f} s")
     
     start_time = time.time()
     in_influence_to_in_contact_distances = dist_min[in_influence_mask]
-    print("time taken to obtain in-influence vertices: ", time.time() - start_time)
+    logger.timing(f"In-influence vertices: {time.time() - start_time:.4f} s")
     part_two_start_time = time.time()
     
-    print("time for converting to jnp arrays: ", time.time() - part_two_start_time)
+    logger.timing(f"JAX array conversion: {time.time() - part_two_start_time:.4f} s")
     start_time = time.time()
 
     doi_mask = (final_movables_dist_to_surface < doi).astype(int)
@@ -524,13 +528,13 @@ def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surfac
     # k = -2.0
     # in_influence_vertices_blended_alpha = (np.exp(k*in_influence_to_in_contact_distances) - np.exp(k*doi)) / (1 - np.exp(k*doi))  # exponential blending
 
-    print("time taken to compute JIT sculpt part two: ", time.time() - start_time)
+    logger.timing(f"JIT sculpt part two: {time.time() - start_time:.4f} s")
     start_time = time.time()
     in_influence_vertices_blended_alpha = np.array(in_influence_vertices_blended_alpha)
     in_influence_vertices_blended_alpha_mask[in_influence_indices] = in_influence_vertices_blended_alpha
-    print("time taken to compute blended alpha mask in np: ", time.time() - start_time)
+    logger.timing(f"Blended alpha mask (NumPy): {time.time() - start_time:.4f} s")
     start_time = time.time()
-    print("raw number of negative values in final_movables_dist_to_surface: ", np.sum(final_movables_dist_to_surface < 0))
+    logger.debug(f"Raw number of negative values in final_movables_dist_to_surface: {np.sum(final_movables_dist_to_surface < 0)}")
     interior_points_offset = np.maximum(-final_movables_dist_to_surface, 0.0)
     final_movables_dist_to_surface = np.maximum(final_movables_dist_to_surface, 0.0)  # Clip the interior points to the surface
     # displacements = f_scale * ((final_movables_dist_to_surface / doi) ** 2 - 1) ** 2 * (-s) * doi_mask * in_influence_vertices_blended_alpha_mask[:, None] * final_movables_direction
@@ -543,6 +547,6 @@ def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surfac
     full_centerline_displacements[full_centerline_points_mask] = displacements[num_in_bb_mesh_points:]
     # displacements = f_scale * force_kernel(1.99, 0.88, 2.3, final_dist_to_surface) * (-s) * final_direction * doi_mask * in_influence_vertices_blended_alpha_mask[:, None]
     step_size = f_scale * (-s)
-    print("time taken to compute rest of the displacements: ", time.time() - start_time)   
+    logger.timing(f"Remaining displacements: {time.time() - start_time:.4f} s")
 
     return full_surface_displacements, full_centerline_displacements, step_size
