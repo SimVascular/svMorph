@@ -297,15 +297,34 @@ def find_stenosis_minimum_radius_representative(data_points, rotation_matrices, 
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
     rz_magnitude = np.sqrt(rz**2)
-    radial_maginitude_squared = (rx**2 + ry**2) 
-    # Compute mask for rx^2 + ry^2 <= (original_radius * 1.1)^2
-    mask = ((original_radius * 1.0) ** 2 <= radial_maginitude_squared) * (radial_maginitude_squared <= (original_radius * 1.1) ** 2)
+    radial_magnitude_squared = (rx**2 + ry**2)
+
+    # Estimate the actual current vessel radius:
+    # 1. Euclidean nearest neighbors → local surface points
+    # 2. Smallest |rz| among those → points on the cross-section plane
+    # Their radial distances give the current vessel radius, even after
+    # deformation.  This naturally excludes outlet cap points (which have
+    # nonzero |rz|) unless the center is exactly on the cap.
+    euclidean_dist_sq = rx[:, 0]**2 + ry[:, 0]**2 + rz[:, 0]**2
+    nearest_dist = np.sqrt(np.min(euclidean_dist_sq))
+    nearby = euclidean_dist_sq < (nearest_dist * 1.5)**2
+    nearby_rz_mag = np.abs(rz[nearby, 0])
+    nearby_radial = np.sqrt(radial_magnitude_squared[nearby, 0])
+    rz_cutoff = np.percentile(nearby_rz_mag, 5)
+    on_plane = nearby_rz_mag <= rz_cutoff
+    if np.any(on_plane):
+        current_radius = float(np.median(nearby_radial[on_plane]))
+    else:
+        current_radius = float(original_radius)
+
+    mask = ((current_radius * 1.0) ** 2 <= radial_magnitude_squared) * (radial_magnitude_squared <= (current_radius * 1.1) ** 2)
     # Set rz_magnitude to a large value where mask is False so they are not selected as min
     rz_magnitude_masked = np.where(mask, rz_magnitude, jnp.inf)
     index_for_min_rz = np.argmin(rz_magnitude_masked, axis=0)
     print("index_for_min_rz: ", index_for_min_rz)
     print("rx, ry, rz for min_rz: ", rx[index_for_min_rz], ry[index_for_min_rz], rz[index_for_min_rz])
-    return index_for_min_rz
+    print("estimated current radius: ", current_radius)
+    return index_for_min_rz, current_radius
 
 @jx.jit #TODO: comment/uncomment this to print kelvinlet quantities
 def get_stenosis_displacements_inner(data_points, rotation_matrices, xs, centers, a, b, eps, s, r_min, r_max, r_original):

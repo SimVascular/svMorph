@@ -363,10 +363,10 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         kelvinlet_points_normals = np.array([force_center_normal])
         rotation_matrices = scaling.compute_householder_matrices(kelvinlet_points_normals)
         original_radius = self.maximum_inscribed_sphere_radius[pointID]
-        self.stenosis_minimum_radius_representative = scaling.find_stenosis_minimum_radius_representative(data_points, rotation_matrices, xs, centers, original_radius)
+        self.stenosis_minimum_radius_representative, current_radius = scaling.find_stenosis_minimum_radius_representative(data_points, rotation_matrices, xs, centers, original_radius)
         print(f"Stenosis minimum radius representative index found: {self.stenosis_minimum_radius_representative}")
-        self.previous_stenosis_minimum_radius = original_radius
-        self.previous_aneurysm_maximum_radius = original_radius
+        self.previous_stenosis_minimum_radius = current_radius
+        self.previous_aneurysm_maximum_radius = current_radius
 
     # def place_visualization_sphere(self, position, pointID):
     #     sphere = vtkSphereSource()
