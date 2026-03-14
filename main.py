@@ -43,7 +43,6 @@ WINDOW_Y = 100
 
 # Control widget dimensions
 BUTTON_WIDTH_SMALL = 120
-BUTTON_WIDTH_MEDIUM = 130
 BUTTON_WIDTH_LARGE = 150
 BUTTON_WIDTH_XLARGE = 200
 TEXT_INPUT_WIDTH = 50
@@ -52,7 +51,6 @@ TEXT_INPUT_WIDTH_MEDIUM = 60
 # Timer intervals (milliseconds)
 DEFORMATION_TIMER_INTERVAL = 50
 STENOSIS_TIMER_INTERVAL = 25
-ANIMATION_TIMER_INTERVAL = 100
 
 # Slider ranges and defaults
 FORCE_SCALE_SLIDER_RANGE = (-1000, 1000)
@@ -197,7 +195,6 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.kelvinlet_timer = QTimer(self)
         self.stenosis_timer = QTimer(self)
-        self.animation_timer = QTimer(self)
 
     def _setup_ui_controls(self):
         """Setup all UI control layouts and widgets"""
@@ -322,14 +319,14 @@ class MainWindow(QMainWindow):
         self.stenosis_radius_label = QLabel("Stenosis Minimum Radius:")
         self.controls_layout3.addWidget(self.stenosis_radius_label)
         self.stenosis_radius_value = QLineEdit()
-        self.stenosis_radius_value.setPlaceholderText("e.g. 0.1")
+        self.stenosis_radius_value.setText("0.1")
         self.stenosis_radius_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
         self.controls_layout3.addWidget(self.stenosis_radius_value)
 
         self.stenosis_length_label = QLabel("Stenosis Region Length:")
         self.controls_layout3.addWidget(self.stenosis_length_label)
         self.stenosis_length_value = QLineEdit()
-        self.stenosis_length_value.setPlaceholderText("e.g. 0.3")
+        self.stenosis_length_value.setText("0.5")
         self.stenosis_length_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
         self.controls_layout3.addWidget(self.stenosis_length_value)
 
@@ -379,27 +376,11 @@ class MainWindow(QMainWindow):
         self.controls_layout4.addWidget(self.toggle_camera_lock_button)
         self.toggle_camera_lock_button.clicked.connect(self.toggle_camera_lock)
 
-        self.toggle_interleave_mode_button = QPushButton("Interleave Mode")
-        self.toggle_interleave_mode_button.setFixedWidth(BUTTON_WIDTH_MEDIUM)
-        self.controls_layout4.addWidget(self.toggle_interleave_mode_button)
-        self.toggle_interleave_mode_button.clicked.connect(self.toggle_interleave_mode)
-
-        self.reverse_animation_button = QPushButton("Reverse Direction")
-        self.reverse_animation_button.setFixedWidth(BUTTON_WIDTH_MEDIUM)
-        self.controls_layout4.addWidget(self.reverse_animation_button)
-        self.reverse_animation_button.clicked.connect(self.reverse_animation_direction)
-
         # Additional action buttons
         self.stent_edge_button = QPushButton("Place Stent") # originally the "Stent Edge" button
         self.stent_edge_button.setFixedWidth(BUTTON_WIDTH_SMALL)
         self.controls_layout4.addWidget(self.stent_edge_button)
         self.stent_edge_button.pressed.connect(self.save_current_stent)
-
-        self.animated_aneurysm_button = QPushButton("Animated Aneurysm Apply")
-        self.animated_aneurysm_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
-        self.controls_layout4.addWidget(self.animated_aneurysm_button)
-        self.animated_aneurysm_button.pressed.connect(self.start_animated_deformation)
-        self.animated_aneurysm_button.released.connect(self.stop_animated_deformation)
 
         self.layout.addLayout(self.controls_layout4)
 
@@ -430,13 +411,6 @@ class MainWindow(QMainWindow):
         self.controls_layout5.addWidget(self.render_sdf_button)
         self.render_sdf_button.clicked.connect(self.render_sdf)
 
-        self.select_multiple_points_button = QPushButton("Select Points")
-        self.select_multiple_points_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout5.addWidget(self.select_multiple_points_button)
-        self.select_multiple_points_button.clicked.connect(
-            self.display_centerline_nodes_select_multiple
-        )
-
         self.simultaneous_apply_button = QPushButton("Straighten Apply")
         self.simultaneous_apply_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
         self.controls_layout5.addWidget(self.simultaneous_apply_button)
@@ -460,14 +434,15 @@ class MainWindow(QMainWindow):
         # Connect epsilon slider signals
         self.stenosis_area_slider.valueChanged.connect(self._on_epsilon_slider_change)
         self.stenosis_slider_value.textChanged.connect(self._on_epsilon_text_change)
-        self.animation_timer.timeout.connect(self.interleave_update_selected_points)
 
     def _setup_vtk_components(self):
         """Initialize VTK-related components"""
         self.vtk_interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
         self.vtk_handler = None
-        self.mesh_file = None
-        self.centerline_file = None
+        self.mesh_file = "input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426.vtp"
+        self.centerline_file = "input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426-centerlines.vtp"
+        self.mesh_file = "/input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426.vtp"
+        self.centerline_file = "/input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426-centerlines.vtp"
 
     def _on_stent_length_slider_change(self, value):
         """Handle stent length slider changes"""
@@ -546,7 +521,6 @@ class MainWindow(QMainWindow):
         self.style.update_deformation_parameters(epsilon_value, -force_scale_value)
 
         # Initialize UI styling
-        UIStyleManager.set_button_active(self.toggle_interleave_mode_button, False)
         UIStyleManager.set_button_active(self.toggle_camera_lock_button, False)
 
         # Display debugging information about radius as text in viewport
@@ -592,19 +566,6 @@ class MainWindow(QMainWindow):
         # self.style.deform_mesh_parallel(epsilon, force_scale)
         self.style.deform_mesh_with_straightening(epsilon, force_scale)
 
-    def update_selected_point(self):
-        """Update selected point for animation - shifts to next centerline node"""
-        self.style.update_selected_point()
-
-    def interleave_update_selected_points(self):
-        """Update selected points in interleave mode"""
-        self.style.interleave_update_selected_points()
-
-    def reverse_animation_direction(self):
-        """Reverse animation direction and update button styling"""
-        UIStyleManager.toggle_button_style(self.reverse_animation_button)
-        self.style.reverse_animation_direction()
-
     def run_stenosis(self):
         """Run stenosis deformation with user-specified parameters"""
         if self.vtk_handler is None:
@@ -630,20 +591,6 @@ class MainWindow(QMainWindow):
             force_scale, area_percent_change, stenosis_radius, stenosis_length
         )
 
-    def toggle_interleave_mode(self):
-        """Toggle interleave mode and update button styling"""
-        UIStyleManager.toggle_button_style(
-            self.toggle_interleave_mode_button
-        )
-
-        if self.style.interleave_mode:
-            self.animation_timer.timeout.disconnect()
-            self.animation_timer.timeout.connect(self.update_selected_point)
-        else:
-            self.animation_timer.timeout.disconnect()
-            self.animation_timer.timeout.connect(self.interleave_update_selected_points)
-        self.style.toggle_interleave_mode()
-
     def toggle_camera_lock(self):
         """Toggle camera lock and update button styling"""
         UIStyleManager.toggle_button_style(self.toggle_camera_lock_button)
@@ -652,13 +599,6 @@ class MainWindow(QMainWindow):
     def display_centerline_nodes(self):
         """Display centerline nodes for single point selection"""
         print("Please select centerline nodes to generate aneurysm.")
-        self.style.display_centerline_vertices()
-
-    def display_centerline_nodes_select_multiple(self):
-        """Display centerline nodes for multiple point selection"""
-        print("Please select three centerline nodes to generate aneurysm.")
-        self.style.select_multiple_points = True
-        self.style.num_kelvinlet_points = 10
         self.style.display_centerline_vertices()
 
     def render_sdf(self):
@@ -689,16 +629,6 @@ class MainWindow(QMainWindow):
     def stop_continuous_stenosis_deformation(self):
         """Stop continuous stenosis deformation timer"""
         self.stenosis_timer.stop()
-
-    def start_animated_deformation(self):
-        """Start animated deformation with both deformation and animation timers"""
-        self.timer.start(DEFORMATION_TIMER_INTERVAL)
-        self.animation_timer.start(ANIMATION_TIMER_INTERVAL)
-
-    def stop_animated_deformation(self):
-        """Stop animated deformation timers"""
-        self.timer.stop()
-        self.animation_timer.stop()
 
     def save_current_stent(self):
         """Save the current stent configuration"""
