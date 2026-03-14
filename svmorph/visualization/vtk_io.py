@@ -207,3 +207,9 @@ def create_data_from_polydata(centerline_polydata, surface_polydata, other_geome
         assert other_geometry_points.shape[1] == 3
         data["points"][f"other_geometry_{ig}"] = other_geometry_points
     return data
+
+
+def sync_polydata(polydata, data, mesh_type):
+    """Mark the VTK point buffer as modified so the render pipeline picks up changes."""
+    polydata.GetPoints().Modified()
+    return polydata

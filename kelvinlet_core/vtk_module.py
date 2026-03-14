@@ -20,7 +20,7 @@ from vtkmodules.vtkIOXML import vtkXMLPolyDataReader, vtkXMLPolyDataWriter
 from svmorph.core import deformation
 from svmorph.core import geometry
 from svmorph.visualization import vtk_io
-from kelvinlet_core import common
+from svmorph.core import mesh_data
 import numpy as np
 from vtk.util.numpy_support import numpy_to_vtk, get_vtk_array_type
 import jax as jx
@@ -999,7 +999,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         total_start_time = time.time()  # Start total timer
         affine_type = "aneurysm"
         # nu = 0.1
-        a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+        a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
         # --- Load Polydata ---
 
@@ -1044,11 +1044,11 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Scale Displacements to Match Desired Area ---
         displacement_start_time = time.time()
-        simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
-        common.update_polydata_with_points(self.mesh, simulation_data, "surface")
+        simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
+        vtk_io.sync_polydata(self.mesh, simulation_data, "surface")
         # self.mesh = surface_polydata
-        # simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
-        # centerline_polydata = common.update_polydata_with_points(centerline_polydata, simulation_data, "centerline")
+        # simulation_data = mesh_data.apply_displacements(simulation_data, centerline_displacements, "centerline")
+        # centerline_polydata = vtk_io.sync_polydata(centerline_polydata, simulation_data, "centerline")
         aneurysm_representative = simulation_data['points']['surface'][self.stenosis_minimum_radius_representative]
         selected_point = simulation_data['points']['centerline'][force_center_point_id]
         # print(f"Stenosis representative point: {stenosis_representative}")
@@ -1069,7 +1069,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         total_start_time = time.time()  # Start total timer
         affine_type = "aneurysm"
         # nu = 0.1
-        a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+        a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
         # --- Load Polydata ---
         load_start_time = time.time()
@@ -1110,10 +1110,10 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Scale Displacements to Match Desired Area ---
         displacement_start_time = time.time()
-        simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
-        surface_polydata = common.update_polydata_with_points(surface_polydata, simulation_data, "surface")
-        # simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
-        # centerline_polydata = common.update_polydata_with_points(centerline_polydata, simulation_data, "centerline")
+        simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
+        surface_polydata = vtk_io.sync_polydata(surface_polydata, simulation_data, "surface")
+        # simulation_data = mesh_data.apply_displacements(simulation_data, centerline_displacements, "centerline")
+        # centerline_polydata = vtk_io.sync_polydata(centerline_polydata, simulation_data, "centerline")
         print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
         total_simulation_time = time.time() - total_start_time
         print(f"Total simulation time: {total_simulation_time:.4f} seconds")
@@ -1128,7 +1128,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         total_start_time = time.time()  # Start total timer
         affine_type = "aneurysm"
         # nu = 0.1
-        a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+        a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
         # --- Load Polydata ---
         load_start_time = time.time()
@@ -1168,10 +1168,10 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Scale Displacements to Match Desired Area ---
         displacement_start_time = time.time()
-        simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
-        simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
-        common.update_polydata_with_points(self.mesh, simulation_data, "surface")
-        common.update_polydata_with_points(self.centerline, simulation_data, "centerline")
+        simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
+        simulation_data = mesh_data.apply_displacements(simulation_data, centerline_displacements, "centerline")
+        vtk_io.sync_polydata(self.mesh, simulation_data, "surface")
+        vtk_io.sync_polydata(self.centerline, simulation_data, "centerline")
 
         print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
         total_simulation_time = time.time() - total_start_time
@@ -1188,7 +1188,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         total_start_time = time.time()  # Start total timer
         affine_type = "aneurysm"
         # nu = 0.1
-        a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+        a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
         # --- Load Polydata ---
         load_start_time = time.time()
@@ -1228,10 +1228,10 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Scale Displacements to Match Desired Area ---
         displacement_start_time = time.time()
-        simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
-        simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
-        common.update_polydata_with_points(self.mesh, simulation_data, "surface")
-        common.update_polydata_with_points(self.centerline, simulation_data, "centerline")
+        simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
+        simulation_data = mesh_data.apply_displacements(simulation_data, centerline_displacements, "centerline")
+        vtk_io.sync_polydata(self.mesh, simulation_data, "surface")
+        vtk_io.sync_polydata(self.centerline, simulation_data, "centerline")
 
         print(f"Time for updating points and polydata: {time.time() - displacement_start_time:.4f} seconds")
         total_simulation_time = time.time() - total_start_time
@@ -1275,7 +1275,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             total_start_time = time.time()  # Start total timer
             affine_type = "aneurysm"
             # nu = 0.1
-            a, b = common.get_a_b(mu, nu)  # Material properties for Kelvinlet calculations
+            a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
             print(f"Time for setting affine parameters: {time.time() - total_start_time:.4f} seconds")
             # --- Load Polydata ---
             load_start_time = time.time()
@@ -1310,10 +1310,10 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             
             # --- Scale Displacements to Match Desired Area ---
             displacement_start_time = time.time()
-            simulation_data = common.update_points_with_displacements(simulation_data, surface_displacements, "surface")
-            # simulation_data = common.update_points_with_displacements(simulation_data, centerline_displacements, "centerline")
-            common.update_polydata_with_points(self.mesh, simulation_data, "surface")
-            # common.update_polydata_with_points(self.centerline, simulation_data, "centerline")
+            simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
+            # simulation_data = mesh_data.apply_displacements(simulation_data, centerline_displacements, "centerline")
+            vtk_io.sync_polydata(self.mesh, simulation_data, "surface")
+            # vtk_io.sync_polydata(self.centerline, simulation_data, "centerline")
             stenosis_representative = simulation_data['points']['surface'][self.stenosis_minimum_radius_representative]
             selected_point = simulation_data['points']['centerline'][force_center_point_id]
             # print(f"Stenosis representative point: {stenosis_representative}")
