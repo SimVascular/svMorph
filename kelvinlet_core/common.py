@@ -11,7 +11,6 @@ from vtk.util.numpy_support import vtk_to_numpy as v2n
 from vtk.util.numpy_support import numpy_to_vtk as n2v
 # np.set_printoptions(threshold=np.inf)
 # np.set_printoptions(linewidth=np.inf)
-from kelvinlet_core import vtk_utils
 
 import jax as jx
 import jax.numpy as jnp

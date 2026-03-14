@@ -18,8 +18,8 @@ from vtkmodules.vtkRenderingCore import (
 )
 from vtkmodules.vtkIOXML import vtkXMLPolyDataReader, vtkXMLPolyDataWriter
 from svmorph.core import deformation
+from svmorph.core import geometry
 from svmorph.visualization import vtk_io
-from kelvinlet_core import vtk_utils
 from kelvinlet_core import common
 import numpy as np
 from vtk.util.numpy_support import numpy_to_vtk, get_vtk_array_type
@@ -30,7 +30,7 @@ import numpy as np
 from vtkmodules.vtkCommonCore import vtkUnsignedCharArray
 
 
-def load_vtp_file(filename): # this is a less robust version of vtk_utils.read_polydata_file, TODO: replace usage with vtk_utils.read_polydata_file
+def load_vtp_file(filename):
     reader = vtkXMLPolyDataReader()
     reader.SetFileName(filename)
     reader.Update()
@@ -81,7 +81,7 @@ class VTKHandler:
         self.renderer.SetBackground(1.0, 1.0, 1.0)
 
         # temporary code to overlay the reference mesh
-        # self.reference_mesh = vtk_utils.read_polydata_file("SU0243-postop-estimated-cm.vtp")
+        # self.reference_mesh = vtk_io.read_polydata_file("SU0243-postop-estimated-cm.vtp")
         # self.reference_mesh_mapper = vtkPolyDataMapper()
         # self.reference_mesh_mapper.SetInputData(self.reference_mesh)
         # self.reference_mesh_actor = vtkActor()
@@ -119,15 +119,15 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         self.mesh = mesh
         self.centerline = centerline
         start_time = time.time()
-        self.centerline_tangents = vtk_utils.get_centerline_tangents_np(centerline)
+        self.centerline_tangents = vtk_io.extract_centerline_tangents(centerline)
         print(f"Time to get centerline tangents: {time.time() - start_time:.4f} seconds")
-        self.data = vtk_utils.polydata_to_np_jnp_data(mesh, centerline)
-        self.parent_tip_map, self.segment_base_mask = vtk_utils.polydata_to_parent_tip_map(centerline)
+        self.data = vtk_io.extract_mesh_arrays(mesh, centerline)
+        self.parent_tip_map, self.segment_base_mask = vtk_io.build_parent_tip_map(centerline)
         # print("Should be equal:", np.allclose(self.data["points"]["centerline"], self.data["points"]["centerline_points_view_np"]))
         # print("centerline tangents length: ", len(self.centerline_tangents))
         # print("a few of the entries of centerline tangents: ", self.centerline_tangents[:5])
-        self.centerline_section_areas = vtk_utils.get_centerline_cross_section_areas_np(centerline)
-        self.maximum_inscribed_sphere_radius = vtk_utils.get_maximum_inscribed_sphere_radius_np(centerline)
+        self.centerline_section_areas = vtk_io.extract_cross_section_areas(centerline)
+        self.maximum_inscribed_sphere_radius = vtk_io.extract_inscribed_sphere_radii(centerline)
         self.mesh_filename = mesh_filename
         self.centerline_filename = centerline_filename
         self.mesh_actor = mesh_actor
@@ -341,13 +341,13 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
 
     def compute_prescribed_stent(self):
         segment_length = 0.1 # cm
-        # self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], self.stent_length, segment_length, 2*self.stent_radius, sampling_direction=self.sampling_direction)
+        # self.stent_axis_vertices = geometry.resample_stent_axis(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], self.stent_length, segment_length, sampling_direction=self.sampling_direction)
         foreshortening_percentage = 0.1 # 10%
         # foreshortening_percentage = 0.1032258065 # 0225
         # foreshortening_percentage = 0.135 # 0234
         # foreshortening_percentage = 0.12 # 0235
         deployed_stent_length = self.stent_length * (1 - foreshortening_percentage)
-        self.stent_axis_vertices = vtk_utils.sample_stent_axis_vertices_new(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, segment_length, sampling_direction=self.sampling_direction)
+        self.stent_axis_vertices = geometry.resample_stent_axis(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, segment_length, sampling_direction=self.sampling_direction)
         print(f"num vertices for stent of length {self.stent_length}cm, segment length {segment_length}cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
         
@@ -1018,13 +1018,13 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
         calc_displacement_start_time = time.time()
-        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(self.centerline, simulation_data["nodes"]["force_center_point_id"])
+        origin, normal = vtk_io.get_centerline_point_and_normal(self.centerline, simulation_data["nodes"]["force_center_point_id"])
         print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
         cross_section_time = time.time()
         original_radius = 0.42
-        # original_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        # original_radius = np.sqrt(vtk_io.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
         # vertices = simulation_data["points"]["surface"]
-        # original_radius, sorted_indices = vtk_utils.estimate_radius(vertices, origin, normal, 1)
+        # original_radius, sorted_indices = vtk_io.estimate_radius(vertices, origin, normal, 1)
         print(f"Cross sectional radius is estimated to be: {original_radius}")
         print(f"Time for getting cross sectional radius: {time.time() - cross_section_time:.4f} seconds")
         get_displacement_time = time.time()
@@ -1087,13 +1087,13 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
         calc_displacement_start_time = time.time()
-        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(centerline_polydata, simulation_data["nodes"]["force_center_point_id"])
+        origin, normal = vtk_io.get_centerline_point_and_normal(centerline_polydata, simulation_data["nodes"]["force_center_point_id"])
         print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
         cross_section_time = time.time()
         original_radius = 0.42 # TODO, account for this
-        # original_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        # original_radius = np.sqrt(vtk_io.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
         # vertices = simulation_data["points"]["surface"]
-        # original_radius, sorted_indices = vtk_utils.estimate_radius(vertices, origin, normal, 1)
+        # original_radius, sorted_indices = vtk_io.estimate_radius(vertices, origin, normal, 1)
         print(f"Cross sectional radius is estimated to be: {original_radius}")
         print(f"Time for getting cross sectional radius: {time.time() - cross_section_time:.4f} seconds")
         get_displacement_time = time.time()
@@ -1146,12 +1146,12 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
         calc_displacement_start_time = time.time()
-        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(self.centerline, simulation_data["nodes"]["force_center_point_id"])
+        origin, normal = vtk_io.get_centerline_point_and_normal(self.centerline, simulation_data["nodes"]["force_center_point_id"])
         print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
         cross_section_time = time.time()
-        # original_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        # original_radius = np.sqrt(vtk_io.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
         # vertices = simulation_data["points"]["surface"]
-        # original_radius, sorted_indices = vtk_utils.estimate_radius(vertices, origin, normal, 1)
+        # original_radius, sorted_indices = vtk_io.estimate_radius(vertices, origin, normal, 1)
         print(f"Time for getting cross sectional radius: {time.time() - cross_section_time:.4f} seconds")
         get_displacement_time = time.time()
         print(f"Time for computing initial radius and displacement: {time.time() - get_displacement_time:.4f} seconds")
@@ -1206,12 +1206,12 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         
         # --- Calculate Initial Displacements --- CURENTLY the longest step 
         calc_displacement_start_time = time.time()
-        origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(self.centerline, simulation_data["nodes"]["force_center_point_id"])
+        origin, normal = vtk_io.get_centerline_point_and_normal(self.centerline, simulation_data["nodes"]["force_center_point_id"])
         print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
         cross_section_time = time.time()
-        # original_radius = np.sqrt(vtk_utils.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
+        # original_radius = np.sqrt(vtk_io.get_cross_sectional_area(surface_polydata, origin, normal) / np.pi)
         # vertices = simulation_data["points"]["surface"]
-        # original_radius, sorted_indices = vtk_utils.estimate_radius(vertices, origin, normal, 1)
+        # original_radius, sorted_indices = vtk_io.estimate_radius(vertices, origin, normal, 1)
         print(f"Time for getting cross sectional radius: {time.time() - cross_section_time:.4f} seconds")
         get_displacement_time = time.time()
         print(f"Time for computing initial radius and displacement: {time.time() - get_displacement_time:.4f} seconds")
@@ -1293,7 +1293,7 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
             
             # --- Calculate Initial Displacements --- CURENTLY the longest step 
             calc_displacement_start_time = time.time()
-            origin, normal = vtk_utils.get_coordinates_and_normal_at_point_on_centerline(self.centerline, simulation_data["nodes"]["force_center_point_id"])
+            origin, normal = vtk_io.get_centerline_point_and_normal(self.centerline, simulation_data["nodes"]["force_center_point_id"])
             print(f"Time for getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} seconds")
             cross_section_time = time.time()
             original_radius = self.maximum_inscribed_sphere_radius[force_center_point_id]
