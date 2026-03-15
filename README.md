@@ -57,6 +57,10 @@ pip install --upgrade pip
 pip install "jax[cpu]"==0.4.30
 pip install pyqt6==6.7
 ```
+Finally, remove the qt6-main 6.8.1 conda package that was pulled in as a dependency of VTK. Having two Qt6 runtimes load simultaneously causes warnings.
+```
+micromamba remove -n virtualcathlab qt6-main --force
+```
 
 ### 4. Verify the environment is correct
 
