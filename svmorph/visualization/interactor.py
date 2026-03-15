@@ -738,7 +738,10 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if self.previous_stenosis_minimum_radius <= stenosis_radius + 2e-3:
             logger.info("Target stenosis radius reached.")
 
-        self.create_stenosis(self.selected_points, force_scale, stenosis_radius, stenosis_length)
+        force_center_point_id = self.selected_points[0]
+        self.run_stenosis(
+            force_center_point_id, force_scale, stenosis_radius, stenosis_length, self.selected_points
+        )
         self.GetInteractor().GetRenderWindow().Render()
 
     def deform_mesh_with_straightening(self, force_scale):
@@ -881,51 +884,43 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
         return step_size
 
-    def create_stenosis(self, selected_points, force_scale, stenosis_radius, stenosis_length):
-        """Prepare parameters and delegate to :meth:`run_stenosis` for one stenosis step."""
-        force_center_point_id = selected_points[0]
-        self.run_stenosis(
-            force_center_point_id, force_scale, stenosis_radius, stenosis_length, selected_points
-        )
+    def run_stenosis(self, force_center_point_id, s, stenosis_radius, stenosis_length, node_point_indices):
+        """Execute one stenosis-creation time step using the truncated-sphere warp.
 
-    def run_stenosis(self, force_center_point_id, s,
-                            stenosis_radius, stenosis_length, node_point_indices):
-            """Execute one stenosis-creation time step using the truncated-sphere warp.
+        Computes inward displacements, applies them to the surface mesh,
+        and updates the running minimum-radius estimate.
 
-            Computes inward displacements, applies them to the surface mesh,
-            and updates the running minimum-radius estimate.
+        Returns
+        -------
+        float
+            Step size for this iteration.
+        """
+        total_start_time = time.time()
 
-            Returns
-            -------
-            float
-                Step size for this iteration.
-            """
-            total_start_time = time.time()
+        setup_start_time = time.time()
+        simulation_data = deformation.set_node_indices(self.data, node_point_indices)
+        simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
+        logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
 
-            setup_start_time = time.time()
-            simulation_data = deformation.set_node_indices(self.data, node_point_indices)
-            simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
-            logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
-            
-            calc_displacement_start_time = time.time()
-            _, normal = vtk_io.get_centerline_point_and_normal(self.centerline, simulation_data["nodes"]["force_center_point_id"])
-            logger.timing(f"Getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} s")
-            
-            step_start_time = time.time()
-            logger.debug(f"Main loop s={s}")
-            surface_displacements, step_size = deformation.compute_stenosis_displacements(simulation_data, s, normal, stenosis_radius, stenosis_length)
-            logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
-            
-            displacement_start_time = time.time()
-            simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
-            vtk_io.sync_polydata(self.mesh, simulation_data, "surface")
-            stenosis_representative = simulation_data['points']['surface'][self.stenosis_minimum_radius_representative]
-            selected_point = simulation_data['points']['centerline'][force_center_point_id]
-            current_stenosis_minimum_radius = np.linalg.norm(stenosis_representative - selected_point)
-            logger.info(f"Current stenosis minimum radius: {current_stenosis_minimum_radius} cm")
-            logger.info(f"Delta to previous step: {current_stenosis_minimum_radius - self.previous_stenosis_minimum_radius} cm")
-            self.previous_stenosis_minimum_radius = current_stenosis_minimum_radius
-            logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
-            logger.timing(f"Total simulation time: {time.time() - total_start_time:.4f} s")
-            logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
-            return step_size
+        calc_displacement_start_time = time.time()
+        _, normal = vtk_io.get_centerline_point_and_normal(self.centerline, simulation_data["nodes"]["force_center_point_id"])
+        logger.timing(f"Getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} s")
+
+        step_start_time = time.time()
+        logger.debug(f"Main loop s={s}")
+        surface_displacements, step_size = deformation.compute_stenosis_displacements(simulation_data, s, normal, stenosis_radius, stenosis_length)
+        logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
+
+        displacement_start_time = time.time()
+        simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
+        vtk_io.sync_polydata(self.mesh, simulation_data, "surface")
+        stenosis_representative = simulation_data['points']['surface'][self.stenosis_minimum_radius_representative]
+        selected_point = simulation_data['points']['centerline'][force_center_point_id]
+        current_stenosis_minimum_radius = np.linalg.norm(stenosis_representative - selected_point)
+        logger.info(f"Current stenosis minimum radius: {current_stenosis_minimum_radius} cm")
+        logger.info(f"Delta to previous step: {current_stenosis_minimum_radius - self.previous_stenosis_minimum_radius} cm")
+        self.previous_stenosis_minimum_radius = current_stenosis_minimum_radius
+        logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
+        logger.timing(f"Total simulation time: {time.time() - total_start_time:.4f} s")
+        logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
+        return step_size
