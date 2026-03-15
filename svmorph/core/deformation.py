@@ -222,8 +222,7 @@ def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float) -> jx.Array:
     dist_to_surface_all = dist_all_squeezed - r
     final_dist_to_surface, _ = jx.vmap(compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
     final_dist_to_surface = final_dist_to_surface[:, None]
-    sdf = final_dist_to_surface
-    return sdf
+    return final_dist_to_surface
 
 def kelvinlets_truncated_spherical_contraction(
     rv: jx.Array, f_scale: float,
@@ -355,7 +354,7 @@ def get_scaling_kelvinlet_displacements_inner(
     data_points: jx.Array, rotation_matrices: jx.Array, query_points: jx.Array,
     centers: jx.Array, a: float, b: float, eps: float, s: float,
     surface_mesh_scale_factor: float | None,
-) -> tuple[jx.Array, float]:
+) -> jx.Array:
     """JIT-compiled inner loop for scaling Kelvinlet displacement computation.
 
     Rotates mesh points into each center's local frame, computes sculpt
@@ -385,8 +384,6 @@ def get_scaling_kelvinlet_displacements_inner(
     -------
     displacement : jx.Array
         Net displacement per mesh point, shape ``(N, 3)``.
-    average_displacement_distance : float
-        Scalar summary of displacement magnitude.
     """
     num_mesh_points = data_points.shape[0]
     centers = jnp.tile(centers, (num_mesh_points, 1, 1))
@@ -395,15 +392,12 @@ def get_scaling_kelvinlet_displacements_inner(
     rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
     centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
     # Compute Kelvinlet displacements
-    average_displacement_distance = 0
     displacement_local = kelvinlets_truncated_spherical_expansion(centerline_aligned_rv, a, b, eps, s)
     displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     displacement = jnp.sum(displacement_global, axis=1)
-    # Scale if required
     if surface_mesh_scale_factor is not None:
         displacement *= surface_mesh_scale_factor
-        average_displacement_distance *= surface_mesh_scale_factor
-    return displacement, average_displacement_distance
+    return displacement
 
 def find_stenosis_minimum_radius_representative(
     data_points: np.ndarray, rotation_matrices: np.ndarray,
@@ -444,7 +438,7 @@ def find_stenosis_minimum_radius_representative(
     rv = np.einsum('...ij,...j->...i', rotation_matrices, rv)
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
-    rz_magnitude = np.sqrt(rz**2)
+    rz_magnitude = np.abs(rz)
     radial_magnitude_squared = (rx**2 + ry**2)
 
     # Estimate the actual current vessel radius:
@@ -467,7 +461,7 @@ def find_stenosis_minimum_radius_representative(
 
     mask = ((current_radius * 1.0) ** 2 <= radial_magnitude_squared) * (radial_magnitude_squared <= (current_radius * 1.1) ** 2)
     # Set rz_magnitude to a large value where mask is False so they are not selected as min
-    rz_magnitude_masked = np.where(mask, rz_magnitude, jnp.inf)
+    rz_magnitude_masked = np.where(mask, rz_magnitude, np.inf)
     index_for_min_rz = np.argmin(rz_magnitude_masked, axis=0)
     logger.debug(f"index_for_min_rz: {index_for_min_rz}")
     logger.debug(f"rx, ry, rz for min_rz: {rx[index_for_min_rz]}, {ry[index_for_min_rz]}, {rz[index_for_min_rz]}")
@@ -525,8 +519,8 @@ def get_stenosis_displacements_inner(
 
 def compute_aneurysm_displacements(
     data: dict, a: float, b: float, eps: float, s: float,
-    surface_mesh_scale_factor: float | None, force_center_normal: jx.Array,
-) -> tuple[np.ndarray, float]:
+    surface_mesh_scale_factor: float | None,     force_center_normal: jx.Array,
+) -> np.ndarray:
     """Compute Kelvinlet-based outward surface displacements for aneurysm creation.
 
     Assembles query-point geometry, builds Householder rotation matrices,
@@ -551,12 +545,9 @@ def compute_aneurysm_displacements(
     -------
     displacements : np.ndarray
         Per-vertex displacement vectors, shape ``(N, 3)``.
-    average_displacement_distance : float
-        Scalar summary of displacement magnitude.
     """
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Force center: {force_center_point_id}")
-    # Prepare other data
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
@@ -567,10 +558,10 @@ def compute_aneurysm_displacements(
     centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
     kelvinlet_points_normals = jnp.array([force_center_normal])
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
-    displacements, average_displacement_distance = get_scaling_kelvinlet_displacements_inner(
+    displacements = get_scaling_kelvinlet_displacements_inner(
         data_points, rotation_matrices, query_points, centers, a, b, eps, s, surface_mesh_scale_factor
     )
-    return np.array(displacements), average_displacement_distance
+    return np.array(displacements)
 
 def compute_stenosis_displacements(
     data: dict, s: float,
@@ -798,9 +789,6 @@ def compute_sdf_contact_displacements(
     start_time = time.time()
     in_influence_to_in_contact_distances = dist_min[in_influence_mask]
     logger.timing(f"In-influence vertices: {time.time() - start_time:.4f} s")
-    part_two_start_time = time.time()
-    logger.timing(f"JAX array conversion: {time.time() - part_two_start_time:.4f} s")
-
     # ── 7. Influence blending weights ────────────────────────────────
     # Compute a per-point blending weight (alpha) that is 1 at the
     # contact front and linearly decays to 0 at `influence_radius`.

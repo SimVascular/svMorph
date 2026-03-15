@@ -1019,10 +1019,8 @@ class MouseInteractorStylePP(vtkInteractorStyleTrackballCamera):
         # force_scale = scaling.get_force_matrix_scale(affine_params["scale"][model] * original_radius / num_time_steps, a, b)
         print("eps = ", eps, "force_scale = ", force_scale)
         # , centerline_displacements
-        surface_displacements, average_displacement_distance = deformation.compute_aneurysm_displacements(simulation_data, a, b, eps, force_scale, None, normal, stent_halflength, stent_radius)
-        # surface_displacements = scaling.get_affine_displacements_point(simulation_data, a, b, eps, 1000, None, None, None, normal, stent_halflength)
+        surface_displacements = deformation.compute_aneurysm_displacements(simulation_data, a, b, eps, force_scale, None, normal)
         print(f"Time for affine displacements calculation: {time.time() - step_start_time:.4f} seconds")
-        average_displacement_distance = 0
         # self.current_stent_radius += average_displacement_distance
         
         # --- Scale Displacements to Match Desired Area ---

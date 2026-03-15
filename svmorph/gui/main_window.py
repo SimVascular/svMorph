@@ -98,15 +98,8 @@ class SliderMapper:
 
     @staticmethod
     def force_scale_value_to_slider(value):
-        """
-        Converts the displayed float value back to the slider integer value.
-        This is the inverse of the slider_to_value() function.
-        """
-        if value == 0:
-            normalized = 0.0
-        else:
-            normalized = value
-        return int(normalized * 1000)
+        """Convert force-scale float to slider integer (inverse of slider_to_value)."""
+        return int(value * 1000)
 
     @staticmethod
     def stent_diameter_slider_to_value(slider_val):
@@ -168,12 +161,23 @@ class MainWindow(QMainWindow):
         super(MainWindow, self).__init__(parent)
 
         self.setWindowTitle("VTK with PyQt6")
+        self.interactor = None
         self._setup_window_geometry()
         self._setup_main_layout()
         self._setup_timers()
         self._setup_ui_controls()
         self._setup_vtk_components()
         self.initialize_vtk_handler()
+
+    @property
+    def _current_sharpness(self):
+        """Current sharpness value from the slider (0.01 – 5.0)."""
+        return self.sharpness_slider.value() / 100.0
+
+    @property
+    def _current_force_scale_raw(self):
+        """Current raw force-scale value from the slider (-1.0 – 1.0)."""
+        return SliderMapper.force_scale_slider_to_value(self.force_scale_slider.value())
 
     def _setup_window_geometry(self):
         """Configure main window size and position"""
@@ -214,16 +218,16 @@ class MainWindow(QMainWindow):
         self.slider_label = QLabel("Force Scale:")
         self.controls_layout.addWidget(self.slider_label)
 
-        self.area_slider = QSlider(Qt.Orientation.Horizontal)
-        self.area_slider.setRange(*FORCE_SCALE_SLIDER_RANGE)
-        self.area_slider.setValue(
+        self.force_scale_slider = QSlider(Qt.Orientation.Horizontal)
+        self.force_scale_slider.setRange(*FORCE_SCALE_SLIDER_RANGE)
+        self.force_scale_slider.setValue(
             SliderMapper.force_scale_value_to_slider(FORCE_SCALE_DEFAULT)
         )
-        self.controls_layout.addWidget(self.area_slider)
+        self.controls_layout.addWidget(self.force_scale_slider)
 
         self.slider_value = QLineEdit()
         slider_value = SliderMapper.force_scale_slider_to_value(
-            self.area_slider.value()
+            self.force_scale_slider.value()
         )
         self.slider_value.setText(
             f"{slider_value:.3f}" if slider_value >= 0 else f"-{abs(slider_value):.3f}"
@@ -247,7 +251,7 @@ class MainWindow(QMainWindow):
         self.layout.addLayout(self.controls_layout)
 
         # Connect signals
-        self.area_slider.valueChanged.connect(self.on_force_scale_slider_change)
+        self.force_scale_slider.valueChanged.connect(self.on_force_scale_slider_change)
         self.slider_value.textChanged.connect(self.on_force_scale_text_change)
         self.run_button.clicked.connect(self.run_deformation_sdf)
         self.show_nodes_button.clicked.connect(self.display_centerline_nodes)
@@ -375,7 +379,7 @@ class MainWindow(QMainWindow):
         self.toggle_camera_lock_button.clicked.connect(self.toggle_camera_lock)
 
         # Additional action buttons
-        self.place_stent_button = QPushButton("Place Stent") # originally the "Stent Edge" button
+        self.place_stent_button = QPushButton("Place Stent")
         self.place_stent_button.setFixedWidth(BUTTON_WIDTH_SMALL)
         self.controls_layout4.addWidget(self.place_stent_button)
         self.place_stent_button.pressed.connect(self.save_current_stent)
@@ -395,9 +399,7 @@ class MainWindow(QMainWindow):
         self.controls_layout5.addWidget(self.sharpness_slider)
 
         self.sharpness_value = QLineEdit()
-        self.sharpness_value.setText(
-            f"{self.sharpness_slider.value() / 100.0}"
-        )
+        self.sharpness_value.setText(f"{self._current_sharpness}")
         self.sharpness_value.setFixedWidth(TEXT_INPUT_WIDTH)
         self.controls_layout5.addWidget(self.sharpness_value)
 
@@ -442,36 +444,30 @@ class MainWindow(QMainWindow):
         """Handle stent length slider changes"""
         length_value = SliderMapper.stent_length_slider_to_value(value)
         self.stent_length_value.setText(f"{length_value:.4f}")
-        if hasattr(self, "interactor") and self.interactor:
+        if self.interactor:
             self.interactor.update_prescribed_stent_length(length_value)
 
     def _on_stent_diameter_slider_change(self, value):
         """Handle stent diameter slider changes"""
         diameter_value = SliderMapper.stent_diameter_slider_to_value(value)
         self.stent_diameter_value.setText(f"{diameter_value:.4f}")
-        if hasattr(self, "interactor") and self.interactor:
+        if self.interactor:
             self.interactor.update_prescribed_stent_radius(diameter_value / 2.0)
 
     def _on_sharpness_slider_change(self, value):
         """Handle sharpness slider changes"""
         sharpness_value = value / 100.0
         self.sharpness_value.setText(f"{sharpness_value}")
-        if hasattr(self, "interactor") and self.interactor:
-            force_scale_value = SliderMapper.force_scale_slider_to_value(
-                self.area_slider.value()
-            )
-            self.interactor.update_deformation_parameters(sharpness_value, -force_scale_value)
+        if self.interactor:
+            self.interactor.update_deformation_parameters(sharpness_value, -self._current_force_scale_raw)
 
     def _on_sharpness_text_change(self, text):
         """Handle sharpness text input changes"""
         try:
             value = float(text)
             self.sharpness_slider.setValue(int(value * 100))
-            if hasattr(self, "interactor") and self.interactor:
-                force_scale_value = SliderMapper.force_scale_slider_to_value(
-                    self.area_slider.value()
-                )
-                self.interactor.update_deformation_parameters(value, -force_scale_value)
+            if self.interactor:
+                self.interactor.update_deformation_parameters(value, -self._current_force_scale_raw)
         except ValueError:
             pass
 
@@ -506,12 +502,7 @@ class MainWindow(QMainWindow):
         self.vtk_interactor.Initialize()
         self.vtk_interactor.Start()
 
-        # Initialize deformation parameters
-        sharpness_value = self.sharpness_slider.value() / 100.0
-        force_scale_value = SliderMapper.force_scale_slider_to_value(
-            self.area_slider.value()
-        )
-        self.interactor.update_deformation_parameters(sharpness_value, -force_scale_value)
+        self.interactor.update_deformation_parameters(self._current_sharpness, -self._current_force_scale_raw)
 
         # Initialize UI styling
         UIStyleManager.set_button_active(self.toggle_camera_lock_button, False)
@@ -520,37 +511,37 @@ class MainWindow(QMainWindow):
         self.interactor.display_radius_texts()
 
     def keyPressEvent(self, event):
-        """Handle keyboard events"""
-        # when buttons are pressed focus shifts to PyQt window so key press events
-        # are not captured by VTK and needed to be handled here
+        """Handle keyboard events forwarded from the Qt window to the VTK interactor."""
+        if not self.interactor:
+            return
         if event.key() == Qt.Key.Key_H:
             self.interactor.toggle_roi_cylinder()
-        elif event.key() == Qt.Key.Key_D:
-            # Reserved for future functionality
-            pass
 
     def run_deformation(self):
         """Run kelvinlet-based mesh deformation"""
-        force_scale = -SliderMapper.force_scale_slider_to_value(
-            self.area_slider.value()
-        )
-        sharpness = self.sharpness_slider.value() / 100.0
+        if self.vtk_handler is None:
+            logger.warning("Please import mesh and centerline files first.")
+            return
+        force_scale = -self._current_force_scale_raw
+        sharpness = self._current_sharpness
         logger.info(f"Running Kelvinlet deformation with force_scale={force_scale}, sharpness={sharpness}")
         self.interactor.deform_mesh_sequential(sharpness, force_scale)
 
     def run_deformation_sdf(self):
         """Run SDF-based contact deformation"""
-        force_scale = -SliderMapper.force_scale_slider_to_value(
-            self.area_slider.value()
-        )
+        if self.vtk_handler is None:
+            logger.warning("Please import mesh and centerline files first.")
+            return
+        force_scale = -self._current_force_scale_raw
         logger.info(f"Running SDF contact deformation with force_scale={force_scale}")
         self.interactor.deform_mesh_sdf_contact(force_scale)
 
     def run_deformation_simultaneous(self):
         """Run simultaneous parallel mesh deformation"""
-        force_scale = -SliderMapper.force_scale_slider_to_value(
-            self.area_slider.value()
-        )
+        if self.vtk_handler is None:
+            logger.warning("Please import mesh and centerline files first.")
+            return
+        force_scale = -self._current_force_scale_raw
         logger.info(f"Running straightening deformation with force_scale={force_scale}")
         self.interactor.deform_mesh_with_straightening(force_scale)
 
@@ -569,7 +560,7 @@ class MainWindow(QMainWindow):
             logger.warning("Invalid stenosis parameters. Please enter valid numbers.")
             return
 
-        force_scale = SliderMapper.force_scale_slider_to_value(self.area_slider.value())
+        force_scale = self._current_force_scale_raw
 
         logger.info(
             f"Running stenosis with force_scale={force_scale}, stenosis_radius={stenosis_radius}, stenosis_length={stenosis_length}"
@@ -580,16 +571,22 @@ class MainWindow(QMainWindow):
 
     def toggle_camera_lock(self):
         """Toggle camera lock and update button styling"""
+        if not self.interactor:
+            return
         UIStyleManager.toggle_button_style(self.toggle_camera_lock_button)
         self.interactor.toggle_camera_lock()
 
     def display_centerline_nodes(self):
         """Display centerline nodes for single point selection"""
+        if not self.interactor:
+            return
         logger.info("Please select centerline nodes to generate aneurysm.")
         self.interactor.display_centerline_vertices()
 
     def render_sdf(self):
         """Display signed distance field visualization"""
+        if not self.interactor:
+            return
         logger.info("Displaying signed distance field.")
         self.interactor.render_sdf()
 
@@ -619,7 +616,7 @@ class MainWindow(QMainWindow):
 
     def save_current_stent(self):
         """Save the current stent configuration"""
-        if hasattr(self, "interactor") and self.interactor:
+        if self.interactor:
             self.interactor.save_current_stent()
             logger.info("Current stent placed.")
         else:
@@ -651,9 +648,8 @@ class MainWindow(QMainWindow):
         """
         float_value = SliderMapper.force_scale_slider_to_value(raw_value)
         self.slider_value.setText(f"{float_value:.3f}")
-        sharpness_value = self.sharpness_slider.value() / 100.0
-        if hasattr(self, "interactor") and self.interactor:
-            self.interactor.update_deformation_parameters(sharpness_value, -float_value)
+        if self.interactor:
+            self.interactor.update_deformation_parameters(self._current_sharpness, -float_value)
 
     def on_force_scale_text_change(self, text):
         """
@@ -666,13 +662,15 @@ class MainWindow(QMainWindow):
         except ValueError:
             return
         new_slider_val = SliderMapper.force_scale_value_to_slider(new_value)
-        self.area_slider.setValue(new_slider_val)
-        sharpness_value = self.sharpness_slider.value() / 100.0
-        if hasattr(self, "interactor") and self.interactor:
-            self.interactor.update_deformation_parameters(sharpness_value, -new_value)
+        self.force_scale_slider.setValue(new_slider_val)
+        if self.interactor:
+            self.interactor.update_deformation_parameters(self._current_sharpness, -new_value)
 
     def save_mesh(self):
         """Save the current mesh to a file"""
+        if self.vtk_handler is None:
+            logger.warning("No mesh loaded to save.")
+            return
         file_name, _ = QFileDialog.getSaveFileName(
             self, "Save Mesh", "mesh-name.vtp", "VTK Files (*.vtp)"
         )

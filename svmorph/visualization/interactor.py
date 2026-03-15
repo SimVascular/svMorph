@@ -115,7 +115,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
         self.sampling_direction = -1
         self.animation_direction = 1
-        self.num_kelvinlet_points = 1 # originally 3
+        self.num_kelvinlet_points = 1
         self.interleave_mode = False
         self.operation_count = 0
         self.total_displacement_distance = 0.0
@@ -206,7 +206,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.glyph_actor.GetProperty().SetColor(0.0, 1.0, 1.0)
 
         self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(self.glyph_actor)
-        self.mesh_actor.GetProperty().SetOpacity(0.2) # original opacity
+        self.mesh_actor.GetProperty().SetOpacity(0.2)
         self.centerline_actor.SetPickable(1)
         self.GetInteractor().GetRenderWindow().Render()
 
@@ -233,11 +233,12 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
     def update_selected_point_radius_text(self):
         """Refresh the MIS and lumen effective radius text for the most recently selected point."""
         if len(self.selected_points) == 0:
-            radius = 0.0
-        else:
-            point_id = self.selected_points[-1]
-            area = self.centerline_section_areas[point_id]
-            radius = np.sqrt(area / np.pi)
+            self.radius_text_actor.SetInput("MIS radius = 0.0000, lumen effective radius = 0.0000")
+            self.GetInteractor().GetRenderWindow().Render()
+            return
+        point_id = self.selected_points[-1]
+        area = self.centerline_section_areas[point_id]
+        radius = np.sqrt(area / np.pi)
         self.radius_text_actor.SetInput(f"MIS radius = {self.maximum_inscribed_sphere_radius[point_id]:.4f}, lumen effective radius = {radius:.4f}")
         self.GetInteractor().GetRenderWindow().Render()
 
@@ -318,7 +319,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                     angle = 0.0
                     rotation_axis = [0, 0, 1]
                 else:
-                    angle = np.degrees(np.arccos(np.dot(default_axis, direction)))
+                    angle = np.degrees(np.arccos(np.clip(np.dot(default_axis, direction), -1.0, 1.0)))
 
                 cylinder = vtkCylinderSource()
                 cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
@@ -430,7 +431,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         default_axis = np.array([0, 1, 0])
         tangent = self.centerline_tangents[point_id]
         rotation_axis = np.cross(default_axis, tangent)
-        angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
+        angle = 180 / np.pi * np.arccos(np.clip(np.dot(default_axis, tangent), -1.0, 1.0))
 
         transform = vtkTransform()
         transform.Translate(position)
@@ -468,7 +469,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         default_axis = np.array([0, 1, 0])
         tangent = self.centerline_tangents[point_id]
         rotation_axis = np.cross(default_axis, tangent)
-        angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
+        angle = 180 / np.pi * np.arccos(np.clip(np.dot(default_axis, tangent), -1.0, 1.0))
 
         transform = vtkTransform()
         transform.Translate(position)
@@ -524,7 +525,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         default_axis = np.array([0, 1, 0])
         tangent = self.centerline_tangents[point_id]
         rotation_axis = np.cross(default_axis, tangent)
-        angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
+        angle = 180 / np.pi * np.arccos(np.clip(np.dot(default_axis, tangent), -1.0, 1.0))
         transform = vtkTransform()
         transform.Translate(position)
         transform.RotateWXYZ(angle, rotation_axis)
@@ -540,7 +541,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.sharpness = sharpness
         self.force_scale = force_scale
         for roi_actor in self.roi_actors[-1:]:
-            roi_cylinder = roi_actor.cylinderSource
             roi_actor.GetProperty().SetOpacity(abs(force_scale) * 0.7)
         self.update_roi_text()
         self.GetInteractor().GetRenderWindow().Render()
@@ -764,11 +764,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
         Computes material constants, assembles the displacement field, applies
         it to the surface mesh, and updates the running maximum-radius estimate.
-
-        Returns
-        -------
-        float
-            Average displacement distance for this step.
         """
         total_start_time = time.time()  # Start total timer
         a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
@@ -780,22 +775,15 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
         
-        # --- Calculate Initial Displacements --- CURENTLY the longest step 
         calc_displacement_start_time = time.time()
         origin, normal = vtk_io.get_centerline_point_and_normal(self.centerline, simulation_data["nodes"]["force_center_point_id"])
         logger.timing(f"Getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} s")
-        cross_section_time = time.time()
-        logger.timing(f"Getting cross sectional radius: {time.time() - cross_section_time:.4f} s")
-        get_displacement_time = time.time()
-        logger.timing(f"Computing initial radius and displacement: {time.time() - get_displacement_time:.4f} s")
-        
         # --- Compute Initial Force Matrix and Displacements ---
         step_start_time = time.time()
         eps = affine_params["eps"][model]
         logger.debug(f"eps={eps}, force_scale={force_scale}")
-        surface_displacements, average_displacement_distance = deformation.compute_aneurysm_displacements(simulation_data, a, b, eps, force_scale, None, normal)
+        surface_displacements = deformation.compute_aneurysm_displacements(simulation_data, a, b, eps, force_scale, None, normal)
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
-        average_displacement_distance = 0
         
         # --- Scale Displacements to Match Desired Area ---
         displacement_start_time = time.time()
@@ -809,10 +797,9 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.previous_aneurysm_maximum_radius = current_aneurysm_maximum_radius
 
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
-        total_simulation_time = time.time() - total_start_time
-        logger.timing(f"Total simulation time: {total_simulation_time:.4f} s")
-        logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
-        return average_displacement_distance
+        elapsed = max(time.time() - total_start_time, 1e-9)
+        logger.timing(f"Total simulation time: {elapsed:.4f} s")
+        logger.info(f"FPS = {int(round(1 / elapsed))}")
 
     def run_aneurysm_sdf_contact(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
         """Execute one SDF-contact stent deployment time step.
@@ -845,8 +832,9 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         vtk_io.sync_polydata(self.centerline, simulation_data, "centerline")
 
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
-        logger.timing(f"Total simulation time: {time.time() - total_start_time:.4f} s")
-        logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
+        elapsed = max(time.time() - total_start_time, 1e-9)
+        logger.timing(f"Total simulation time: {elapsed:.4f} s")
+        logger.info(f"FPS = {int(round(1 / elapsed))}")
         return step_size
 
     def run_stent_with_straightening(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
@@ -880,8 +868,9 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         vtk_io.sync_polydata(self.centerline, simulation_data, "centerline")
 
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
-        logger.timing(f"Total simulation time: {time.time() - total_start_time:.4f} s")
-        logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
+        elapsed = max(time.time() - total_start_time, 1e-9)
+        logger.timing(f"Total simulation time: {elapsed:.4f} s")
+        logger.info(f"FPS = {int(round(1 / elapsed))}")
         return step_size
 
     def run_stenosis(self, force_center_point_id, s, stenosis_radius, stenosis_length, node_point_indices):
@@ -921,6 +910,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.info(f"Delta to previous step: {current_stenosis_minimum_radius - self.previous_stenosis_minimum_radius} cm")
         self.previous_stenosis_minimum_radius = current_stenosis_minimum_radius
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
-        logger.timing(f"Total simulation time: {time.time() - total_start_time:.4f} s")
-        logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
+        elapsed = max(time.time() - total_start_time, 1e-9)
+        logger.timing(f"Total simulation time: {elapsed:.4f} s")
+        logger.info(f"FPS = {int(round(1 / elapsed))}")
         return step_size
