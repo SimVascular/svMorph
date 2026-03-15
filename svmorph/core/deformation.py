@@ -746,15 +746,22 @@ def compute_sdf_contact_displacements(
     step_size : float
         Scalar step size for stent radius increment tracking.
     """
+    # ── 1. Extract geometry from simulation data ──────────────────────
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Selected point ID: {force_center_point_id}")
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
+
+    # ── 2. Bounding-box culling ──────────────────────────────────────
+    # Restrict the expensive SDF evaluation to the axis-aligned bounding
+    # box of the stent, padded by (target_radius + influence + contact).
+    # Both surface and centerline points are culled independently.
     start_time = time.time()
     surface_bbox_mask = stent_bounding_box(data_points, stent_vertices, target_stent_radius, influence_radius, contact_distance)
     centerline_bbox_mask = stent_bounding_box(centerline_points, stent_vertices, target_stent_radius, influence_radius, contact_distance)
     logger.timing(f"Bounding box computation: {time.time() - start_time:.4f} s")
+
     start_time = time.time()
     surface_bbox_mask = np.array(surface_bbox_mask)
     centerline_bbox_mask = np.array(centerline_bbox_mask)
@@ -763,13 +770,21 @@ def compute_sdf_contact_displacements(
     data_points_masked = data_points[surface_bbox_mask]
     centerline_points_masked = centerline_points[centerline_bbox_mask]
     logger.timing(f"NumPy cast and bbox masking: {time.time() - start_time:.4f} s")
+
     num_mesh_points = data_points.shape[0]
     num_centerline_points = centerline_points.shape[0]
     num_in_bb_mesh_points = data_points_masked.shape[0]
+
+    # Concatenate surface + centerline into one batch so the SDF kernel
+    # is called only once (GPU kernel-launch overhead dominates otherwise).
     data_and_centerline_points_masked = np.concatenate((data_points_masked, centerline_points_masked), axis=0)
     query_points_np = np.expand_dims(data_and_centerline_points_masked, 1)
     query_points = np.tile(query_points_np, (1, num_kelvinlet_points, 1))
-   
+
+    # ── 3. Smooth-min capsule SDF evaluation ─────────────────────────
+    # Evaluate the signed distance from every candidate point to the
+    # capsule-chain stent surface.  The smooth-min reduction over
+    # segments ensures C¹-continuous distance and direction fields.
     start_time = time.time()
     total_num_vertices = query_points.shape[0]
     logger.debug(f"Num surface + centerline points combined: {total_num_vertices}")
@@ -777,63 +792,106 @@ def compute_sdf_contact_displacements(
     combined_final_dist_to_surface = np.array(combined_final_dist_to_surface)
     combined_final_direction = np.array(combined_final_direction)
 
+    # ── 4. Split SDF results and classify points ─────────────────────
+    # Separate the batched SDF results back into surface points and
+    # centerline points, then classify each into contact / movable sets.
+
+    # 4a. Surface points: identify those within the contact threshold.
     final_dist_to_surface = combined_final_dist_to_surface[:num_in_bb_mesh_points]
     final_direction = combined_final_direction[:num_in_bb_mesh_points]
     new_contact_mask = (final_dist_to_surface < contact_distance).astype(bool)
     logger.timing(f"New contact points computation: {time.time() - start_time:.4f} s")
+
+    # 4b. Centerline points: keep only those *outside* the stent
+    #     (inside-stent centerline points are already enclosed and should
+    #     not receive displacement).
     centerline_points_dist_to_surface = combined_final_dist_to_surface[num_in_bb_mesh_points:]
     centerline_points_final_direction = combined_final_direction[num_in_bb_mesh_points:]
     centerline_outside_stent_mask = (centerline_points_dist_to_surface[:, 0] > 0).astype(bool)
     movables_centerline_points = centerline_points_masked[centerline_outside_stent_mask]
     movables_centerline_points_dist_to_surface = centerline_points_dist_to_surface[centerline_outside_stent_mask]
     movables_centerline_points_final_direction = centerline_points_final_direction[centerline_outside_stent_mask]
+
+    # 4c. Merge surface + movable-centerline into one "movables" set.
     final_movables_dist_to_surface = np.concatenate((final_dist_to_surface, movables_centerline_points_dist_to_surface))
     final_movables_direction = np.concatenate((final_direction, movables_centerline_points_final_direction))
     num_final_movables = final_movables_dist_to_surface.shape[0]
+
+    # Build a full-size boolean mask to scatter centerline displacements
+    # back to their original indices at the end.
     full_centerline_points_mask = np.zeros(num_centerline_points, dtype=bool)
     full_centerline_points_mask[centerline_bbox_mask] = centerline_outside_stent_mask
+
+    # ── 5. Early exit: no contact → no displacement ──────────────────
+    # If the stent surface has not yet reached any vessel wall point,
+    # there is nothing to displace; return zeros and the nominal step.
     start_time = time.time()
     in_contact_vertices = data_points_masked[new_contact_mask[:,0]]
     logger.timing(f"In-contact vertices subslice: {time.time() - start_time:.4f} s")
-    if in_contact_vertices.shape[0] == 0: # things are in contact <=> things are in influence
+    if in_contact_vertices.shape[0] == 0:
         step_size = f_scale * (-s)
-        return np.zeros((num_mesh_points, 3)), np.zeros((num_centerline_points, 3)), step_size 
-    
+        return np.zeros((num_mesh_points, 3)), np.zeros((num_centerline_points, 3)), step_size
+
+    # ── 6. KD-tree influence-zone query ──────────────────────────────
+    # Build a spatial index of the contact-set vertices and query every
+    # candidate point to find its nearest contact neighbor.  Points
+    # closer than `influence_radius` will receive a displacement that
+    # decays smoothly with distance to the contact front.
     start_time = time.time()
     contact_tree = cKDTree(in_contact_vertices, leafsize=32)
     query_points = np.concatenate((data_points_masked, movables_centerline_points), axis=0)
     dist_min, _ = contact_tree.query(query_points, k=1, distance_upper_bound=influence_radius, workers=-1)
     logger.timing(f"KD-tree construction and query: {time.time() - start_time:.4f} s")
+
     start_time = time.time()
     in_influence_mask = dist_min < influence_radius
     in_influence_indices = np.flatnonzero(in_influence_mask)
     logger.timing(f"Flatnonzero: {time.time() - start_time:.4f} s")
-    
+
     start_time = time.time()
     in_influence_to_in_contact_distances = dist_min[in_influence_mask]
     logger.timing(f"In-influence vertices: {time.time() - start_time:.4f} s")
     part_two_start_time = time.time()
-    
     logger.timing(f"JAX array conversion: {time.time() - part_two_start_time:.4f} s")
+
+    # ── 7. Influence blending weights ────────────────────────────────
+    # Compute a per-point blending weight (alpha) that is 1 at the
+    # contact front and linearly decays to 0 at `influence_radius`.
+    # This prevents hard displacement discontinuities at the edge of
+    # the influence zone.
     start_time = time.time()
-
     influence_radius_mask = (final_movables_dist_to_surface < influence_radius).astype(int)
-
     in_influence_vertices_blended_alpha_mask = np.zeros(num_final_movables)
-    in_influence_vertices_blended_alpha = (1 - in_influence_to_in_contact_distances / influence_radius)  # linear blending
-
+    in_influence_vertices_blended_alpha = (1 - in_influence_to_in_contact_distances / influence_radius) # linear blending scheme
     logger.timing(f"JIT sculpt part two: {time.time() - start_time:.4f} s")
+
     start_time = time.time()
     in_influence_vertices_blended_alpha = np.array(in_influence_vertices_blended_alpha)
     in_influence_vertices_blended_alpha_mask[in_influence_indices] = in_influence_vertices_blended_alpha
     logger.timing(f"Blended alpha mask (NumPy): {time.time() - start_time:.4f} s")
+
+    # ── 8. Assemble displacement vectors ─────────────────────────────
+    # Displacement magnitude uses a quartic bump: ((d/R)² − 1)², which
+    # is C¹ at both the stent surface (d=0) and the influence boundary
+    # (d=R).  Points that have penetrated inside the stent (negative
+    # SDF) get an additional offset to push them back to the surface.
     start_time = time.time()
     logger.debug(f"Raw number of negative values in final_movables_dist_to_surface: {np.sum(final_movables_dist_to_surface < 0)}")
+
+    # Interior correction: points with negative SDF are inside the stent
+    # and need an extra push equal to their penetration depth to correct.
     interior_points_offset = np.maximum(-final_movables_dist_to_surface, 0.0)
-    final_movables_dist_to_surface = np.maximum(final_movables_dist_to_surface, 0.0)  # Clip the interior points to the surface
-    displacements_magnitude = f_scale * ((final_movables_dist_to_surface / influence_radius) ** 2 - 1) ** 2 * (-s) * influence_radius_mask * in_influence_vertices_blended_alpha_mask[:, None] 
+    final_movables_dist_to_surface = np.maximum(final_movables_dist_to_surface, 0.0)
+
+    # Quartic bump profile × force scale × influence blend
+    displacements_magnitude = f_scale * ((final_movables_dist_to_surface / influence_radius) ** 2 - 1) ** 2 * (-s) * influence_radius_mask * in_influence_vertices_blended_alpha_mask[:, None]
     displacements_magnitude += interior_points_offset
     displacements = displacements_magnitude * final_movables_direction
+
+    # ── 9. Scatter back to full-size arrays ──────────────────────────
+    # The displacements were computed only for the bbox-culled subset.
+    # Scatter them back into full-size zero arrays indexed by the
+    # original vertex ordering.
     full_surface_displacements = np.zeros((num_mesh_points, 3))
     full_surface_displacements[surface_bbox_mask] = displacements[:num_in_bb_mesh_points]
     full_centerline_displacements = np.zeros((num_centerline_points, 3))
