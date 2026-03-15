@@ -14,8 +14,6 @@ obtained/
 vtkmodules_9.3.0_hierarchy.txt
 correspondences.txt
 fix-commands.txt
-deploy_stent_standalone.py
-deploy_stent.py
 full_production_mode_test.py
 full_vtk_standalone_test.py
 potts_shunt_test.py
