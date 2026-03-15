@@ -90,7 +90,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.stent_axis_vertices = None
         self.stenosis_minimum_radius_representative = None
 
-        self.epsilon = 0.2
+        self.sharpness = 1.0
         self.force_scale = -1.0
         self.stent_radius = 0.45
         self.stent_length = 1.7
@@ -133,7 +133,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
     def timer_callback(self, obj, event):
         """Repeating timer callback that drives one sequential deformation step."""
-        self.deform_mesh_sequential(self.epsilon, self.force_scale)
+        self.deform_mesh_sequential(self.sharpness, self.force_scale)
 
     def key_release_event(self, obj, event):
         """Handle key-release events.  Releasing 'd' destroys the deformation timer."""
@@ -535,9 +535,9 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         roi_actor.GetMapper().SetInputConnection(transform_filter.GetOutputPort())
         self.GetInteractor().GetRenderWindow().Render()
 
-    def update_deformation_parameters(self, epsilon, force_scale):
-        """Update the Kelvinlet regularization and force-scale parameters and refresh the display."""
-        self.epsilon = epsilon
+    def update_deformation_parameters(self, sharpness, force_scale):
+        """Update the Kelvinlet sharpness and force-scale parameters and refresh the display."""
+        self.sharpness = sharpness
         self.force_scale = force_scale
         for roi_actor in self.roi_actors[-1:]:
             roi_cylinder = roi_actor.cylinderSource
@@ -694,11 +694,12 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             camera.SetFocalPoint(x, y, z)
             self.GetInteractor().GetRenderWindow().Render()
 
-    def deform_mesh_sequential(self, epsilon, force_scale):
+    def deform_mesh_sequential(self, sharpness, force_scale):
         """Run one step of the aneurysm sequential deformation pipeline."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
+        epsilon = 0.08 * sharpness
         centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
         surface_polydata_output_file_name = "obtained_aneurysm_surface"
         list_of_other_geometry_polydata_input_file_names = []
@@ -721,27 +722,18 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
         self.GetInteractor().GetRenderWindow().Render()
 
-    def deform_mesh_sdf_contact(self, epsilon, force_scale):
+    def deform_mesh_sdf_contact(self, force_scale):
         """Run one step of the SDF-contact stent deployment deformation pipeline."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
-        centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
-        surface_polydata_output_file_name = "obtained_aneurysm_surface"
-        list_of_other_geometry_polydata_input_file_names = []
-        list_of_other_geometry_polydata_output_file_names = []
         force_center_point_id = self.selected_points[self.force_center_idx]
         list_of_node_point_indices = self.selected_points
-        phi_type = "point"
-        model = "test_aneurysm"
-        affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
         mu = 1
-        nu = 0.2 # (0, 0.5), 0.4 originally
-        num_time_steps = 1
+        nu = 0.2
         step_size = self.run_aneurysm_sdf_contact(
-        affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
-        force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius,
-        list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
+        self.centerline_filename, self.mesh_filename, mu, nu,
+        force_center_point_id, force_scale, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius)
         self.update_current_stent_radius()
         start_time = time.time()
         self.GetInteractor().GetRenderWindow().Render()
@@ -762,27 +754,18 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.create_stenosis(self.mesh_filename, self.centerline_filename, self.selected_points, force_scale, area_percent_change, stenosis_radius, stenosis_length)
         self.GetInteractor().GetRenderWindow().Render()
 
-    def deform_mesh_with_straightening(self, epsilon, force_scale):
+    def deform_mesh_with_straightening(self, force_scale):
         """Run one step of the SDF-contact deformation with stent-axis straightening."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
-        centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
-        surface_polydata_output_file_name = "obtained_aneurysm_surface"
-        list_of_other_geometry_polydata_input_file_names = []
-        list_of_other_geometry_polydata_output_file_names = []
         force_center_point_id = self.selected_points[self.force_center_idx]
         list_of_node_point_indices = self.selected_points
-        phi_type = "point"
-        model = "test_aneurysm"
-        affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
         mu = 1
-        nu = 0.2 # (0, 0.5), 0.4 originally
-        num_time_steps = 1
+        nu = 0.2
         displacement_distance = self.run_stent_with_straightening(
-        affine_params, model, self.centerline_filename, self.mesh_filename, centerline_polydata_output_file_name, surface_polydata_output_file_name, mu, nu, phi_type, 
-        force_center_point_id, force_scale, num_time_steps, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius,
-        list_of_other_geometry_polydata_input_file_names, list_of_other_geometry_polydata_output_file_names)
+        self.centerline_filename, self.mesh_filename, mu, nu,
+        force_center_point_id, force_scale, list_of_node_point_indices, self.stent_unit_section_halflength, self.stent_radius)
         self.update_current_stent_radius()
         self.update_current_stent_curvature()
         start_time = time.time()
@@ -819,15 +802,13 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         origin, normal = vtk_io.get_centerline_point_and_normal(self.centerline, simulation_data["nodes"]["force_center_point_id"])
         logger.timing(f"Getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} s")
         cross_section_time = time.time()
-        original_radius = 0.42
-        logger.info(f"Cross sectional radius estimated: {original_radius}")
         logger.timing(f"Getting cross sectional radius: {time.time() - cross_section_time:.4f} s")
         get_displacement_time = time.time()
         logger.timing(f"Computing initial radius and displacement: {time.time() - get_displacement_time:.4f} s")
         
         # --- Compute Initial Force Matrix and Displacements ---
         step_start_time = time.time()
-        eps = affine_params["eps"][model] * original_radius
+        eps = affine_params["eps"][model]
         logger.debug(f"eps={eps}, force_scale={force_scale}")
         surface_displacements, average_displacement_distance = deformation.compute_aneurysm_displacements(simulation_data, a, b, eps, force_scale, None, normal, stent_halflength, stent_radius)
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
@@ -850,11 +831,9 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
         return average_displacement_distance
 
-    def run_aneurysm_sdf_contact(self, affine_params, model, centerline_polydata_input_file_name, 
-                        surface_polydata_input_file_name, centerline_polydata_output_file_name, 
-                        surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
-                        force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius,
-                        other_geometry_input_files, other_geometry_output_files):
+    def run_aneurysm_sdf_contact(self, centerline_polydata_input_file_name, 
+                        surface_polydata_input_file_name, mu, nu,
+                        force_center_point_id, force_scale, node_point_indices, stent_halflength, stent_radius):
         """Execute one SDF-contact stent deployment time step.
 
         Computes SDF-contact displacements for both surface and centerline,
@@ -904,11 +883,9 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.info(f"FPS = {int(round(1 / (time.time() - total_start_time)))}")
         return step_size
 
-    def run_stent_with_straightening(self, affine_params, model, centerline_polydata_input_file_name, 
-                        surface_polydata_input_file_name, centerline_polydata_output_file_name, 
-                        surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
-                        force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius, 
-                        other_geometry_input_files, other_geometry_output_files):
+    def run_stent_with_straightening(self, centerline_polydata_input_file_name, 
+                        surface_polydata_input_file_name, mu, nu,
+                        force_center_point_id, force_scale, node_point_indices, stent_halflength, stent_radius):
         """Execute one SDF-contact deployment step with concurrent stent-axis straightening.
 
         Identical to :meth:`run_aneurysm_sdf_contact` but additionally

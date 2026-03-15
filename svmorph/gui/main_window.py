@@ -74,8 +74,8 @@ STENOSIS_TIMER_INTERVAL = 25
 # Slider ranges and defaults
 FORCE_SCALE_SLIDER_RANGE = (-1000, 1000)
 FORCE_SCALE_DEFAULT = 1
-EPSILON_SLIDER_RANGE = (0, 500)
-EPSILON_DEFAULT = 20
+SHARPNESS_SLIDER_RANGE = (1, 500)
+SHARPNESS_DEFAULT = 100
 STENT_DIAMETER_DEFAULT = 0.8  # 9mm stent
 STENT_LENGTH_DEFAULT = 1.7  # 17mm stent
 
@@ -200,7 +200,7 @@ class MainWindow(QMainWindow):
         self._setup_stent_parameter_controls()
         self._setup_stenosis_controls()
         self._setup_import_export_controls()
-        self._setup_epsilon_controls()
+        self._setup_sharpness_controls()
 
         # Finalize layout
         self.frame.setLayout(self.layout)
@@ -382,25 +382,24 @@ class MainWindow(QMainWindow):
 
         self.layout.addLayout(self.controls_layout4)
 
-    def _setup_epsilon_controls(self):
-        """Setup epsilon and additional control buttons (fifth row)"""
+    def _setup_sharpness_controls(self):
+        """Setup sharpness and additional control buttons (fifth row)"""
         self.controls_layout5 = QHBoxLayout()
 
-        # Epsilon slider controls
-        self.stenosis_slider_label = QLabel("Epsilon Negative Exponent:")
-        self.controls_layout5.addWidget(self.stenosis_slider_label)
+        self.sharpness_label = QLabel("Sharpness:")
+        self.controls_layout5.addWidget(self.sharpness_label)
 
-        self.stenosis_area_slider = QSlider(Qt.Orientation.Horizontal)
-        self.stenosis_area_slider.setRange(*EPSILON_SLIDER_RANGE)
-        self.stenosis_area_slider.setValue(EPSILON_DEFAULT)
-        self.controls_layout5.addWidget(self.stenosis_area_slider)
+        self.sharpness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sharpness_slider.setRange(*SHARPNESS_SLIDER_RANGE)
+        self.sharpness_slider.setValue(SHARPNESS_DEFAULT)
+        self.controls_layout5.addWidget(self.sharpness_slider)
 
-        self.stenosis_slider_value = QLineEdit()
-        self.stenosis_slider_value.setText(
-            f"{self.stenosis_area_slider.value() / 100.0}"
+        self.sharpness_value = QLineEdit()
+        self.sharpness_value.setText(
+            f"{self.sharpness_slider.value() / 100.0}"
         )
-        self.stenosis_slider_value.setFixedWidth(TEXT_INPUT_WIDTH)
-        self.controls_layout5.addWidget(self.stenosis_slider_value)
+        self.sharpness_value.setFixedWidth(TEXT_INPUT_WIDTH)
+        self.controls_layout5.addWidget(self.sharpness_value)
 
         self.controls_layout5.addStretch(1)
 
@@ -429,9 +428,8 @@ class MainWindow(QMainWindow):
 
         self.layout.addLayout(self.controls_layout5)
 
-        # Connect epsilon slider signals
-        self.stenosis_area_slider.valueChanged.connect(self._on_epsilon_slider_change)
-        self.stenosis_slider_value.textChanged.connect(self._on_epsilon_text_change)
+        self.sharpness_slider.valueChanged.connect(self._on_sharpness_slider_change)
+        self.sharpness_value.textChanged.connect(self._on_sharpness_text_change)
 
     def _setup_vtk_components(self):
         """Initialize VTK-related components"""
@@ -454,21 +452,21 @@ class MainWindow(QMainWindow):
         if hasattr(self, "interactor") and self.interactor:
             self.interactor.update_prescribed_stent_radius(diameter_value / 2.0)
 
-    def _on_epsilon_slider_change(self, value):
-        """Handle epsilon slider changes"""
-        epsilon_value = value / 100.0
-        self.stenosis_slider_value.setText(f"{epsilon_value}")
+    def _on_sharpness_slider_change(self, value):
+        """Handle sharpness slider changes"""
+        sharpness_value = value / 100.0
+        self.sharpness_value.setText(f"{sharpness_value}")
         if hasattr(self, "interactor") and self.interactor:
             force_scale_value = SliderMapper.force_scale_slider_to_value(
                 self.area_slider.value()
             )
-            self.interactor.update_deformation_parameters(epsilon_value, -force_scale_value)
+            self.interactor.update_deformation_parameters(sharpness_value, -force_scale_value)
 
-    def _on_epsilon_text_change(self, text):
-        """Handle epsilon text input changes"""
+    def _on_sharpness_text_change(self, text):
+        """Handle sharpness text input changes"""
         try:
             value = float(text)
-            self.stenosis_area_slider.setValue(int(value * 100))
+            self.sharpness_slider.setValue(int(value * 100))
             if hasattr(self, "interactor") and self.interactor:
                 force_scale_value = SliderMapper.force_scale_slider_to_value(
                     self.area_slider.value()
@@ -509,11 +507,11 @@ class MainWindow(QMainWindow):
         self.vtk_interactor.Start()
 
         # Initialize deformation parameters
-        epsilon_value = self.stenosis_area_slider.value() / 100.0
+        sharpness_value = self.sharpness_slider.value() / 100.0
         force_scale_value = SliderMapper.force_scale_slider_to_value(
             self.area_slider.value()
         )
-        self.interactor.update_deformation_parameters(epsilon_value, -force_scale_value)
+        self.interactor.update_deformation_parameters(sharpness_value, -force_scale_value)
 
         # Initialize UI styling
         UIStyleManager.set_button_active(self.toggle_camera_lock_button, False)
@@ -536,29 +534,25 @@ class MainWindow(QMainWindow):
         force_scale = -SliderMapper.force_scale_slider_to_value(
             self.area_slider.value()
         )
-        epsilon = self.stenosis_area_slider.value() / 100.0
-        logger.info(f"Running Kelvinlet deformation with force_scale={force_scale}, epsilon={epsilon}")
-        self.interactor.deform_mesh_sequential(epsilon, force_scale)
+        sharpness = self.sharpness_slider.value() / 100.0
+        logger.info(f"Running Kelvinlet deformation with force_scale={force_scale}, sharpness={sharpness}")
+        self.interactor.deform_mesh_sequential(sharpness, force_scale)
 
     def run_deformation_sdf(self):
         """Run SDF-based contact deformation"""
         force_scale = -SliderMapper.force_scale_slider_to_value(
             self.area_slider.value()
         )
-        epsilon = self.stenosis_area_slider.value() / 100.0
-        logger.info(
-            f"Running SDF contact deformation with force_scale={force_scale}, epsilon={epsilon}"
-        )
-        self.interactor.deform_mesh_sdf_contact(epsilon, force_scale)
+        logger.info(f"Running SDF contact deformation with force_scale={force_scale}")
+        self.interactor.deform_mesh_sdf_contact(force_scale)
 
     def run_deformation_simultaneous(self):
         """Run simultaneous parallel mesh deformation"""
         force_scale = -SliderMapper.force_scale_slider_to_value(
             self.area_slider.value()
         )
-        epsilon = self.stenosis_area_slider.value() / 100.0
-        logger.info(f"Running straightening deformation with force_scale={force_scale}, epsilon={epsilon}")
-        self.interactor.deform_mesh_with_straightening(epsilon, force_scale)
+        logger.info(f"Running straightening deformation with force_scale={force_scale}")
+        self.interactor.deform_mesh_with_straightening(force_scale)
 
     def run_stenosis(self):
         """Run stenosis deformation with user-specified parameters"""
@@ -576,7 +570,7 @@ class MainWindow(QMainWindow):
             return
 
         force_scale = SliderMapper.force_scale_slider_to_value(self.area_slider.value())
-        area_percent_change = self.stenosis_area_slider.value()
+        area_percent_change = self.sharpness_slider.value()
 
         logger.info(
             f"Running stenosis with force_scale={force_scale}, stenosis_radius={stenosis_radius}, stenosis_length={stenosis_length}"
@@ -658,10 +652,9 @@ class MainWindow(QMainWindow):
         """
         float_value = SliderMapper.force_scale_slider_to_value(raw_value)
         self.slider_value.setText(f"{float_value:.3f}")
-        # Assuming self.stenosis_area_slider exists, convert its value similarly:
-        stenosis_value = self.stenosis_area_slider.value() / 100.0
+        sharpness_value = self.sharpness_slider.value() / 100.0
         if hasattr(self, "interactor") and self.interactor:
-            self.interactor.update_deformation_parameters(stenosis_value, -float_value)
+            self.interactor.update_deformation_parameters(sharpness_value, -float_value)
 
     def on_force_scale_text_change(self, text):
         """
@@ -675,9 +668,9 @@ class MainWindow(QMainWindow):
             return
         new_slider_val = SliderMapper.force_scale_value_to_slider(new_value)
         self.area_slider.setValue(new_slider_val)
-        stenosis_value = self.stenosis_area_slider.value() / 100.0
+        sharpness_value = self.sharpness_slider.value() / 100.0
         if hasattr(self, "interactor") and self.interactor:
-            self.interactor.update_deformation_parameters(stenosis_value, -new_value)
+            self.interactor.update_deformation_parameters(sharpness_value, -new_value)
 
     def save_mesh(self):
         """Save the current mesh to a file"""
