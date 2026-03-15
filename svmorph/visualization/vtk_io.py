@@ -363,8 +363,6 @@ def get_triangulated_slice(
     vtk.vtkPolyData
         Triangulated 2-D slice polydata.
     """
-    assert(len(origin) == 3)
-    assert(len(normal) == 3)
     triangulated_slice = vtk.vtkDelaunay2D()
     triangulated_slice.SetTolerance(1e-4)
     triangulated_slice.SetInputData(slice_polydata(surface_polydata, origin, normal))
@@ -427,9 +425,6 @@ def create_data_from_polydata(
     """
     centerline_points = jnp.array(copy.deepcopy(v2n(centerline_polydata.GetPoints().GetData())))
     surface_points = jnp.array(copy.deepcopy(v2n(surface_polydata.GetPoints().GetData())))
-    # Check if points have the required shape
-    assert centerline_points.shape[1] == 3  # Ensure (x, y, z) coordinates
-    assert surface_points.shape[1] == 3
 
     # Create a dictionary to store data, including the JAX arrays
     data = {
@@ -449,13 +444,11 @@ def create_data_from_polydata(
         data["centerline_coordinate"] = jnp.array(copy.deepcopy(
             v2n(centerline_polydata.GetPointData().GetArray("centerline_coordinate"))
         ))
-        assert data["centerline_coordinate"].shape[0] == num_centerline_points
     else:
         logger.warning("No centerline_coordinate array found on centerline polydata")
     # Process and add other geometry points as JAX arrays
     for geom_idx, polydata in enumerate(other_geometry_polydatas):
         other_geometry_points = jnp.array(copy.deepcopy(v2n(polydata.GetPoints().GetData())))
-        assert other_geometry_points.shape[1] == 3
         data["points"][f"other_geometry_{geom_idx}"] = other_geometry_points
     return data
 

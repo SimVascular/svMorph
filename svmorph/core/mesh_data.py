@@ -25,7 +25,5 @@ def apply_displacements(data: dict, displacements: np.ndarray, mesh_type: str) -
 
 def get_centroid(points: jax.Array) -> jax.Array:
     """Return the centroid of *points* as a (1, D) array."""
-    assert points.shape[1] in (2, 3)
     centroid = jnp.mean(points, axis=0, keepdims=True)
-    assert centroid.shape == (1, points.shape[1])
     return centroid

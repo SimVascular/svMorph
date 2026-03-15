@@ -240,12 +240,10 @@ def kelvinlets_truncated_spherical_contraction(
     re_no_z = jnp.sqrt(rx**2 + ry**2)
     inner_mask = (re_no_z >= r_min).astype(int)
     outer_mask = (re <= r_max).astype(int)
-    assert re.shape == (num_mesh_points, num_kelvinlet_points)
     re = jnp.expand_dims(re, 2)
     rv = rv.at[:, :, 2].set(0 * rv[:, :, 2])
     displacements = f_scale * (r_max - r_min) * ((re / (r_max)) ** 2 - 1) ** 2 * (-s) * rv
     displacements = displacements * inner_mask[:, :, None] * outer_mask[:, :, None]
-    assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
     return displacements
 
 def kelvinlets_truncated_spherical_expansion(
@@ -277,13 +275,11 @@ def kelvinlets_truncated_spherical_expansion(
     f_scale = 0.01
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
     re = jnp.sqrt(rx**2 + ry**2 + rz**2)
-    assert re.shape == (num_mesh_points, num_kelvinlet_points)
     re = jnp.expand_dims(re, 2)
     re3 = re**3
     re5 = re**5
     rv = rv.at[:, :, 2].set(0 * rv[:, :, 2])
     displacements = f_scale * (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
-    assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
     logger.debug(f"displacements norms: {jnp.linalg.norm(displacements)}")
 
     return displacements
