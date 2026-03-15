@@ -5,16 +5,12 @@
 __pycache__/
 *.pyc
 
-0115_H_PULM_ALGS/
-input/
-obtained/
 # Geometry and mesh files
 *.vtp
-# Miscellaneous files
-vtkmodules_9.3.0_hierarchy.txt
-correspondences.txt
-fix-commands.txt
-full_production_mode_test.py
-full_vtk_standalone_test.py
-potts_shunt_test.py
-test_refactored.py
+
+# Data directories
+input/
+obtained/
+
+# Legacy code (superseded by svmorph/)
+kelvinlet_core/
