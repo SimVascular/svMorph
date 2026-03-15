@@ -886,9 +886,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         
         # --- Compute Initial Force Matrix and Displacements ---
         step_start_time = time.time()
-        eps = affine_params["eps"][model]
-        logger.debug(f"Main loop eps={eps}, force_scale={force_scale}")
-        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
+        logger.debug(f"Main loop force_scale={force_scale}")
+        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, self.stent_axis_vertices, force_scale, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
         
@@ -941,9 +940,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         
         # --- Compute Initial Force Matrix and Displacements ---
         step_start_time = time.time()
-        eps = affine_params["eps"][model]
-        logger.debug(f"Main loop eps={eps}, force_scale={force_scale}")
-        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
+        logger.debug(f"Main loop force_scale={force_scale}")
+        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, self.stent_axis_vertices, force_scale, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
         
@@ -1021,9 +1019,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             
             # --- Compute Initial Force Matrix and Displacements ---
             step_start_time = time.time()
-            eps = affine_params["eps"][model]
-            logger.debug(f"Main loop eps={eps}, s={s}")
-            surface_displacements, step_size = deformation.compute_stenosis_displacements(simulation_data, a, b, eps, s, normal, stenosis_radius, stenosis_length, original_radius)
+            logger.debug(f"Main loop s={s}")
+            surface_displacements, step_size = deformation.compute_stenosis_displacements(simulation_data, s, normal, stenosis_radius, stenosis_length, original_radius)
             logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
             
             # --- Scale Displacements to Match Desired Area ---
