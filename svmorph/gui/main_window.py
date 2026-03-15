@@ -570,13 +570,12 @@ class MainWindow(QMainWindow):
             return
 
         force_scale = SliderMapper.force_scale_slider_to_value(self.area_slider.value())
-        area_percent_change = self.sharpness_slider.value()
 
         logger.info(
             f"Running stenosis with force_scale={force_scale}, stenosis_radius={stenosis_radius}, stenosis_length={stenosis_length}"
         )
         self.interactor.deform_mesh_stenosis(
-            force_scale, area_percent_change, stenosis_radius, stenosis_length
+            force_scale, stenosis_radius, stenosis_length
         )
 
     def toggle_camera_lock(self):

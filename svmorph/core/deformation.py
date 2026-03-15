@@ -227,7 +227,7 @@ def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float) -> jx.Array:
 
 def kelvinlets_truncated_spherical_contraction(
     rv: jx.Array, f_scale: float,
-    s: float, r_min: float, r_max: float, r_original: float,
+    s: float, r_min: float, r_max: float,
 ) -> jx.Array:
     """Compute inward radial displacements for stenosis creation.
 
@@ -247,8 +247,6 @@ def kelvinlets_truncated_spherical_contraction(
         Inner annular radius cutoff.
     r_max : float
         Outer annular radius cutoff.
-    r_original : float
-        Original vessel radius (reserved for future use).
 
     Returns
     -------
@@ -270,7 +268,7 @@ def kelvinlets_truncated_spherical_contraction(
     return displacements
 
 def kelvinlets_truncated_spherical_expansion(
-    rv: jx.Array, a: float, b: float, eps: float, s: float, r_target: float,
+    rv: jx.Array, a: float, b: float, eps: float, s: float,
 ) -> jx.Array:
     """Compute outward radial displacements for aneurysm sculpting.
 
@@ -288,8 +286,6 @@ def kelvinlets_truncated_spherical_expansion(
         Regularization parameter.
     s : float
         Signed force scale.
-    r_target : float
-        Target stent radius.
 
     Returns
     -------
@@ -358,7 +354,7 @@ def smin_sdf_capsule_contact_sculpt(
 def get_scaling_kelvinlet_displacements_inner(
     data_points: jx.Array, rotation_matrices: jx.Array, query_points: jx.Array,
     centers: jx.Array, a: float, b: float, eps: float, s: float,
-    surface_mesh_scale_factor: float | None, half_length: float, r_target: float,
+    surface_mesh_scale_factor: float | None,
 ) -> tuple[jx.Array, float]:
     """JIT-compiled inner loop for scaling Kelvinlet displacement computation.
 
@@ -384,10 +380,6 @@ def get_scaling_kelvinlet_displacements_inner(
         Signed force scale.
     surface_mesh_scale_factor : float | None
         Optional global displacement scaling.
-    half_length : float
-        Stent half-length parameter.
-    r_target : float
-        Target stent radius.
 
     Returns
     -------
@@ -404,7 +396,7 @@ def get_scaling_kelvinlet_displacements_inner(
     centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
     # Compute Kelvinlet displacements
     average_displacement_distance = 0
-    displacement_local = kelvinlets_truncated_spherical_expansion(centerline_aligned_rv, a, b, eps, s, r_target)
+    displacement_local = kelvinlets_truncated_spherical_expansion(centerline_aligned_rv, a, b, eps, s)
     displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     displacement = jnp.sum(displacement_global, axis=1)
     # Scale if required
@@ -486,7 +478,7 @@ def find_stenosis_minimum_radius_representative(
 def get_stenosis_displacements_inner(
     data_points: jx.Array, rotation_matrices: jx.Array, query_points: jx.Array,
     centers: jx.Array, s: float,
-    r_min: float, r_max: float, r_original: float,
+    r_min: float, r_max: float,
 ) -> tuple[jx.Array, jx.Array]:
     """JIT-compiled inner loop for stenosis (inward shrink) displacements.
 
@@ -509,8 +501,6 @@ def get_stenosis_displacements_inner(
         Inner annular radius cutoff.
     r_max : float
         Outer annular radius cutoff.
-    r_original : float
-        Original vessel radius.
 
     Returns
     -------
@@ -528,7 +518,7 @@ def get_stenosis_displacements_inner(
     # Compute Kelvinlet displacements
     f_scale = 0.01 / (r_max - r_min)
     step_size = f_scale * (r_max - r_min) * s
-    displacement_local = kelvinlets_truncated_spherical_contraction(centerline_aligned_rv, f_scale, s, r_min, r_max, r_original)
+    displacement_local = kelvinlets_truncated_spherical_contraction(centerline_aligned_rv, f_scale, s, r_min, r_max)
     displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     displacement = jnp.sum(displacement_global, axis=1)
     return displacement, step_size
@@ -536,7 +526,6 @@ def get_stenosis_displacements_inner(
 def compute_aneurysm_displacements(
     data: dict, a: float, b: float, eps: float, s: float,
     surface_mesh_scale_factor: float | None, force_center_normal: jx.Array,
-    stent_halflength: float, stent_radius: float,
 ) -> tuple[np.ndarray, float]:
     """Compute Kelvinlet-based outward surface displacements for aneurysm creation.
 
@@ -557,10 +546,6 @@ def compute_aneurysm_displacements(
         Optional displacement scaling.
     force_center_normal : jx.Array
         Tangent direction at the force center, shape ``(3,)``.
-    stent_halflength : float
-        Half-length of the stent section.
-    stent_radius : float
-        Target stent radius.
 
     Returns
     -------
@@ -583,13 +568,13 @@ def compute_aneurysm_displacements(
     kelvinlet_points_normals = jnp.array([force_center_normal])
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
     displacements, average_displacement_distance = get_scaling_kelvinlet_displacements_inner(
-        data_points, rotation_matrices, query_points, centers, a, b, eps, s, surface_mesh_scale_factor, stent_halflength, stent_radius
+        data_points, rotation_matrices, query_points, centers, a, b, eps, s, surface_mesh_scale_factor
     )
     return np.array(displacements), average_displacement_distance
 
 def compute_stenosis_displacements(
     data: dict, s: float,
-    force_center_normal: jx.Array, r_min: float, r_max: float, r_original: float,
+    force_center_normal: jx.Array, r_min: float, r_max: float,
 ) -> tuple[np.ndarray, jx.Array]:
     """Compute inward surface displacements for stenosis creation.
 
@@ -608,8 +593,6 @@ def compute_stenosis_displacements(
         Inner annular radius.
     r_max : float
         Outer annular radius.
-    r_original : float
-        Original vessel radius.
 
     Returns
     -------
@@ -630,7 +613,7 @@ def compute_stenosis_displacements(
     kelvinlet_points_normals = jnp.array([force_center_normal])
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
     displacements, step_size = get_stenosis_displacements_inner(
-        data_points, rotation_matrices, query_points, centers, s, r_min, r_max, r_original
+        data_points, rotation_matrices, query_points, centers, s, r_min, r_max
     )
     return np.array(displacements), step_size
 
