@@ -280,7 +280,6 @@ def kelvinlets_truncated_spherical_expansion(
     re5 = re**5
     rv = rv.at[:, :, 2].set(0 * rv[:, :, 2])
     displacements = f_scale * (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
-    logger.debug(f"displacements norms: {jnp.linalg.norm(displacements)}")
 
     return displacements
 
@@ -441,8 +440,6 @@ def find_stenosis_minimum_radius_representative(
     # Set rz_magnitude to a large value where mask is False so they are not selected as min
     rz_magnitude_masked = np.where(mask, rz_magnitude, np.inf)
     index_for_min_rz = np.argmin(rz_magnitude_masked, axis=0)
-    logger.debug(f"index_for_min_rz: {index_for_min_rz}")
-    logger.debug(f"rx, ry, rz for min_rz: {rx[index_for_min_rz]}, {ry[index_for_min_rz]}, {rz[index_for_min_rz]}")
     logger.debug(f"Estimated current radius: {current_radius}")
     return index_for_min_rz, current_radius
 
@@ -525,14 +522,12 @@ def compute_aneurysm_displacements(
         Per-vertex displacement vectors, shape ``(N, 3)``.
     """
     force_center_point_id = data["nodes"]["force_center_point_id"]
-    logger.debug(f"Force center: {force_center_point_id}")
+    logger.debug(f"Selected pointId: {force_center_point_id}")
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
     query_points = jnp.expand_dims(data_points, 1)
     query_points = jnp.tile(query_points, (1, num_kelvinlet_points, 1))
-    logger.debug(f"num_kelvinlet_points: {num_kelvinlet_points}")
-    logger.debug(f"query_points shape: {query_points.shape}")
     centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
     kelvinlet_points_normals = jnp.array([force_center_normal])
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
@@ -571,7 +566,7 @@ def compute_stenosis_displacements(
         Scalar step size for radius tracking.
     """
     force_center_point_id = data["nodes"]["force_center_point_id"]
-    logger.debug(f"Selected stenosis center point ID: {force_center_point_id}")
+    logger.debug(f"Selected pointId: {force_center_point_id}")
     # Prepare other data
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
@@ -664,7 +659,7 @@ def compute_sdf_contact_displacements(
     """
     # ── 1. Extract geometry from simulation data ──────────────────────
     force_center_point_id = data["nodes"]["force_center_point_id"]
-    logger.debug(f"Selected point ID: {force_center_point_id}")
+    logger.debug(f"Selected pointId: {force_center_point_id}")
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
     num_kelvinlet_points = 1
@@ -703,7 +698,7 @@ def compute_sdf_contact_displacements(
     # segments ensures C¹-continuous distance and direction fields.
     start_time = time.time()
     total_num_vertices = query_points.shape[0]
-    logger.debug(f"Num surface + centerline points combined: {total_num_vertices}")
+    logger.debug(f"Total # surface and centerline points combined: {total_num_vertices}")
     combined_final_dist_to_surface, combined_final_direction = smin_sdf_capsule_contact_sculpt(query_points, stent_vertices, current_stent_radius)
     combined_final_dist_to_surface = np.array(combined_final_dist_to_surface)
     combined_final_direction = np.array(combined_final_direction)
@@ -789,7 +784,7 @@ def compute_sdf_contact_displacements(
     # (d=R).  Points that have penetrated inside the stent (negative
     # SDF) get an additional offset to push them back to the surface.
     start_time = time.time()
-    logger.debug(f"Raw number of negative values in final_movables_dist_to_surface: {np.sum(final_movables_dist_to_surface < 0)}")
+    logger.debug(f"# negative SDF values to be corrected: {np.sum(final_movables_dist_to_surface < 0)}")
 
     # Interior correction: points with negative SDF are inside the stent
     # and need an extra push equal to their penetration depth to correct.

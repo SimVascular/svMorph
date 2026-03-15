@@ -187,7 +187,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         polydata = self.centerline_actor.GetMapper().GetInput()
         points = polydata.GetPoints()
         num_points = points.GetNumberOfPoints()
-        logger.debug(f"Number of points in centerline: {num_points}")
+        logger.debug(f"# points in centerline: {num_points}")
 
         sphere_source = vtkSphereSource()
         sphere_source.SetRadius(0.01)  # Adjust radius as needed.
@@ -252,12 +252,11 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         """Resample the centerline to produce stent axis vertices and update the visualisation."""
         deployed_stent_length = self.stent_length * (1 - self.foreshortening_percentage)
         self.stent_axis_vertices = geometry.resample_stent_axis(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, self.stent_segment_length, sampling_direction=self.sampling_direction)
-        logger.debug(f"Num vertices for stent of length {self.stent_length} cm, segment length {self.stent_segment_length} cm: {len(self.stent_axis_vertices)}")
+        logger.debug(f"# vertices for stent of length {self.stent_length} cm, segment length {self.stent_segment_length} cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
         
     def compute_stenosis_minimum_radius_representative(self, point_id):
         """Identify the surface point representing minimum vessel radius at *point_id*."""
-        logger.debug(f"Selected stenosis center point ID: {point_id}")
         data_points = self.data["points"]["surface"]
         centerline_points = self.data["points"]["centerline"]
         num_kelvinlet_points = 1
@@ -820,7 +819,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
         
         step_start_time = time.time()
-        logger.debug(f"Main loop force_scale={force_scale}")
+        logger.debug(f"SDF contact force_scale={force_scale}")
         surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, self.stent_axis_vertices, force_scale, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
@@ -856,7 +855,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
         
         step_start_time = time.time()
-        logger.debug(f"Main loop force_scale={force_scale}")
+        logger.debug(f"SDF contact with straightening force_scale={force_scale}")
         surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, self.stent_axis_vertices, force_scale, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
@@ -896,7 +895,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} s")
 
         step_start_time = time.time()
-        logger.debug(f"Main loop s={s}")
+        logger.debug(f"Create stenosis s={s}")
         surface_displacements, step_size = deformation.compute_stenosis_displacements(simulation_data, s, normal, stenosis_radius, stenosis_length)
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
 

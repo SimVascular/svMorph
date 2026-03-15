@@ -524,7 +524,7 @@ class MainWindow(QMainWindow):
             return
         force_scale = -self._current_force_scale_raw
         sharpness = self._current_sharpness
-        logger.info(f"Running Kelvinlet deformation with force_scale={force_scale}, sharpness={sharpness}")
+        logger.debug(f"Running Kelvinlet deformation with force_scale={force_scale}, sharpness={sharpness}")
         self.interactor.deform_mesh_sequential(sharpness, force_scale)
 
     def run_deformation_sdf(self):
@@ -533,7 +533,7 @@ class MainWindow(QMainWindow):
             logger.warning("Please import mesh and centerline files first.")
             return
         force_scale = -self._current_force_scale_raw
-        logger.info(f"Running SDF contact deformation with force_scale={force_scale}")
+        logger.debug(f"Running SDF contact deformation with force_scale={force_scale}")
         self.interactor.deform_mesh_sdf_contact(force_scale)
 
     def run_deformation_simultaneous(self):
@@ -542,7 +542,7 @@ class MainWindow(QMainWindow):
             logger.warning("Please import mesh and centerline files first.")
             return
         force_scale = -self._current_force_scale_raw
-        logger.info(f"Running straightening deformation with force_scale={force_scale}")
+        logger.debug(f"Running straightening deformation with force_scale={force_scale}")
         self.interactor.deform_mesh_with_straightening(force_scale)
 
     def run_stenosis(self):
@@ -562,8 +562,8 @@ class MainWindow(QMainWindow):
 
         force_scale = self._current_force_scale_raw
 
-        logger.info(
-            f"Running stenosis with force_scale={force_scale}, stenosis_radius={stenosis_radius}, stenosis_length={stenosis_length}"
+        logger.debug(
+            f"Running stenosis creation with force_scale={force_scale}, stenosis_radius={stenosis_radius}, stenosis_length={stenosis_length}"
         )
         self.interactor.deform_mesh_stenosis(
             force_scale, stenosis_radius, stenosis_length
@@ -580,14 +580,14 @@ class MainWindow(QMainWindow):
         """Display centerline nodes for single point selection"""
         if not self.interactor:
             return
-        logger.info("Please select centerline nodes to generate aneurysm.")
+        logger.info("Please select a centerline node to generate aneurysm.")
         self.interactor.display_centerline_vertices()
 
     def render_sdf(self):
         """Display signed distance field visualization"""
         if not self.interactor:
             return
-        logger.info("Displaying signed distance field.")
+        logger.info("Rendering stent's signed distance field.")
         self.interactor.render_sdf()
 
     def start_continuous_deformation(self):
@@ -618,7 +618,7 @@ class MainWindow(QMainWindow):
         """Save the current stent configuration"""
         if self.interactor:
             self.interactor.save_current_stent()
-            logger.info("Current stent placed.")
+            logger.info("Stent has been placed.")
         else:
             logger.warning("VTK handler not initialized. Cannot place stent.")
 
