@@ -225,7 +225,7 @@ def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float) -> jx.Array:
     sdf = final_dist_to_surface
     return sdf
 
-def kelvinlets_truncated_sphere_warp_shrink(
+def kelvinlets_truncated_spherical_contraction(
     rv: jx.Array, a: float, b: float, eps: float, f_scale: float,
     s: float, r_min: float, r_max: float, r_original: float,
 ) -> jx.Array:
@@ -273,12 +273,12 @@ def kelvinlets_truncated_sphere_warp_shrink(
     assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
     return displacements
 
-def kelvinlets_truncated_sphere_warp_sculpt(
+def kelvinlets_truncated_spherical_expansion(
     rv: jx.Array, a: float, b: float, eps: float, s: float, r_target: float,
 ) -> jx.Array:
     """Compute outward radial displacements for aneurysm sculpting.
 
-    Uses the regularized bi-Laplacian Kelvinlet response (de Goes &
+    Uses the scaling regularized Kelvinlet (F = s·I, Eq. 14 in de Goes &
     James 2017) to push surface points radially outward from the
     centerline, with the axial component zeroed.
 
@@ -372,16 +372,16 @@ def smin_sdf_capsule_contact_sculpt(
     return final_dist_to_surface, final_direction
 
 @jx.jit
-def get_affine_laplacian_displacements_inner(
+def get_scaling_kelvinlet_displacements_inner(
     data_points: jx.Array, rotation_matrices: jx.Array, query_points: jx.Array,
     centers: jx.Array, a: float, b: float, eps: float, s: float,
     surface_mesh_scale_factor: float | None, half_length: float, r_target: float,
 ) -> tuple[jx.Array, float]:
-    """JIT-compiled inner loop for Laplacian Kelvinlet displacement computation.
+    """JIT-compiled inner loop for scaling Kelvinlet displacement computation.
 
     Rotates mesh points into each center's local frame, computes sculpt
-    displacements via the bi-Laplacian kernel, rotates back to global
-    coordinates, and sums over all force centers.
+    displacements via the scaling Kelvinlet kernel (F = s·I), rotates
+    back to global coordinates, and sums over all force centers.
 
     Parameters
     ----------
@@ -421,7 +421,7 @@ def get_affine_laplacian_displacements_inner(
     centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
     # Compute Kelvinlet displacements
     average_displacement_distance = 0
-    displacement_local = kelvinlets_truncated_sphere_warp_sculpt(centerline_aligned_rv, a, b, eps, s, r_target)
+    displacement_local = kelvinlets_truncated_spherical_expansion(centerline_aligned_rv, a, b, eps, s, r_target)
     displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     displacement = jnp.sum(displacement_global, axis=1)
     # Scale if required
@@ -549,7 +549,7 @@ def get_stenosis_displacements_inner(
     # Compute Kelvinlet displacements
     f_scale = 0.01 / (r_max - r_min)
     step_size = f_scale * (r_max - r_min) * s
-    displacement_local = kelvinlets_truncated_sphere_warp_shrink(centerline_aligned_rv, a, b, eps, f_scale, s, r_min, r_max, r_original)
+    displacement_local = kelvinlets_truncated_spherical_contraction(centerline_aligned_rv, a, b, eps, f_scale, s, r_min, r_max, r_original)
     displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     displacement = jnp.sum(displacement_global, axis=1)
     return displacement, step_size
@@ -562,7 +562,7 @@ def compute_aneurysm_displacements(
     """Compute Kelvinlet-based outward surface displacements for aneurysm creation.
 
     Assembles query-point geometry, builds Householder rotation matrices,
-    and delegates to the JIT-compiled inner displacement kernel.
+    and delegates to the JIT-compiled scaling Kelvinlet inner kernel.
 
     Parameters
     ----------
@@ -603,7 +603,7 @@ def compute_aneurysm_displacements(
     centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
     kelvinlet_points_normals = jnp.array([force_center_normal])
     rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
-    displacements, average_displacement_distance = get_affine_laplacian_displacements_inner(
+    displacements, average_displacement_distance = get_scaling_kelvinlet_displacements_inner(
         data_points, rotation_matrices, query_points, centers, a, b, eps, s, surface_mesh_scale_factor, stent_halflength, stent_radius
     )
     return np.array(displacements), average_displacement_distance

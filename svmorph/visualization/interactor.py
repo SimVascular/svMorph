@@ -794,7 +794,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
                         force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius, 
                         other_geometry_input_files, other_geometry_output_files):
-        """Execute one aneurysm-inflation time step using Laplacian Kelvinlets.
+        """Execute one aneurysm-inflation time step using scaling Kelvinlets.
 
         Computes material constants, assembles the displacement field, applies
         it to the surface mesh, and updates the running maximum-radius estimate.
