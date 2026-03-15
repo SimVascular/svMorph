@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from svmorph.logging import get_logger
@@ -6,7 +9,15 @@ from svmorph.logging import get_logger
 logger = get_logger(__name__)
 
 
-def resample_stent_axis(points, parent_tip_map, segment_base_mask, starting_point_idx, desired_total_length, desired_segment_length, sampling_direction=-1):
+def resample_stent_axis(
+    points: np.ndarray,
+    parent_tip_map: dict[int, int],
+    segment_base_mask: np.ndarray,
+    starting_point_idx: int,
+    desired_total_length: float,
+    desired_segment_length: float,
+    sampling_direction: int = -1,
+) -> jax.Array:
     """
     Extracts and resamples a subsegment of a polyline based strictly on original cumulative arclength.
     """

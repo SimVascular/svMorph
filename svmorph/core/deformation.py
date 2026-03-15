@@ -1,15 +1,18 @@
+from __future__ import annotations
+
+import time
+
 import numpy as np
 from scipy.spatial import cKDTree
 
 import jax as jx
 import jax.numpy as jnp
-import time
 
 from svmorph.logging import get_logger
 
 logger = get_logger(__name__)
 
-def compute_householder_matrices(cross_section_normals):
+def compute_householder_matrices(cross_section_normals: jx.Array) -> jx.Array:
     z_axis = jnp.array([0, 0, 1])
     a_minus_b = cross_section_normals - z_axis
     denominator = jnp.linalg.norm(a_minus_b, axis=1) ** 2
@@ -17,22 +20,24 @@ def compute_householder_matrices(cross_section_normals):
     householder_matrices = jnp.eye(3) - projection_matrix
     return householder_matrices
 
-def set_node_indices(data, list_of_node_point_indices):
+def set_node_indices(data: dict, list_of_node_point_indices: list[int]) -> dict:
     data["nodes"]["all_indices"] = jnp.array(list_of_node_point_indices)
     return data
 
-def set_force_center(data, point_id):
+def set_force_center(data: dict, point_id: int) -> dict:
     data["nodes"]["force_center_point_id"] = point_id
     return data
 
-def interface_falloff(x, w_prime):
+def interface_falloff(x: jx.Array, w_prime: float) -> jx.Array:
     power = 8
     return 1 / w_prime**power * (x - w_prime)**power 
 
-def mix(a, b, t):
+def mix(a: jx.Array, b: jx.Array, t: jx.Array) -> jx.Array:
     return a + (b - a) * t
 
-def smin_and_gradient(a, da, b, db, k=0.01):
+def smin_and_gradient(
+    a: jx.Array, da: jx.Array, b: jx.Array, db: jx.Array, k: float = 0.01,
+) -> tuple[jx.Array, jx.Array]:
     k = k * 4.0
     h = jnp.maximum(k - jnp.abs(a - b), 0.0) / k
     n = 0.5 * h
@@ -42,19 +47,21 @@ def smin_and_gradient(a, da, b, db, k=0.01):
     grad  = jnp.where(a < b, mix(da, db, n), mix(da, db, 1.0 - n))
     return value, grad
 
-def fold_smin(carry, elem):
+def fold_smin(
+    carry: tuple[jx.Array, jx.Array], elem: tuple[jx.Array, jx.Array],
+) -> tuple[tuple[jx.Array, jx.Array], None]:
     cur_min_d, cur_min_dir = carry 
     d, direction = elem
     new_d, new_dir = smin_and_gradient(cur_min_d, cur_min_dir, d, direction)
     return (new_d, new_dir), None
 
-def compute_min_dist_and_direction(d, direction):
+def compute_min_dist_and_direction(d: jx.Array, direction: jx.Array) -> tuple[jx.Array, jx.Array]:
     # d: (num_segments,), direction: (num_segments, ndims)
     (final_d, final_dir), _ = jx.lax.scan(fold_smin, (d[0], direction[0]), (d[1:], direction[1:]))
     return final_d, final_dir
 
 @jx.jit
-def capsule_sdf(p, stent_vertices, r):
+def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float) -> jx.Array:
     ba_all = jnp.diff(stent_vertices, axis=0)
     pa_all = p - stent_vertices[None, :-1, :]
     ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
@@ -70,7 +77,10 @@ def capsule_sdf(p, stent_vertices, r):
     sdf = final_dist_to_surface
     return sdf
 
-def kelvinlets_truncated_sphere_warp_shrink(rv, a, b, eps, f_scale, s, r_min, r_max, r_original):
+def kelvinlets_truncated_sphere_warp_shrink(
+    rv: jx.Array, a: float, b: float, eps: float, f_scale: float,
+    s: float, r_min: float, r_max: float, r_original: float,
+) -> jx.Array:
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
     re = jnp.sqrt(rx**2 + ry**2 + rz**2)
@@ -85,7 +95,9 @@ def kelvinlets_truncated_sphere_warp_shrink(rv, a, b, eps, f_scale, s, r_min, r_
     assert displacements.shape == (num_mesh_points, num_kelvinlet_points, ndims)
     return displacements
 
-def kelvinlets_truncated_sphere_warp_sculpt(rv, a, b, eps, s, r_target):
+def kelvinlets_truncated_sphere_warp_sculpt(
+    rv: jx.Array, a: float, b: float, eps: float, s: float, r_target: float,
+) -> jx.Array:
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     f_scale = 0.01
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
@@ -102,7 +114,11 @@ def kelvinlets_truncated_sphere_warp_sculpt(rv, a, b, eps, s, r_target):
     return displacements
 
 @jx.jit
-def smin_sdf_capsule_contact_sculpt(rv, a, b, stent_vertices, eps, s, r_target, r_current, influence_radius, contact_distance):
+def smin_sdf_capsule_contact_sculpt(
+    rv: jx.Array, a: float, b: float, stent_vertices: jx.Array,
+    eps: float, s: float, r_target: float, r_current: float,
+    influence_radius: float, contact_distance: float,
+) -> tuple[jx.Array, jx.Array]:
     ba_all = jnp.diff(stent_vertices, axis=0)
     pa_all = rv - stent_vertices[None, :-1, :]
     ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
@@ -119,7 +135,11 @@ def smin_sdf_capsule_contact_sculpt(rv, a, b, stent_vertices, eps, s, r_target, 
     return final_dist_to_surface, final_direction
 
 @jx.jit
-def get_affine_laplacian_displacements_inner(data_points, rotation_matrices, query_points, centers, a, b, eps, s, surface_mesh_scale_factor, half_length, r_target):
+def get_affine_laplacian_displacements_inner(
+    data_points: jx.Array, rotation_matrices: jx.Array, query_points: jx.Array,
+    centers: jx.Array, a: float, b: float, eps: float, s: float,
+    surface_mesh_scale_factor: float | None, half_length: float, r_target: float,
+) -> tuple[jx.Array, float]:
     num_mesh_points = data_points.shape[0]
     centers = jnp.tile(centers, (num_mesh_points, 1, 1))
     rv = query_points - centers
@@ -137,7 +157,10 @@ def get_affine_laplacian_displacements_inner(data_points, rotation_matrices, que
         average_displacement_distance *= surface_mesh_scale_factor
     return displacement, average_displacement_distance
 
-def find_stenosis_minimum_radius_representative(data_points, rotation_matrices, query_points, centers, original_radius):
+def find_stenosis_minimum_radius_representative(
+    data_points: np.ndarray, rotation_matrices: np.ndarray,
+    query_points: np.ndarray, centers: np.ndarray, original_radius: float,
+) -> tuple[np.ndarray, float]:
     num_mesh_points = data_points.shape[0]
     centers = np.tile(centers, (num_mesh_points, 1, 1))
     rv = query_points - centers
@@ -177,8 +200,11 @@ def find_stenosis_minimum_radius_representative(data_points, rotation_matrices, 
     return index_for_min_rz, current_radius
 
 @jx.jit
-def get_stenosis_displacements_inner(data_points, rotation_matrices, query_points, centers, a, b, eps, s, r_min, r_max, r_original):
-    r_target = 0.05
+def get_stenosis_displacements_inner(
+    data_points: jx.Array, rotation_matrices: jx.Array, query_points: jx.Array,
+    centers: jx.Array, a: float, b: float, eps: float, s: float,
+    r_min: float, r_max: float, r_original: float,
+) -> tuple[jx.Array, jx.Array]:
     num_mesh_points = data_points.shape[0]
     centers = jnp.tile(centers, (num_mesh_points, 1, 1))
     rv = query_points - centers
@@ -193,7 +219,11 @@ def get_stenosis_displacements_inner(data_points, rotation_matrices, query_point
     displacement = jnp.sum(displacement_global, axis=1)
     return displacement, step_size
 
-def compute_aneurysm_displacements(data, a, b, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, stent_radius):
+def compute_aneurysm_displacements(
+    data: dict, a: float, b: float, eps: float, s: float,
+    surface_mesh_scale_factor: float | None, force_center_normal: jx.Array,
+    stent_halflength: float, stent_radius: float,
+) -> tuple[np.ndarray, float]:
     # Resolve all_indices and force_center_point_id outside JIT
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Force center: {force_center_point_id}")
@@ -213,7 +243,10 @@ def compute_aneurysm_displacements(data, a, b, eps, s, surface_mesh_scale_factor
     )
     return np.array(displacements), average_displacement_distance
 
-def compute_stenosis_displacements(data, a, b, eps, s, force_center_normal, r_min, r_max, r_original):
+def compute_stenosis_displacements(
+    data: dict, a: float, b: float, eps: float, s: float,
+    force_center_normal: jx.Array, r_min: float, r_max: float, r_original: float,
+) -> tuple[np.ndarray, jx.Array]:
     # Resolve all_indices and force_center_point_id outside JIT
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Selected stenosis center point ID: {force_center_point_id}")
@@ -232,13 +265,23 @@ def compute_stenosis_displacements(data, a, b, eps, s, force_center_normal, r_mi
     return np.array(displacements), step_size
 
 @jx.jit
-def stent_bounding_box(data_points, stent_vertices, target_stent_radius, influence_radius, contact_distance):
+def stent_bounding_box(
+    data_points: jx.Array, stent_vertices: jx.Array,
+    target_stent_radius: float, influence_radius: float, contact_distance: float,
+) -> jx.Array:
     min_coords = jnp.min(stent_vertices, axis=0) - target_stent_radius - influence_radius - contact_distance - 0.01
     max_coords = jnp.max(stent_vertices, axis=0) + target_stent_radius + influence_radius + contact_distance + 0.01
     mask = jnp.all((data_points >= min_coords) & (data_points <= max_coords), axis=1)
     return mask
 
-def compute_sdf_contact_displacements(data, a, b, stent_vertices, eps, s, surface_mesh_scale_factor, force_center_normal, stent_halflength, target_stent_radius, current_stent_radius, *, influence_radius=0.65, contact_distance=0.001, f_scale=0.01):
+def compute_sdf_contact_displacements(
+    data: dict, a: float, b: float, stent_vertices: jx.Array,
+    eps: float, s: float, surface_mesh_scale_factor: float | None,
+    force_center_normal: jx.Array, stent_halflength: float,
+    target_stent_radius: float, current_stent_radius: float, *,
+    influence_radius: float = 0.65, contact_distance: float = 0.001,
+    f_scale: float = 0.01,
+) -> tuple[np.ndarray, np.ndarray, float]:
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Selected point ID: {force_center_point_id}")
     data_points = data["points"]["surface"]

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import vtkmodules.vtkRenderingOpenGL2
 from vtkmodules.vtkRenderingCore import vtkActor, vtkPolyDataMapper, vtkRenderer
 
@@ -6,7 +8,7 @@ from svmorph.visualization.interactor import MeshInteractor
 
 
 class SceneManager:
-    def __init__(self, mesh_filename, centerline_filename):
+    def __init__(self, mesh_filename: str, centerline_filename: str) -> None:
         self.mesh = vtk_io.read_vtp(mesh_filename)
         self.centerline = vtk_io.read_vtp(centerline_filename)
         self.mesh_filename = mesh_filename
@@ -31,11 +33,11 @@ class SceneManager:
         self.renderer.AddActor(self.centerline_actor)
         self.renderer.SetBackground(1.0, 1.0, 1.0)
 
-    def get_renderer(self):
+    def get_renderer(self) -> vtkRenderer:
         return self.renderer
 
-    def get_interactor_style(self):
+    def get_interactor_style(self) -> MeshInteractor:
         return MeshInteractor(self.mesh, self.centerline, self.mesh_filename, self.centerline_filename, self.mesh_actor, self.centerline_actor)
 
-    def save_mesh(self, filename):
+    def save_mesh(self, filename: str) -> None:
         vtk_io.write_vtp(self.mesh, filename)
