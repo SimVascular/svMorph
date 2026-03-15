@@ -83,6 +83,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.centerline_filename = centerline_filename
         self.mesh_actor = mesh_actor
         self.centerline_actor = centerline_actor
+        self._main_window = None
 
         self.selected_points = []
         self.select_multiple_points = False
@@ -798,7 +799,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
         elapsed = max(time.time() - total_start_time, 1e-9)
         logger.timing(f"Total simulation time: {elapsed:.4f} s")
-        logger.info(f"FPS = {int(round(1 / elapsed))}")
+        if self._main_window is not None:
+            self._main_window.setWindowTitle(f"svMorph | FPS: {int(round(1 / elapsed))}")
 
     def run_aneurysm_sdf_contact(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
         """Execute one SDF-contact stent deployment time step.
@@ -833,7 +835,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
         elapsed = max(time.time() - total_start_time, 1e-9)
         logger.timing(f"Total simulation time: {elapsed:.4f} s")
-        logger.info(f"FPS = {int(round(1 / elapsed))}")
+        if self._main_window is not None:
+            self._main_window.setWindowTitle(f"svMorph | FPS: {int(round(1 / elapsed))}")
         return step_size
 
     def run_stent_with_straightening(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
@@ -869,7 +872,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
         elapsed = max(time.time() - total_start_time, 1e-9)
         logger.timing(f"Total simulation time: {elapsed:.4f} s")
-        logger.info(f"FPS = {int(round(1 / elapsed))}")
+        if self._main_window is not None:
+            self._main_window.setWindowTitle(f"svMorph | FPS: {int(round(1 / elapsed))}")
         return step_size
 
     def run_stenosis(self, force_center_point_id, s, stenosis_radius, stenosis_length, node_point_indices):
@@ -911,5 +915,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
         elapsed = max(time.time() - total_start_time, 1e-9)
         logger.timing(f"Total simulation time: {elapsed:.4f} s")
-        logger.info(f"FPS = {int(round(1 / elapsed))}")
+        if self._main_window is not None:
+            self._main_window.setWindowTitle(f"svMorph | FPS: {int(round(1 / elapsed))}")
         return step_size

@@ -160,7 +160,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super(MainWindow, self).__init__(parent)
 
-        self.setWindowTitle("VTK with PyQt6")
+        self.setWindowTitle("svMorph")
         self.interactor = None
         self._setup_window_geometry()
         self._setup_main_layout()
@@ -495,6 +495,7 @@ class MainWindow(QMainWindow):
         self.vtk_widget.GetRenderWindow().AddRenderer(self.renderer)
 
         self.interactor = self.vtk_handler.get_interactor_style()
+        self.interactor._main_window = self
         self.vtk_interactor.SetInteractorStyle(self.interactor)
         self.vtk_interactor.SetRenderWindow(self.vtk_widget.GetRenderWindow())
         self.vtk_widget.GetRenderWindow().Render()
