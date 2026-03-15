@@ -1,3 +1,12 @@
+"""Kelvinlet-based deformation kernels and SDF-contact displacement computation.
+
+Implements regularized Kelvinlet force responses, smooth-minimum SDF
+evaluation against capsule stent geometries, and top-level routines that
+assemble per-vertex displacement fields for aneurysm inflation, stenosis
+creation, and SDF-contact stent deployment.  All heavy numerics use JAX
+for automatic vectorization and JIT compilation.
+"""
+
 from __future__ import annotations
 
 import time
@@ -13,6 +22,18 @@ from svmorph.logging import get_logger
 logger = get_logger(__name__)
 
 def compute_householder_matrices(cross_section_normals: jx.Array) -> jx.Array:
+    """Compute Householder reflection matrices that rotate each normal to the z-axis.
+
+    Parameters
+    ----------
+    cross_section_normals : jx.Array
+        Unit normals for each cross-section, shape ``(N, 3)``.
+
+    Returns
+    -------
+    jx.Array
+        Stack of 3x3 Householder matrices, shape ``(N, 3, 3)``.
+    """
     z_axis = jnp.array([0, 0, 1])
     a_minus_b = cross_section_normals - z_axis
     denominator = jnp.linalg.norm(a_minus_b, axis=1) ** 2
@@ -21,23 +42,101 @@ def compute_householder_matrices(cross_section_normals: jx.Array) -> jx.Array:
     return householder_matrices
 
 def set_node_indices(data: dict, list_of_node_point_indices: list[int]) -> dict:
+    """Store the selected centerline node indices in the simulation data dict.
+
+    Parameters
+    ----------
+    data : dict
+        Simulation data dictionary.
+    list_of_node_point_indices : list[int]
+        Indices of the selected centerline nodes.
+
+    Returns
+    -------
+    dict
+        Updated simulation data dictionary.
+    """
     data["nodes"]["all_indices"] = jnp.array(list_of_node_point_indices)
     return data
 
 def set_force_center(data: dict, point_id: int) -> dict:
+    """Set the force-center point ID in the simulation data dict.
+
+    Parameters
+    ----------
+    data : dict
+        Simulation data dictionary.
+    point_id : int
+        Centerline point index to use as the force center.
+
+    Returns
+    -------
+    dict
+        Updated simulation data dictionary.
+    """
     data["nodes"]["force_center_point_id"] = point_id
     return data
 
 def interface_falloff(x: jx.Array, w_prime: float) -> jx.Array:
+    """Compute a smooth polynomial falloff for interface blending.
+
+    Parameters
+    ----------
+    x : jx.Array
+        Distance values.
+    w_prime : float
+        Falloff half-width.
+
+    Returns
+    -------
+    jx.Array
+        Falloff weights, same shape as *x*.
+    """
     power = 8
     return 1 / w_prime**power * (x - w_prime)**power 
 
 def mix(a: jx.Array, b: jx.Array, t: jx.Array) -> jx.Array:
+    """Linearly interpolate between *a* and *b* by factor *t*.
+
+    Parameters
+    ----------
+    a, b : jx.Array
+        Endpoint values.
+    t : jx.Array
+        Interpolation factor(s); 0 gives *a*, 1 gives *b*.
+
+    Returns
+    -------
+    jx.Array
+        Interpolated result, same shape as the inputs.
+    """
     return a + (b - a) * t
 
 def smin_and_gradient(
     a: jx.Array, da: jx.Array, b: jx.Array, db: jx.Array, k: float = 0.01,
 ) -> tuple[jx.Array, jx.Array]:
+    """Smooth-minimum of two scalar fields with gradient blending.
+
+    Uses polynomial smooth-min (k-smin) to approximate ``min(a, b)``
+    while producing a C¹-continuous transition and a correspondingly
+    blended gradient from *da* and *db*.
+
+    Parameters
+    ----------
+    a, b : jx.Array
+        Scalar distance fields.
+    da, db : jx.Array
+        Gradients (or direction vectors) associated with *a* and *b*.
+    k : float
+        Smoothing radius.
+
+    Returns
+    -------
+    value : jx.Array
+        Smooth minimum of *a* and *b*.
+    grad : jx.Array
+        Blended gradient.
+    """
     k = k * 4.0
     h = jnp.maximum(k - jnp.abs(a - b), 0.0) / k
     n = 0.5 * h
@@ -50,18 +149,67 @@ def smin_and_gradient(
 def fold_smin(
     carry: tuple[jx.Array, jx.Array], elem: tuple[jx.Array, jx.Array],
 ) -> tuple[tuple[jx.Array, jx.Array], None]:
+    """``jax.lax.scan``-compatible fold step that accumulates smooth-min distance and direction.
+
+    Parameters
+    ----------
+    carry : tuple[jx.Array, jx.Array]
+        Running ``(min_distance, min_direction)`` accumulator.
+    elem : tuple[jx.Array, jx.Array]
+        Next ``(distance, direction)`` element.
+
+    Returns
+    -------
+    tuple[tuple[jx.Array, jx.Array], None]
+        Updated carry and a ``None`` scan placeholder.
+    """
     cur_min_d, cur_min_dir = carry 
     d, direction = elem
     new_d, new_dir = smin_and_gradient(cur_min_d, cur_min_dir, d, direction)
     return (new_d, new_dir), None
 
 def compute_min_dist_and_direction(d: jx.Array, direction: jx.Array) -> tuple[jx.Array, jx.Array]:
-    # d: (num_segments,), direction: (num_segments, ndims)
+    """Reduce per-segment distances and directions to a single smooth-minimum pair.
+
+    Parameters
+    ----------
+    d : jx.Array
+        Per-segment signed distances, shape ``(num_segments,)``.
+    direction : jx.Array
+        Per-segment direction vectors, shape ``(num_segments, 3)``.
+
+    Returns
+    -------
+    final_d : jx.Array
+        Smooth-minimum distance (scalar).
+    final_dir : jx.Array
+        Blended direction vector, shape ``(3,)``.
+    """
     (final_d, final_dir), _ = jx.lax.scan(fold_smin, (d[0], direction[0]), (d[1:], direction[1:]))
     return final_d, final_dir
 
 @jx.jit
 def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float) -> jx.Array:
+    """Evaluate the signed distance field of a capsule-chain stent.
+
+    Each consecutive pair of *stent_vertices* defines a capsule segment
+    with radius *r*.  The SDF is reduced via smooth-minimum so the
+    iso-surface is C¹-continuous at segment junctions.
+
+    Parameters
+    ----------
+    p : jx.Array
+        Query points, shape ``(N, 1, 3)``.
+    stent_vertices : jx.Array
+        Stent axis vertices, shape ``(V, 3)``.
+    r : float
+        Capsule radius.
+
+    Returns
+    -------
+    jx.Array
+        Signed distance for each query point, shape ``(N, 1)``.
+    """
     ba_all = jnp.diff(stent_vertices, axis=0)
     pa_all = p - stent_vertices[None, :-1, :]
     ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
@@ -81,6 +229,36 @@ def kelvinlets_truncated_sphere_warp_shrink(
     rv: jx.Array, a: float, b: float, eps: float, f_scale: float,
     s: float, r_min: float, r_max: float, r_original: float,
 ) -> jx.Array:
+    """Compute inward radial displacements for stenosis creation.
+
+    Points within the cylindrical annulus [*r_min*, *r_max*] are displaced
+    radially inward using a quartic bump profile, with the axial component
+    zeroed to prevent longitudinal drift.
+
+    Parameters
+    ----------
+    rv : jx.Array
+        Centerline-aligned relative positions, shape ``(N, K, 3)``.
+    a, b : float
+        Kelvinlet material parameters.
+    eps : float
+        Regularization parameter.
+    f_scale : float
+        Force magnitude scaling factor.
+    s : float
+        Signed force scale (negative → inward).
+    r_min : float
+        Inner annular radius cutoff.
+    r_max : float
+        Outer annular radius cutoff.
+    r_original : float
+        Original vessel radius (reserved for future use).
+
+    Returns
+    -------
+    jx.Array
+        Per-point displacement vectors, shape ``(N, K, 3)``.
+    """
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
     re = jnp.sqrt(rx**2 + ry**2 + rz**2)
@@ -98,6 +276,30 @@ def kelvinlets_truncated_sphere_warp_shrink(
 def kelvinlets_truncated_sphere_warp_sculpt(
     rv: jx.Array, a: float, b: float, eps: float, s: float, r_target: float,
 ) -> jx.Array:
+    """Compute outward radial displacements for aneurysm sculpting.
+
+    Uses the regularized bi-Laplacian Kelvinlet response (de Goes &
+    James 2017) to push surface points radially outward from the
+    centerline, with the axial component zeroed.
+
+    Parameters
+    ----------
+    rv : jx.Array
+        Centerline-aligned relative positions, shape ``(N, K, 3)``.
+    a, b : float
+        Kelvinlet material parameters.
+    eps : float
+        Regularization parameter.
+    s : float
+        Signed force scale.
+    r_target : float
+        Target stent radius.
+
+    Returns
+    -------
+    jx.Array
+        Per-point displacement vectors, shape ``(N, K, 3)``.
+    """
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     f_scale = 0.01
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
@@ -119,6 +321,41 @@ def smin_sdf_capsule_contact_sculpt(
     eps: float, s: float, r_target: float, r_current: float,
     influence_radius: float, contact_distance: float,
 ) -> tuple[jx.Array, jx.Array]:
+    """Compute smooth-min SDF distances and outward directions from a capsule-chain stent.
+
+    Evaluates the signed distance from each query point to the nearest
+    capsule segment surface (using smooth-minimum for C¹ continuity)
+    and returns the distance and outward direction for SDF-contact
+    displacement computation.
+
+    Parameters
+    ----------
+    rv : jx.Array
+        Query points, shape ``(N, 1, 3)``.
+    a, b : float
+        Kelvinlet material parameters (unused; kept for API consistency).
+    stent_vertices : jx.Array
+        Stent axis vertices, shape ``(V, 3)``.
+    eps : float
+        Regularization parameter (unused; kept for API consistency).
+    s : float
+        Signed force scale (unused; kept for API consistency).
+    r_target : float
+        Target stent radius.
+    r_current : float
+        Current stent deployment radius.
+    influence_radius : float
+        Radial influence distance beyond the stent surface.
+    contact_distance : float
+        Threshold below which a point is considered in contact.
+
+    Returns
+    -------
+    final_dist_to_surface : jx.Array
+        Signed distance to stent surface, shape ``(N, 1)``.
+    final_direction : jx.Array
+        Unit outward direction from the stent axis, shape ``(N, 3)``.
+    """
     ba_all = jnp.diff(stent_vertices, axis=0)
     pa_all = rv - stent_vertices[None, :-1, :]
     ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
@@ -140,6 +377,42 @@ def get_affine_laplacian_displacements_inner(
     centers: jx.Array, a: float, b: float, eps: float, s: float,
     surface_mesh_scale_factor: float | None, half_length: float, r_target: float,
 ) -> tuple[jx.Array, float]:
+    """JIT-compiled inner loop for Laplacian Kelvinlet displacement computation.
+
+    Rotates mesh points into each center's local frame, computes sculpt
+    displacements via the bi-Laplacian kernel, rotates back to global
+    coordinates, and sums over all force centers.
+
+    Parameters
+    ----------
+    data_points : jx.Array
+        Surface mesh vertices, shape ``(N, 3)``.
+    rotation_matrices : jx.Array
+        Householder matrices for each center, shape ``(K, 3, 3)``.
+    query_points : jx.Array
+        Tiled mesh points, shape ``(N, K, 3)``.
+    centers : jx.Array
+        Kelvinlet force centers, shape ``(1, K, 3)``.
+    a, b : float
+        Kelvinlet material parameters.
+    eps : float
+        Regularization parameter.
+    s : float
+        Signed force scale.
+    surface_mesh_scale_factor : float | None
+        Optional global displacement scaling.
+    half_length : float
+        Stent half-length parameter.
+    r_target : float
+        Target stent radius.
+
+    Returns
+    -------
+    displacement : jx.Array
+        Net displacement per mesh point, shape ``(N, 3)``.
+    average_displacement_distance : float
+        Scalar summary of displacement magnitude.
+    """
     num_mesh_points = data_points.shape[0]
     centers = jnp.tile(centers, (num_mesh_points, 1, 1))
     rv = query_points - centers
@@ -161,6 +434,33 @@ def find_stenosis_minimum_radius_representative(
     data_points: np.ndarray, rotation_matrices: np.ndarray,
     query_points: np.ndarray, centers: np.ndarray, original_radius: float,
 ) -> tuple[np.ndarray, float]:
+    """Find the surface point that best represents the minimum vessel radius.
+
+    Among surface points on the annular shell between 1.0× and 1.1× the
+    estimated current radius, selects the one with the smallest axial
+    offset from the cross-section plane.  The current radius is estimated
+    from Euclidean nearest neighbours projected onto the plane.
+
+    Parameters
+    ----------
+    data_points : np.ndarray
+        Surface mesh vertices, shape ``(N, 3)``.
+    rotation_matrices : np.ndarray
+        Householder matrices, shape ``(K, 3, 3)``.
+    query_points : np.ndarray
+        Tiled mesh points, shape ``(N, K, 3)``.
+    centers : np.ndarray
+        Kelvinlet center(s), shape ``(1, K, 3)``.
+    original_radius : float
+        Maximum inscribed sphere radius at this centerline point.
+
+    Returns
+    -------
+    index_for_min_rz : np.ndarray
+        Index into *data_points* of the representative surface point.
+    current_radius : float
+        Estimated current vessel radius at this cross-section.
+    """
     num_mesh_points = data_points.shape[0]
     centers = np.tile(centers, (num_mesh_points, 1, 1))
     rv = query_points - centers
@@ -205,6 +505,41 @@ def get_stenosis_displacements_inner(
     centers: jx.Array, a: float, b: float, eps: float, s: float,
     r_min: float, r_max: float, r_original: float,
 ) -> tuple[jx.Array, jx.Array]:
+    """JIT-compiled inner loop for stenosis (inward shrink) displacements.
+
+    Rotates mesh points into the local frame, applies the truncated-sphere
+    warp, and rotates back to global coordinates.
+
+    Parameters
+    ----------
+    data_points : jx.Array
+        Surface mesh vertices, shape ``(N, 3)``.
+    rotation_matrices : jx.Array
+        Householder matrices, shape ``(K, 3, 3)``.
+    query_points : jx.Array
+        Tiled mesh points, shape ``(N, K, 3)``.
+    centers : jx.Array
+        Kelvinlet center(s), shape ``(1, K, 3)``.
+    a, b : float
+        Kelvinlet material parameters.
+    eps : float
+        Regularization parameter.
+    s : float
+        Signed force scale.
+    r_min : float
+        Inner annular radius cutoff.
+    r_max : float
+        Outer annular radius cutoff.
+    r_original : float
+        Original vessel radius.
+
+    Returns
+    -------
+    displacement : jx.Array
+        Per-point displacement vectors, shape ``(N, 3)``.
+    step_size : jx.Array
+        Scalar step size for radius tracking.
+    """
     num_mesh_points = data_points.shape[0]
     centers = jnp.tile(centers, (num_mesh_points, 1, 1))
     rv = query_points - centers
@@ -224,7 +559,37 @@ def compute_aneurysm_displacements(
     surface_mesh_scale_factor: float | None, force_center_normal: jx.Array,
     stent_halflength: float, stent_radius: float,
 ) -> tuple[np.ndarray, float]:
-    # Resolve all_indices and force_center_point_id outside JIT
+    """Compute Kelvinlet-based outward surface displacements for aneurysm creation.
+
+    Assembles query-point geometry, builds Householder rotation matrices,
+    and delegates to the JIT-compiled inner displacement kernel.
+
+    Parameters
+    ----------
+    data : dict
+        Simulation data dictionary with surface and centerline arrays.
+    a, b : float
+        Kelvinlet material parameters.
+    eps : float
+        Regularization parameter (pre-scaled by vessel radius).
+    s : float
+        Signed force scale.
+    surface_mesh_scale_factor : float | None
+        Optional displacement scaling.
+    force_center_normal : jx.Array
+        Tangent direction at the force center, shape ``(3,)``.
+    stent_halflength : float
+        Half-length of the stent section.
+    stent_radius : float
+        Target stent radius.
+
+    Returns
+    -------
+    displacements : np.ndarray
+        Per-vertex displacement vectors, shape ``(N, 3)``.
+    average_displacement_distance : float
+        Scalar summary of displacement magnitude.
+    """
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Force center: {force_center_point_id}")
     # Prepare other data
@@ -247,7 +612,37 @@ def compute_stenosis_displacements(
     data: dict, a: float, b: float, eps: float, s: float,
     force_center_normal: jx.Array, r_min: float, r_max: float, r_original: float,
 ) -> tuple[np.ndarray, jx.Array]:
-    # Resolve all_indices and force_center_point_id outside JIT
+    """Compute Kelvinlet-based inward surface displacements for stenosis creation.
+
+    Assembles query-point geometry and delegates to the JIT-compiled
+    stenosis displacement kernel.
+
+    Parameters
+    ----------
+    data : dict
+        Simulation data dictionary.
+    a, b : float
+        Kelvinlet material parameters.
+    eps : float
+        Regularization parameter.
+    s : float
+        Signed force scale (positive → inward).
+    force_center_normal : jx.Array
+        Tangent direction at the force center, shape ``(3,)``.
+    r_min : float
+        Inner annular radius.
+    r_max : float
+        Outer annular radius.
+    r_original : float
+        Original vessel radius.
+
+    Returns
+    -------
+    displacements : np.ndarray
+        Per-vertex displacement vectors, shape ``(N, 3)``.
+    step_size : jx.Array
+        Scalar step size for radius tracking.
+    """
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Selected stenosis center point ID: {force_center_point_id}")
     # Prepare other data
@@ -269,6 +664,26 @@ def stent_bounding_box(
     data_points: jx.Array, stent_vertices: jx.Array,
     target_stent_radius: float, influence_radius: float, contact_distance: float,
 ) -> jx.Array:
+    """Compute a boolean mask selecting points inside the padded stent bounding box.
+
+    Parameters
+    ----------
+    data_points : jx.Array
+        Mesh vertices, shape ``(N, 3)``.
+    stent_vertices : jx.Array
+        Stent axis vertices, shape ``(V, 3)``.
+    target_stent_radius : float
+        Target stent radius.
+    influence_radius : float
+        Additional radial padding for the influence zone.
+    contact_distance : float
+        Additional padding for the contact threshold.
+
+    Returns
+    -------
+    jx.Array
+        Boolean mask of length *N*.
+    """
     min_coords = jnp.min(stent_vertices, axis=0) - target_stent_radius - influence_radius - contact_distance - 0.01
     max_coords = jnp.max(stent_vertices, axis=0) + target_stent_radius + influence_radius + contact_distance + 0.01
     mask = jnp.all((data_points >= min_coords) & (data_points <= max_coords), axis=1)
@@ -282,6 +697,55 @@ def compute_sdf_contact_displacements(
     influence_radius: float = 0.65, contact_distance: float = 0.001,
     f_scale: float = 0.01,
 ) -> tuple[np.ndarray, np.ndarray, float]:
+    """Compute SDF-contact displacements for stent deployment.
+
+    Main entry point for SDF-contact deformation.  The algorithm:
+
+    1. Restricts evaluation to a bounding-box mask around the stent.
+    2. Evaluates smooth-minimum capsule SDF for surface and centerline
+       points.
+    3. Identifies in-contact and in-influence point sets.
+    4. Builds a KD-tree of contact points for influence-zone blending.
+    5. Assembles displacement vectors that push the vessel wall outward.
+
+    Parameters
+    ----------
+    data : dict
+        Simulation data dictionary with surface and centerline arrays.
+    a, b : float
+        Kelvinlet material parameters.
+    stent_vertices : jx.Array
+        Stent axis vertices, shape ``(V, 3)``.
+    eps : float
+        Regularization parameter.
+    s : float
+        Signed force scale.
+    surface_mesh_scale_factor : float | None
+        Optional global displacement scaling (currently unused).
+    force_center_normal : jx.Array
+        Tangent at the force center (currently unused).
+    stent_halflength : float
+        Stent half-length (currently unused).
+    target_stent_radius : float
+        Target stent radius for SDF computation.
+    current_stent_radius : float
+        Current deployment radius of the stent.
+    influence_radius : float
+        Radial distance beyond the stent within which points are displaced.
+    contact_distance : float
+        Distance threshold for stent–wall contact.
+    f_scale : float
+        Force magnitude scaling factor.
+
+    Returns
+    -------
+    full_surface_displacements : np.ndarray
+        Displacement vectors for all surface points, shape ``(N_surf, 3)``.
+    full_centerline_displacements : np.ndarray
+        Displacement vectors for all centerline points, shape ``(N_cl, 3)``.
+    step_size : float
+        Scalar step size for stent radius increment tracking.
+    """
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Selected point ID: {force_center_point_id}")
     data_points = data["points"]["surface"]

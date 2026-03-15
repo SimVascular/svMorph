@@ -1,3 +1,10 @@
+"""Geometric utilities for centerline resampling and stent-axis construction.
+
+Provides arc-length–based polyline resampling that supports branching
+centerlines via a parent-tip map, used to generate evenly spaced stent
+axis vertices along a selected centerline segment.
+"""
+
 from __future__ import annotations
 
 import numpy as np
@@ -18,8 +25,35 @@ def resample_stent_axis(
     desired_segment_length: float,
     sampling_direction: int = -1,
 ) -> jax.Array:
-    """
-    Extracts and resamples a subsegment of a polyline based strictly on original cumulative arclength.
+    """Extract and resample a polyline subsegment at uniform arc-length intervals.
+
+    Walks along the centerline from *starting_point_idx* in the given
+    *sampling_direction*, accumulating arc length up to *desired_total_length*.
+    At branch bases the walk jumps to the parent segment via *parent_tip_map*.
+    The collected vertices are then resampled at intervals of
+    *desired_segment_length* using linear interpolation.
+
+    Parameters
+    ----------
+    points : np.ndarray
+        Centerline point coordinates, shape ``(N, 3)``.
+    parent_tip_map : dict[int, int]
+        Mapping from each point ID to the tip ID of its parent segment.
+    segment_base_mask : np.ndarray
+        Boolean mask marking the base point of each centerline segment.
+    starting_point_idx : int
+        Index of the centerline point at which to start walking.
+    desired_total_length : float
+        Target arc length of the extracted subsegment (cm).
+    desired_segment_length : float
+        Desired spacing between resampled vertices (cm).
+    sampling_direction : int
+        Walk direction: ``-1`` for proximal, ``+1`` for distal.
+
+    Returns
+    -------
+    jax.Array
+        Resampled stent axis vertices, shape ``(M, 3)``.
     """
     if sampling_direction not in (-1, 1):
         raise ValueError("sampling_direction must be integer -1 or +1")

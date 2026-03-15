@@ -1,3 +1,11 @@
+"""VTK interactor style for interactive Kelvinlet mesh deformation.
+
+Provides :class:`MeshInteractor`, a ``vtkInteractorStyleTrackballCamera``
+subclass that handles point selection on the centerline, stent placement
+and visualisation, and dispatches the various deformation modes (aneurysm,
+stenosis, SDF-contact, straightening).
+"""
+
 import vtkmodules.vtkRenderingCore
 import vtkmodules.vtkFiltersGeneral
 from vtkmodules.vtkCommonColor import vtkNamedColors
@@ -28,7 +36,33 @@ logger = get_logger(__name__)
 
 
 class MeshInteractor(vtkInteractorStyleTrackballCamera):
+    """Interactive VTK trackball camera style for Kelvinlet mesh deformation.
+
+    Manages centerline point selection, stent placement/visualisation,
+    deformation parameter updates, and dispatches the aneurysm, stenosis,
+    SDF-contact, and straightening deformation pipelines.
+    """
+
     def __init__(self, mesh, centerline, mesh_filename, centerline_filename, mesh_actor, centerline_actor, parent=None):
+        """Initialise the interactor with mesh and centerline data.
+
+        Parameters
+        ----------
+        mesh : vtk.vtkPolyData
+            Surface mesh polydata.
+        centerline : vtk.vtkPolyData
+            Centerline polydata.
+        mesh_filename : str
+            Path to the surface mesh VTP file.
+        centerline_filename : str
+            Path to the centerline VTP file.
+        mesh_actor : vtkActor
+            VTK actor for the surface mesh.
+        centerline_actor : vtkActor
+            VTK actor for the centerline.
+        parent : object, optional
+            Parent widget (unused, kept for VTK compatibility).
+        """
         super().__init__()
         self.AddObserver("LeftButtonPressEvent", self.left_button_press_event)
         self.AddObserver("KeyPressEvent", self.key_press_event)
@@ -89,6 +123,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.previous_focal = [0.0, 0.0, 0.0]
     
     def key_press_event(self, obj, event):
+        """Handle key-press events.  'h' toggles ROI visibility; 'd' starts a repeating deformation timer."""
         key = self.GetInteractor().GetKeySym()
         if key == 'h':
             self.toggle_roi_cylinder()
@@ -97,15 +132,18 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.OnKeyPress()
 
     def timer_callback(self, obj, event):
+        """Repeating timer callback that drives one sequential deformation step."""
         self.deform_mesh_sequential(self.epsilon, self.force_scale)
 
     def key_release_event(self, obj, event):
+        """Handle key-release events.  Releasing 'd' destroys the deformation timer."""
         key = self.GetInteractor().GetKeySym()
         if key == 'd':
             self.GetInteractor().DestroyTimer(self.timer_id)
         self.OnKeyRelease()
 
     def left_button_press_event(self, obj, event):
+        """Handle left-click: pick a centerline point and update selections and visualisation."""
         click_pos = self.GetInteractor().GetEventPosition()
         renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
 
@@ -145,6 +183,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.OnLeftButtonDown()
 
     def display_centerline_vertices(self):
+        """Render a glyph sphere at every centerline vertex and make the mesh translucent."""
         polydata = self.centerline_actor.GetMapper().GetInput()
         points = polydata.GetPoints()
         num_points = points.GetNumberOfPoints()
@@ -172,6 +211,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def display_radius_texts(self):
+        """Create and display the on-screen radius and stent-radius text actors."""
         radius = 0.0
         selected_point_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
         selected_point_text_actor.SetInput(f"MIS radius = {radius:.4f}, lumen effective radius = {radius:.4f}")
@@ -191,6 +231,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
         
     def update_selected_point_radius_text(self):
+        """Refresh the MIS and lumen effective radius text for the most recently selected point."""
         if len(self.selected_points) == 0:
             radius = 0.0
         else:
@@ -201,17 +242,20 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_roi_text(self):
+        """Refresh the on-screen stent radius text actor."""
         if self.roi_text_actor is None:
             return
         self.roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius + self.smoothing_k:.4f}")
 
     def compute_prescribed_stent(self):
+        """Resample the centerline to produce stent axis vertices and update the visualisation."""
         deployed_stent_length = self.stent_length * (1 - self.foreshortening_percentage)
         self.stent_axis_vertices = geometry.resample_stent_axis(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, self.stent_segment_length, sampling_direction=self.sampling_direction)
         logger.debug(f"Num vertices for stent of length {self.stent_length} cm, segment length {self.stent_segment_length} cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
         
     def compute_stenosis_minimum_radius_representative(self, point_id):
+        """Identify the surface point representing minimum vessel radius at *point_id*."""
         logger.debug(f"Selected stenosis center point ID: {point_id}")
         data_points = self.data["points"]["surface"]
         centerline_points = self.data["points"]["centerline"]
@@ -229,6 +273,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.previous_aneurysm_maximum_radius = current_radius
 
     def place_highlight_sphere(self, position, point_id):
+        """Add a red highlight sphere at *position* and lock the camera to it."""
         sphere = vtkSphereSource()
         sphere.SetCenter(position)
         sphere.SetRadius(0.04)
@@ -251,6 +296,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.place_radius_of_influence_cylinder(position, point_id)
 
     def place_sdf_stent_visualization(self):
+        """Build and display the cylinder-and-sphere stent visualisation along the axis vertices."""
         if self.stent_axis_vertices is None:
             return
         stent_assembly = vtkAssembly()
@@ -318,6 +364,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.stent_visualization_actors.append(stent_assembly)
 
     def save_current_stent(self):
+        """Retain the latest stent visualisation actor and discard older ones."""
         if len(self.stent_visualization_actors) == 0:
             return
         renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
@@ -327,6 +374,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def render_sdf(self):
+        """Evaluate the stent capsule SDF on a regular grid and render its zero iso-surface."""
         time_start = time.time()
         if self.stent_axis_vertices is None:
             return
@@ -373,6 +421,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Rendering SDF: {time.time() - render_time_start:.4f} s")
         
     def place_radius_of_influence_cylinder(self, position, point_id):
+        """Add a transparent cylinder actor representing the region of influence at *point_id*."""
         cylinder = vtkCylinderSource()
         cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
         cylinder.SetHeight(2 * self.stent_unit_section_halflength)
@@ -410,6 +459,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.roi_actors.append(actor)
 
     def place_stent_cylinder(self, position, point_id):
+        """Add a semi-transparent stent cylinder actor at *position* aligned to the centerline tangent."""
         cylinder = vtkCylinderSource()
         cylinder.SetRadius(self.stent_radius)
         cylinder.SetHeight(2 * self.stent_unit_section_halflength)
@@ -447,6 +497,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.stent_actors.append(actor)
 
     def update_red_highlight_sphere_position(self, idx):
+        """Move the highlight sphere for selection *idx* to the current centerline position."""
         point_id = self.selected_points[idx]
         polydata = self.centerline_actor.GetMapper().GetInput()
         sphere_center = [0.0, 0.0, 0.0]
@@ -464,6 +515,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             self.place_stent_cylinder(sphere_center, point_id)
 
     def update_radius_of_influence_cylinder(self, idx):
+        """Reposition and reorient the ROI cylinder for selection *idx*."""
         point_id = self.selected_points[idx]
         polydata = self.centerline_actor.GetMapper().GetInput()
         position = [0.0, 0.0, 0.0]
@@ -484,6 +536,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_deformation_parameters(self, epsilon, force_scale):
+        """Update the Kelvinlet regularization and force-scale parameters and refresh the display."""
         self.epsilon = epsilon
         self.force_scale = force_scale
         for roi_actor in self.roi_actors[-1:]:
@@ -493,6 +546,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_prescribed_stent_radius(self, radius):
+        """Set the target stent radius and update the ROI cylinder display."""
         self.stent_radius = radius
         for roi_actor in self.roi_actors[-1:]:
             roi_cylinder = roi_actor.cylinderSource
@@ -500,6 +554,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
     
     def update_prescribed_stent_length(self, length):
+        """Set the target stent length, recompute stent axis vertices, and refresh the display."""
         self.stent_length = length
         if len(self.selected_points) == 0:
             return
@@ -510,6 +565,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_current_stent_radius(self):
+        """Propagate the current deployment radius to ROI and stent visualisation actors."""
         for roi_actor in self.roi_actors[-1:]:
             roi_cylinder = roi_actor.cylinderSource
             roi_cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
@@ -520,6 +576,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.update_roi_text()
     
     def update_current_stent_curvature(self):
+        """Straighten the stent axis vertices by projecting toward the start–end line."""
         straightening_strength = 0.075
         def lerp(vertices, start_point, end_point, strength):
             direction = end_point - start_point
@@ -546,6 +603,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
 
     def update_selected_point(self):
+        """Advance the single selected point along the centerline and refresh visual elements."""
         if len(self.selected_points) == 0:
             return
         self.selected_points[0] += self.animation_direction * 5
@@ -558,6 +616,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
     
     def interleave_update_selected_points(self):
+        """Advance the active interleave point along the centerline, alternating direction."""
         if len(self.selected_points) == 0:
             return
         
@@ -573,13 +632,16 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.update_red_highlight_sphere_position(self.force_center_idx)
 
     def reverse_animation_direction(self):
+        """Flip both the animation and sampling direction signs."""
         self.animation_direction *= -1
         self.sampling_direction *= -1
 
     def update_force_center_idx(self):
+        """Set the force-center index to 0 or 1 based on the current animation direction."""
         self.force_center_idx = (self.animation_direction - 1) // 2
 
     def toggle_roi_cylinder(self):
+        """Toggle visibility of the ROI cylinders, stent cylinders, and stent visualisation actors."""
         self.roi_visible = not self.roi_visible
         for roi_actor in self.roi_actors:
             roi_actor.SetVisibility(not roi_actor.GetVisibility())
@@ -590,6 +652,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def toggle_interleave_mode(self):
+        """Toggle interleave mode between single- and dual-point selection."""
         self.interleave_mode = not self.interleave_mode
         self.num_kelvinlet_points = 2 if self.interleave_mode else 1
         if not self.interleave_mode:
@@ -603,6 +666,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             self.GetInteractor().GetRenderWindow().Render()
 
     def toggle_camera_lock(self):
+        """Toggle camera focal-point lock to the selected centerline point(s)."""
         if self.camera_lock:
             self.lock_camera(self.previous_focal)
             self.camera_lock = False
@@ -615,6 +679,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                 self.lock_camera_interleave(mid_point[0], mid_point[1], mid_point[2])
 
     def lock_camera(self, position):
+        """Set the camera focal point to *position* when camera lock is active (non-interleave mode)."""
         if self.camera_lock and not self.interleave_mode:
             camera = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActiveCamera()
             self.previous_focal = camera.GetFocalPoint()
@@ -622,6 +687,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             self.GetInteractor().GetRenderWindow().Render()
 
     def lock_camera_interleave(self, x, y, z):
+        """Set the camera focal point to *(x, y, z)* when camera lock is active (interleave mode)."""
         if self.camera_lock:
             camera = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActiveCamera()
             self.previous_focal = camera.GetFocalPoint()
@@ -629,6 +695,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             self.GetInteractor().GetRenderWindow().Render()
 
     def deform_mesh_sequential(self, epsilon, force_scale):
+        """Run one step of the aneurysm sequential deformation pipeline."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
@@ -655,6 +722,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def deform_mesh_sdf_contact(self, epsilon, force_scale):
+        """Run one step of the SDF-contact stent deployment deformation pipeline."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
@@ -680,6 +748,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.timing(f"Rendering new frame: {time.time() - start_time:.4f} s")
 
     def deform_mesh_stenosis(self, force_scale, area_percent_change, stenosis_radius, stenosis_length):
+        """Run one step of the stenosis creation deformation pipeline."""
         if len(self.selected_points) < 1:
             logger.warning("Please select 1 point along the centerline.")
             return
@@ -694,6 +763,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def deform_mesh_with_straightening(self, epsilon, force_scale):
+        """Run one step of the SDF-contact deformation with stent-axis straightening."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
@@ -724,7 +794,16 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
                         force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius, 
                         other_geometry_input_files, other_geometry_output_files):
-        # --- Initialization and Parameter Setup ---
+        """Execute one aneurysm-inflation time step using Laplacian Kelvinlets.
+
+        Computes material constants, assembles the displacement field, applies
+        it to the surface mesh, and updates the running maximum-radius estimate.
+
+        Returns
+        -------
+        float
+            Average displacement distance for this step.
+        """
         total_start_time = time.time()  # Start total timer
         a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")
@@ -776,7 +855,16 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
                         force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius,
                         other_geometry_input_files, other_geometry_output_files):
-        # --- Initialization and Parameter Setup ---
+        """Execute one SDF-contact stent deployment time step.
+
+        Computes SDF-contact displacements for both surface and centerline,
+        applies them, and increments the current stent radius.
+
+        Returns
+        -------
+        float
+            Step size (stent radius increment) for this iteration.
+        """
         total_start_time = time.time()  # Start total timer
         a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")
@@ -822,7 +910,16 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                         surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, 
                         force_scale, num_time_steps, node_point_indices, stent_halflength, stent_radius, 
                         other_geometry_input_files, other_geometry_output_files):
-        # --- Initialization and Parameter Setup ---
+        """Execute one SDF-contact deployment step with concurrent stent-axis straightening.
+
+        Identical to :meth:`run_aneurysm_sdf_contact` but additionally
+        straightens the stent axis after each displacement step.
+
+        Returns
+        -------
+        float
+            Step size (stent radius increment) for this iteration.
+        """
         total_start_time = time.time()  # Start total timer
         a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
         logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")
@@ -864,6 +961,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         return step_size
 
     def create_stenosis(self, mesh_filename, centerline_filename, selected_points, force_scale, area_percent_change, stenosis_radius, stenosis_length, model="test_aneurysm"):
+        """Prepare parameters and delegate to :meth:`run_stenosis` for one stenosis step."""
         centerline_polydata_output_file_name = "obtained_aneurysm_centerline"
         surface_polydata_output_file_name = "obtained_aneurysm_surface"
 
@@ -891,7 +989,16 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                             surface_polydata_output_file_name, mu, nu, phi_type, force_center_point_id, s, area_percent_change, 
                             stenosis_radius, stenosis_length, num_time_steps, node_point_indices,
                             other_geometry_input_files, other_geometry_output_files):
-            # --- Initialization and Parameter Setup ---
+            """Execute one stenosis-creation time step using the truncated-sphere warp.
+
+            Computes inward displacements, applies them to the surface mesh,
+            and updates the running minimum-radius estimate.
+
+            Returns
+            -------
+            float
+                Step size for this iteration.
+            """
             total_start_time = time.time()  # Start total timer
             a, b = mesh_data.compute_material_constants(mu, nu)  # Material properties for Kelvinlet calculations
             logger.timing(f"Setting affine parameters: {time.time() - total_start_time:.4f} s")

@@ -1,3 +1,5 @@
+"""Entry point for the svMorph interactive vascular morphing application."""
+
 import argparse
 import logging
 import sys
@@ -9,6 +11,7 @@ from svmorph.gui.main_window import MainWindow
 
 
 def main():
+    """Parse CLI arguments, configure logging, and launch the Qt application."""
     parser = argparse.ArgumentParser(description="svMorph – interactive vascular morphing")
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(

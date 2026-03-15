@@ -1,3 +1,11 @@
+"""VTK polydata I/O and geometry extraction utilities.
+
+Provides functions for reading/writing VTP files, extracting point arrays
+(tangents, cross-section areas, inscribed-sphere radii) from centerline
+polydata, slicing meshes with planes, and synchronising NumPy-backed
+simulation data with VTK polydata objects.
+"""
+
 from __future__ import annotations
 
 import copy
@@ -17,6 +25,18 @@ logger = get_logger(__name__)
 
 
 def read_vtp(filename: str) -> vtk.vtkPolyData:
+    """Read a VTK XML PolyData (.vtp) file and return the polydata.
+
+    Parameters
+    ----------
+    filename : str
+        Path to the ``.vtp`` file.
+
+    Returns
+    -------
+    vtk.vtkPolyData
+        Loaded polydata.
+    """
     reader = vtkXMLPolyDataReader()
     reader.SetFileName(filename)
     reader.Update()
@@ -24,6 +44,15 @@ def read_vtp(filename: str) -> vtk.vtkPolyData:
 
 
 def write_vtp(polydata: vtk.vtkPolyData, filename: str) -> None:
+    """Write a VTK polydata object to a ``.vtp`` file.
+
+    Parameters
+    ----------
+    polydata : vtk.vtkPolyData
+        Polydata to write.
+    filename : str
+        Output file path.
+    """
     writer = vtkXMLPolyDataWriter()
     writer.SetFileName(filename)
     writer.SetInputData(polydata)
@@ -33,7 +62,23 @@ def write_vtp(polydata: vtk.vtkPolyData, filename: str) -> None:
 def extract_mesh_arrays(
     surface_polydata: vtk.vtkPolyData, centerline_polydata: vtk.vtkPolyData,
 ) -> dict:
-    # Convert to JAX-compatible arrays by using jnp.array
+    """Extract surface and centerline point arrays into a simulation data dict.
+
+    The returned dictionary contains NumPy views into the VTK point buffers
+    (mutated in-place during deformation) as well as initial JAX copies.
+
+    Parameters
+    ----------
+    surface_polydata : vtk.vtkPolyData
+        Surface mesh polydata.
+    centerline_polydata : vtk.vtkPolyData
+        Centerline polydata.
+
+    Returns
+    -------
+    dict
+        Simulation data dictionary with ``"points"`` and ``"nodes"`` keys.
+    """
     surface_points_view_np = v2n(surface_polydata.GetPoints().GetData())
     centerline_points_view_np = v2n(centerline_polydata.GetPoints().GetData())
     surface_points_jnp = jnp.array(surface_points_view_np)
@@ -99,6 +144,18 @@ def build_parent_tip_map(
 
 
 def extract_centerline_tangents(centerline_polydata: vtk.vtkPolyData) -> np.ndarray:
+    """Compute unit tangent vectors at every centerline point via central differences.
+
+    Parameters
+    ----------
+    centerline_polydata : vtk.vtkPolyData
+        Centerline polydata.
+
+    Returns
+    -------
+    np.ndarray
+        Unit tangent vectors, shape ``(N, 3)``.
+    """
     num_centerline_points = centerline_polydata.GetNumberOfPoints()
     tangents = np.zeros((num_centerline_points, 3))
     for point_id in range(1, num_centerline_points - 1):
@@ -112,12 +169,36 @@ def extract_centerline_tangents(centerline_polydata: vtk.vtkPolyData) -> np.ndar
 
 
 def extract_cross_section_areas(centerline_polydata: vtk.vtkPolyData) -> np.ndarray:
+    """Extract the ``CenterlineSectionArea`` point array from the centerline.
+
+    Parameters
+    ----------
+    centerline_polydata : vtk.vtkPolyData
+        Centerline polydata with a ``CenterlineSectionArea`` point array.
+
+    Returns
+    -------
+    np.ndarray
+        Cross-section areas, shape ``(N,)``.  Zeros if the array is absent.
+    """
     vtk_array = centerline_polydata.GetPointData().GetArray("CenterlineSectionArea")
     areas = v2n(vtk_array) if vtk_array is not None else np.zeros(centerline_polydata.GetNumberOfPoints())
     return areas
 
 
 def extract_inscribed_sphere_radii(centerline_polydata: vtk.vtkPolyData) -> np.ndarray:
+    """Extract the ``MaximumInscribedSphereRadius`` point array from the centerline.
+
+    Parameters
+    ----------
+    centerline_polydata : vtk.vtkPolyData
+        Centerline polydata with a ``MaximumInscribedSphereRadius`` point array.
+
+    Returns
+    -------
+    np.ndarray
+        Inscribed-sphere radii, shape ``(N,)``.  Zeros if the array is absent.
+    """
     vtk_array = centerline_polydata.GetPointData().GetArray("MaximumInscribedSphereRadius")
     radii = v2n(vtk_array) if vtk_array is not None else np.zeros(centerline_polydata.GetNumberOfPoints())
     return radii
@@ -126,6 +207,22 @@ def extract_inscribed_sphere_radii(centerline_polydata: vtk.vtkPolyData) -> np.n
 def get_centerline_point_and_normal(
     centerline_polydata: vtk.vtkPolyData, point_id: int,
 ) -> tuple[jax.Array, jax.Array]:
+    """Return the 3-D position and unit tangent at a centerline point.
+
+    Parameters
+    ----------
+    centerline_polydata : vtk.vtkPolyData
+        Centerline polydata.
+    point_id : int
+        Index of the centerline point.
+
+    Returns
+    -------
+    point : jax.Array
+        Coordinates of the point, shape ``(3,)``.
+    normal : jax.Array
+        Unit tangent vector at the point, shape ``(3,)``.
+    """
     point = jnp.array(centerline_polydata.GetPoint(point_id))  # Directly convert to JAX array
     num_centerline_points = centerline_polydata.GetNumberOfPoints()
     if 0 < point_id < num_centerline_points - 1:
@@ -143,6 +240,23 @@ def get_centerline_point_and_normal(
 
 
 def get_cross_sectional_area_of_triangulated_slice(triangulated_slice: vtk.vtkPolyData) -> float:
+    """Compute the area of a triangulated planar slice using ``vtkIntegrateAttributes``.
+
+    Parameters
+    ----------
+    triangulated_slice : vtk.vtkPolyData
+        Triangulated 2-D slice polydata.
+
+    Returns
+    -------
+    float
+        Surface area of the slice.
+
+    Raises
+    ------
+    Exception
+        If *triangulated_slice* is empty.
+    """
     if not triangulated_slice.GetNumberOfPoints():
         raise Exception('Empty slice')
     integrator = vtk.vtkIntegrateAttributes()
@@ -155,6 +269,22 @@ def get_cross_sectional_area_of_triangulated_slice(triangulated_slice: vtk.vtkPo
 def cut_polydata(
     polydata: vtk.vtkPolyData, origin: np.ndarray, normal: np.ndarray,
 ) -> vtk.vtkPolyData:
+    """Cut a polydata with a plane and return the resulting contour.
+
+    Parameters
+    ----------
+    polydata : vtk.vtkPolyData
+        Input polydata.
+    origin : np.ndarray
+        Plane origin, shape ``(3,)``.
+    normal : np.ndarray
+        Plane normal, shape ``(3,)``.
+
+    Returns
+    -------
+    vtk.vtkPolyData
+        Cut contour polydata.
+    """
     cutting_plane = vtk.vtkPlane()
     cutting_plane.SetOrigin(origin[0], origin[1], origin[2])
     cutting_plane.SetNormal(normal[0], normal[1], normal[2])
@@ -168,6 +298,20 @@ def cut_polydata(
 def connectivity(
     polydata: vtk.vtkPolyData, origin: np.ndarray,
 ) -> vtk.vtkConnectivityFilter:
+    """Extract the connected region of *polydata* closest to *origin*.
+
+    Parameters
+    ----------
+    polydata : vtk.vtkPolyData
+        Input polydata (typically a cut contour).
+    origin : np.ndarray
+        Reference point, shape ``(3,)``.
+
+    Returns
+    -------
+    vtk.vtkConnectivityFilter
+        Connectivity filter whose output is the closest region.
+    """
     connection = vtk.vtkConnectivityFilter()
     connection.SetInputData(polydata)
     connection.SetExtractionModeToClosestPointRegion()
@@ -179,6 +323,22 @@ def connectivity(
 def slice_polydata(
     surface_polydata: vtk.vtkPolyData, origin: np.ndarray, normal: np.ndarray,
 ) -> vtk.vtkPolyData:
+    """Cut a surface with a plane and return the closest connected contour.
+
+    Parameters
+    ----------
+    surface_polydata : vtk.vtkPolyData
+        Surface mesh polydata.
+    origin : np.ndarray
+        Plane origin, shape ``(3,)``.
+    normal : np.ndarray
+        Plane normal, shape ``(3,)``.
+
+    Returns
+    -------
+    vtk.vtkPolyData
+        Single-region contour polydata.
+    """
     cut = cut_polydata(surface_polydata, origin, normal)
     contour = connectivity(cut, origin)
     return contour.GetOutput()
@@ -187,6 +347,22 @@ def slice_polydata(
 def get_triangulated_slice(
     surface_polydata: vtk.vtkPolyData, origin: np.ndarray, normal: np.ndarray,
 ) -> vtk.vtkPolyData:
+    """Slice a surface with a plane and triangulate the resulting contour.
+
+    Parameters
+    ----------
+    surface_polydata : vtk.vtkPolyData
+        Surface mesh polydata.
+    origin : np.ndarray
+        Plane origin, shape ``(3,)``.
+    normal : np.ndarray
+        Plane normal, shape ``(3,)``.
+
+    Returns
+    -------
+    vtk.vtkPolyData
+        Triangulated 2-D slice polydata.
+    """
     assert(len(origin) == 3)
     assert(len(normal) == 3)
     triangulated_slice = vtk.vtkDelaunay2D()
@@ -199,6 +375,22 @@ def get_triangulated_slice(
 def get_cross_sectional_area(
     surface_polydata: vtk.vtkPolyData, origin: np.ndarray, normal: np.ndarray,
 ) -> float:
+    """Compute the cross-sectional area of a surface sliced by a plane.
+
+    Parameters
+    ----------
+    surface_polydata : vtk.vtkPolyData
+        Surface mesh polydata.
+    origin : np.ndarray
+        Plane origin, shape ``(3,)``.
+    normal : np.ndarray
+        Plane normal, shape ``(3,)``.
+
+    Returns
+    -------
+    float
+        Cross-sectional area.
+    """
     start_time = time.time()
     triangulated_slice = get_triangulated_slice(surface_polydata, origin, normal)
     mid_time = time.time()
@@ -214,7 +406,25 @@ def create_data_from_polydata(
     surface_polydata: vtk.vtkPolyData,
     other_geometry_polydatas: list[vtk.vtkPolyData],
 ) -> dict:
-    # Convert to JAX-compatible arrays by using jnp.array
+    """Build a simulation data dictionary from VTK polydata objects.
+
+    Deep-copies point arrays into JAX arrays and optionally includes
+    ``centerline_coordinate`` and additional geometry arrays.
+
+    Parameters
+    ----------
+    centerline_polydata : vtk.vtkPolyData
+        Centerline polydata.
+    surface_polydata : vtk.vtkPolyData
+        Surface mesh polydata.
+    other_geometry_polydatas : list[vtk.vtkPolyData]
+        Additional geometry polydata objects.
+
+    Returns
+    -------
+    dict
+        Simulation data dictionary.
+    """
     centerline_points = jnp.array(copy.deepcopy(v2n(centerline_polydata.GetPoints().GetData())))
     surface_points = jnp.array(copy.deepcopy(v2n(surface_polydata.GetPoints().GetData())))
     # Check if points have the required shape
