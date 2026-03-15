@@ -77,24 +77,6 @@ def set_force_center(data: dict, point_id: int) -> dict:
     data["nodes"]["force_center_point_id"] = point_id
     return data
 
-def interface_falloff(x: jx.Array, w_prime: float) -> jx.Array:
-    """Compute a smooth polynomial falloff for interface blending.
-
-    Parameters
-    ----------
-    x : jx.Array
-        Distance values.
-    w_prime : float
-        Falloff half-width.
-
-    Returns
-    -------
-    jx.Array
-        Falloff weights, same shape as *x*.
-    """
-    power = 8
-    return 1 / w_prime**power * (x - w_prime)**power 
-
 def mix(a: jx.Array, b: jx.Array, t: jx.Array) -> jx.Array:
     """Linearly interpolate between *a* and *b* by factor *t*.
 
