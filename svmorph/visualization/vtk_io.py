@@ -112,7 +112,6 @@ def build_parent_tip_map(
     if vtk_arr is None:
         raise ValueError("Point array 'CenterlineId' not found.")
     centerline_ids = v2n(vtk_arr)            # (N, n_components)
-    logger.debug(f"centerline_ids.shape = {centerline_ids.shape}")
     unique_rows, inverse = np.unique(centerline_ids, axis=0, return_inverse=True)
     if unique_rows.shape[0] == 1:
         return {pointId: -1 for pointId in range(centerline_ids.shape[0])}, np.zeros(centerline_ids.shape[0], dtype=bool)

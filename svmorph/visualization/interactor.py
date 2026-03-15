@@ -72,9 +72,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.highlight_actors = []
         self.mesh = mesh
         self.centerline = centerline
-        start_time = time.time()
         self.centerline_tangents = vtk_io.extract_centerline_tangents(centerline)
-        logger.timing(f"Getting centerline tangents: {time.time() - start_time:.4f} s")
         self.data = vtk_io.extract_mesh_arrays(mesh, centerline)
         self.parent_tip_map, self.segment_base_mask = vtk_io.build_parent_tip_map(centerline)
         self.centerline_section_areas = vtk_io.extract_cross_section_areas(centerline)
@@ -792,15 +790,20 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         aneurysm_representative = simulation_data['points']['surface'][self.stenosis_minimum_radius_representative]
         selected_point = simulation_data['points']['centerline'][force_center_point_id]
         current_aneurysm_maximum_radius = np.linalg.norm(aneurysm_representative - selected_point)
-        logger.info(f"Current aneurysm maximum radius: {current_aneurysm_maximum_radius} cm")
-        logger.info(f"Delta to previous step: {current_aneurysm_maximum_radius - self.previous_aneurysm_maximum_radius} cm")
+        logger.debug(f"Current aneurysm maximum radius: {current_aneurysm_maximum_radius} cm")
+        logger.debug(f"Delta to previous step: {current_aneurysm_maximum_radius - self.previous_aneurysm_maximum_radius} cm")
+        delta_aneurysm = current_aneurysm_maximum_radius - self.previous_aneurysm_maximum_radius
         self.previous_aneurysm_maximum_radius = current_aneurysm_maximum_radius
 
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
         elapsed = max(time.time() - total_start_time, 1e-9)
         logger.timing(f"Total simulation time: {elapsed:.4f} s")
         if self._main_window is not None:
-            self._main_window.setWindowTitle(f"svMorph | FPS: {int(round(1 / elapsed))}")
+            self._main_window.setWindowTitle(
+                f"svMorph | FPS: {int(round(1 / elapsed))} | "
+                f"Aneurysm radius: {current_aneurysm_maximum_radius:.4f} cm | "
+                f"Δ: {delta_aneurysm:.4f} cm"
+            )
 
     def run_aneurysm_sdf_contact(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
         """Execute one SDF-contact stent deployment time step.
@@ -909,12 +912,17 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         stenosis_representative = simulation_data['points']['surface'][self.stenosis_minimum_radius_representative]
         selected_point = simulation_data['points']['centerline'][force_center_point_id]
         current_stenosis_minimum_radius = np.linalg.norm(stenosis_representative - selected_point)
-        logger.info(f"Current stenosis minimum radius: {current_stenosis_minimum_radius} cm")
-        logger.info(f"Delta to previous step: {current_stenosis_minimum_radius - self.previous_stenosis_minimum_radius} cm")
+        logger.debug(f"Current stenosis minimum radius: {current_stenosis_minimum_radius} cm")
+        logger.debug(f"Delta to previous step: {current_stenosis_minimum_radius - self.previous_stenosis_minimum_radius} cm")
+        delta_stenosis = current_stenosis_minimum_radius - self.previous_stenosis_minimum_radius
         self.previous_stenosis_minimum_radius = current_stenosis_minimum_radius
         logger.timing(f"Updating points and polydata: {time.time() - displacement_start_time:.4f} s")
         elapsed = max(time.time() - total_start_time, 1e-9)
         logger.timing(f"Total simulation time: {elapsed:.4f} s")
         if self._main_window is not None:
-            self._main_window.setWindowTitle(f"svMorph | FPS: {int(round(1 / elapsed))}")
+            self._main_window.setWindowTitle(
+                f"svMorph | FPS: {int(round(1 / elapsed))} | "
+                f"Stenosis radius: {current_stenosis_minimum_radius:.4f} cm | "
+                f"Δ: {delta_stenosis:.4f} cm"
+            )
         return step_size
