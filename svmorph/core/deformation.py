@@ -137,7 +137,7 @@ def smin_and_gradient(
     grad : jx.Array
         Blended gradient.
     """
-    k = k * 4.0
+    k = k * 4.0 # a quirk from the math in the paper
     h = jnp.maximum(k - jnp.abs(a - b), 0.0) / k
     n = 0.5 * h
     m = h**2 * k / 4.0
