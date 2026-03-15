@@ -444,36 +444,36 @@ class MainWindow(QMainWindow):
         """Handle stent length slider changes"""
         length_value = SliderMapper.stent_length_slider_to_value(value)
         self.stent_length_value.setText(f"{length_value:.4f}")
-        if hasattr(self, "style") and self.style:
-            self.style.update_prescribed_stent_length(length_value)
+        if hasattr(self, "interactor") and self.interactor:
+            self.interactor.update_prescribed_stent_length(length_value)
 
     def _on_stent_diameter_slider_change(self, value):
         """Handle stent diameter slider changes"""
         diameter_value = SliderMapper.stent_diameter_slider_to_value(value)
         self.stent_diameter_value.setText(f"{diameter_value:.4f}")
-        if hasattr(self, "style") and self.style:
-            self.style.update_prescribed_stent_radius(diameter_value / 2.0)
+        if hasattr(self, "interactor") and self.interactor:
+            self.interactor.update_prescribed_stent_radius(diameter_value / 2.0)
 
     def _on_epsilon_slider_change(self, value):
         """Handle epsilon slider changes"""
         epsilon_value = value / 100.0
         self.stenosis_slider_value.setText(f"{epsilon_value}")
-        if hasattr(self, "style") and self.style:
+        if hasattr(self, "interactor") and self.interactor:
             force_scale_value = SliderMapper.force_scale_slider_to_value(
                 self.area_slider.value()
             )
-            self.style.update_deformation_parameters(epsilon_value, -force_scale_value)
+            self.interactor.update_deformation_parameters(epsilon_value, -force_scale_value)
 
     def _on_epsilon_text_change(self, text):
         """Handle epsilon text input changes"""
         try:
             value = float(text)
             self.stenosis_area_slider.setValue(int(value * 100))
-            if hasattr(self, "style") and self.style:
+            if hasattr(self, "interactor") and self.interactor:
                 force_scale_value = SliderMapper.force_scale_slider_to_value(
                     self.area_slider.value()
                 )
-                self.style.update_deformation_parameters(value, -force_scale_value)
+                self.interactor.update_deformation_parameters(value, -force_scale_value)
         except ValueError:
             pass
 
@@ -481,10 +481,10 @@ class MainWindow(QMainWindow):
         """Initialize VTK handler and setup the visualization pipeline"""
         if not self.mesh_file or not self.centerline_file:
             # No data loaded yet — show an empty white viewport
-            if not hasattr(self, 'ren'):
-                self.ren = vtk.vtkRenderer()
-                self.ren.SetBackground(1, 1, 1)
-                self.vtk_widget.GetRenderWindow().AddRenderer(self.ren)
+            if not hasattr(self, 'renderer'):
+                self.renderer = vtk.vtkRenderer()
+                self.renderer.SetBackground(1, 1, 1)
+                self.vtk_widget.GetRenderWindow().AddRenderer(self.renderer)
                 self.vtk_interactor.SetRenderWindow(self.vtk_widget.GetRenderWindow())
                 self.vtk_widget.GetRenderWindow().Render()
                 self.vtk_interactor.Initialize()
@@ -494,14 +494,14 @@ class MainWindow(QMainWindow):
 
         self.vtk_handler = SceneManager(self.mesh_file, self.centerline_file)
 
-        self.ren = self.vtk_handler.get_renderer()
-        self.ren.SetBackground(1, 1, 1)
+        self.renderer = self.vtk_handler.get_renderer()
+        self.renderer.SetBackground(1, 1, 1)
         if self.vtk_widget.GetRenderWindow().GetRenderers().GetNumberOfItems() > 0:
             self.vtk_widget.GetRenderWindow().GetRenderers().RemoveAllItems()
-        self.vtk_widget.GetRenderWindow().AddRenderer(self.ren)
+        self.vtk_widget.GetRenderWindow().AddRenderer(self.renderer)
 
-        self.style = self.vtk_handler.get_interactor_style()
-        self.vtk_interactor.SetInteractorStyle(self.style)
+        self.interactor = self.vtk_handler.get_interactor_style()
+        self.vtk_interactor.SetInteractorStyle(self.interactor)
         self.vtk_interactor.SetRenderWindow(self.vtk_widget.GetRenderWindow())
         self.vtk_widget.GetRenderWindow().Render()
 
@@ -513,20 +513,20 @@ class MainWindow(QMainWindow):
         force_scale_value = SliderMapper.force_scale_slider_to_value(
             self.area_slider.value()
         )
-        self.style.update_deformation_parameters(epsilon_value, -force_scale_value)
+        self.interactor.update_deformation_parameters(epsilon_value, -force_scale_value)
 
         # Initialize UI styling
         UIStyleManager.set_button_active(self.toggle_camera_lock_button, False)
 
         # Display debugging information about radius as text in viewport
-        self.style.display_radius_texts()
+        self.interactor.display_radius_texts()
 
     def keyPressEvent(self, event):
         """Handle keyboard events"""
         # when buttons are pressed focus shifts to PyQt window so key press events
         # are not captured by VTK and needed to be handled here
         if event.key() == Qt.Key.Key_H:
-            self.style.toggle_roi_cylinder()
+            self.interactor.toggle_roi_cylinder()
         elif event.key() == Qt.Key.Key_D:
             # Reserved for future functionality
             pass
@@ -538,7 +538,7 @@ class MainWindow(QMainWindow):
         )
         epsilon = self.stenosis_area_slider.value() / 100.0
         logger.info(f"Running Kelvinlet deformation with force_scale={force_scale}, epsilon={epsilon}")
-        self.style.deform_mesh_sequential(epsilon, force_scale)
+        self.interactor.deform_mesh_sequential(epsilon, force_scale)
 
     def run_deformation_sdf(self):
         """Run SDF-based contact deformation"""
@@ -549,7 +549,7 @@ class MainWindow(QMainWindow):
         logger.info(
             f"Running SDF contact deformation with force_scale={force_scale}, epsilon={epsilon}"
         )
-        self.style.deform_mesh_sdf_contact(epsilon, force_scale)
+        self.interactor.deform_mesh_sdf_contact(epsilon, force_scale)
 
     def run_deformation_simultaneous(self):
         """Run simultaneous parallel mesh deformation"""
@@ -558,7 +558,7 @@ class MainWindow(QMainWindow):
         )
         epsilon = self.stenosis_area_slider.value() / 100.0
         logger.info(f"Running straightening deformation with force_scale={force_scale}, epsilon={epsilon}")
-        self.style.deform_mesh_with_straightening(epsilon, force_scale)
+        self.interactor.deform_mesh_with_straightening(epsilon, force_scale)
 
     def run_stenosis(self):
         """Run stenosis deformation with user-specified parameters"""
@@ -581,24 +581,24 @@ class MainWindow(QMainWindow):
         logger.info(
             f"Running stenosis with force_scale={force_scale}, stenosis_radius={stenosis_radius}, stenosis_length={stenosis_length}"
         )
-        self.style.deform_mesh_stenosis(
+        self.interactor.deform_mesh_stenosis(
             force_scale, area_percent_change, stenosis_radius, stenosis_length
         )
 
     def toggle_camera_lock(self):
         """Toggle camera lock and update button styling"""
         UIStyleManager.toggle_button_style(self.toggle_camera_lock_button)
-        self.style.toggle_camera_lock()
+        self.interactor.toggle_camera_lock()
 
     def display_centerline_nodes(self):
         """Display centerline nodes for single point selection"""
         logger.info("Please select centerline nodes to generate aneurysm.")
-        self.style.display_centerline_vertices()
+        self.interactor.display_centerline_vertices()
 
     def render_sdf(self):
         """Display signed distance field visualization"""
         logger.info("Displaying signed distance field.")
-        self.style.render_sdf()
+        self.interactor.render_sdf()
 
     def start_continuous_deformation(self):
         """Start continuous deformation timer"""
@@ -626,8 +626,8 @@ class MainWindow(QMainWindow):
 
     def save_current_stent(self):
         """Save the current stent configuration"""
-        if hasattr(self, "style") and self.style:
-            self.style.save_current_stent()
+        if hasattr(self, "interactor") and self.interactor:
+            self.interactor.save_current_stent()
             logger.info("Current stent placed.")
         else:
             logger.warning("VTK handler not initialized. Cannot place stent.")
@@ -660,8 +660,8 @@ class MainWindow(QMainWindow):
         self.slider_value.setText(f"{float_value:.3f}")
         # Assuming self.stenosis_area_slider exists, convert its value similarly:
         stenosis_value = self.stenosis_area_slider.value() / 100.0
-        if hasattr(self, "style") and self.style:
-            self.style.update_deformation_parameters(stenosis_value, -float_value)
+        if hasattr(self, "interactor") and self.interactor:
+            self.interactor.update_deformation_parameters(stenosis_value, -float_value)
 
     def on_force_scale_text_change(self, text):
         """
@@ -676,8 +676,8 @@ class MainWindow(QMainWindow):
         new_slider_val = SliderMapper.force_scale_value_to_slider(new_value)
         self.area_slider.setValue(new_slider_val)
         stenosis_value = self.stenosis_area_slider.value() / 100.0
-        if hasattr(self, "style") and self.style:
-            self.style.update_deformation_parameters(stenosis_value, -new_value)
+        if hasattr(self, "interactor") and self.interactor:
+            self.interactor.update_deformation_parameters(stenosis_value, -new_value)
 
     def save_mesh(self):
         """Save the current mesh to a file"""

@@ -34,8 +34,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.AddObserver("KeyPressEvent", self.key_press_event)
         self.AddObserver("KeyReleaseEvent", self.key_release_event)
         self.AddObserver("TimerEvent", self.timer_callback)
-        self.vertexVisualizationActors = []
-        self.redHighlightActors = []
+        self.vertex_actors = []
+        self.highlight_actors = []
         self.mesh = mesh
         self.centerline = centerline
         start_time = time.time()
@@ -64,6 +64,10 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.undeployed_stent_radius = 0.05 - self.smoothing_k
         self.current_stent_radius = self.undeployed_stent_radius
         self.stent_unit_section_halflength = 0.2
+        self.stent_segment_length = 0.1  # cm
+        self.foreshortening_percentage = 0.1  # 10%
+        self.influence_radius = 0.65  # doi from paper
+        self.contact_distance = 0.001  # doc from paper
         self.previous_stenosis_minimum_radius = None
         self.previous_aneurysm_maximum_radius = None
 
@@ -110,24 +114,24 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         picker.PickFromListOn()
         picker.AddPickList(self.centerline_actor)
         picker.Pick(click_pos[0], click_pos[1], 0, renderer)
-        pointID = picker.GetPointId()
+        point_id = picker.GetPointId()
 
-        if pointID >= 0:
-            logger.info(f"Clicked and selected point ID: {pointID}")
-            self.selected_points.append(pointID)
+        if point_id >= 0:
+            logger.info(f"Clicked and selected point ID: {point_id}")
+            self.selected_points.append(point_id)
             polydata = self.centerline_actor.GetMapper().GetInput()
             sphere_center = [0.0, 0.0, 0.0]
-            polydata.GetPoint(pointID, sphere_center)
+            polydata.GetPoint(point_id, sphere_center)
             self.operation_count = 0
             self.total_displacement_distance = 0.0
-            self.place_highlight_sphere(sphere_center, pointID)
+            self.place_highlight_sphere(sphere_center, point_id)
             self.compute_prescribed_stent()
-            self.compute_stenosis_minimum_radius_representative(pointID)
+            self.compute_stenosis_minimum_radius_representative(point_id)
             
             if len(self.selected_points) > self.num_kelvinlet_points:
                 self.selected_points.pop(0)
-                renderer.RemoveActor(self.redHighlightActors[0])
-                self.redHighlightActors.pop(0)
+                renderer.RemoveActor(self.highlight_actors[0])
+                self.highlight_actors.pop(0)
                 renderer.RemoveActor(self.roi_actors[0])
                 self.roi_actors.pop(0)
                 if len(self.stent_visualization_actors) >= 2:
@@ -146,23 +150,23 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         num_points = points.GetNumberOfPoints()
         logger.debug(f"Number of points in centerline: {num_points}")
 
-        sphereSource = vtkSphereSource()
-        sphereSource.SetRadius(0.01)  # Adjust radius as needed.
-        sphereSource.SetThetaResolution(8)
-        sphereSource.SetPhiResolution(8)
-        sphereSource.Update()
+        sphere_source = vtkSphereSource()
+        sphere_source.SetRadius(0.01)  # Adjust radius as needed.
+        sphere_source.SetThetaResolution(8)
+        sphere_source.SetPhiResolution(8)
+        sphere_source.Update()
 
-        self.glyphMapper = vtkGlyph3DMapper()
-        self.glyphMapper.SetSourceConnection(sphereSource.GetOutputPort())
-        self.glyphMapper.SetInputData(self.centerline_actor.GetMapper().GetInput())
-        self.glyphMapper.ScalingOff()               # uniform size
-        self.glyphMapper.SetStatic(1)               # no per-glyph data changes expected
+        self.glyph_mapper = vtkGlyph3DMapper()
+        self.glyph_mapper.SetSourceConnection(sphere_source.GetOutputPort())
+        self.glyph_mapper.SetInputData(self.centerline_actor.GetMapper().GetInput())
+        self.glyph_mapper.ScalingOff()               # uniform size
+        self.glyph_mapper.SetStatic(1)               # no per-glyph data changes expected
 
-        self.glyphActor = vtkActor()
-        self.glyphActor.SetMapper(self.glyphMapper)
-        self.glyphActor.GetProperty().SetColor(0.0, 1.0, 1.0)
+        self.glyph_actor = vtkActor()
+        self.glyph_actor.SetMapper(self.glyph_mapper)
+        self.glyph_actor.GetProperty().SetColor(0.0, 1.0, 1.0)
 
-        self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(self.glyphActor)
+        self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor(self.glyph_actor)
         self.mesh_actor.GetProperty().SetOpacity(0.2) # original opacity
         self.centerline_actor.SetPickable(1)
         self.GetInteractor().GetRenderWindow().Render()
@@ -190,10 +194,10 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if len(self.selected_points) == 0:
             radius = 0.0
         else:
-            pointID = self.selected_points[-1]
-            area = self.centerline_section_areas[pointID]
+            point_id = self.selected_points[-1]
+            area = self.centerline_section_areas[point_id]
             radius = np.sqrt(area / np.pi)
-        self.radius_text_actor.SetInput(f"MIS radius = {self.maximum_inscribed_sphere_radius[pointID]:.4f}, lumen effective radius = {radius:.4f}")
+        self.radius_text_actor.SetInput(f"MIS radius = {self.maximum_inscribed_sphere_radius[point_id]:.4f}, lumen effective radius = {radius:.4f}")
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_roi_text(self):
@@ -202,31 +206,29 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius + self.smoothing_k:.4f}")
 
     def compute_prescribed_stent(self):
-        segment_length = 0.1 # cm
-        foreshortening_percentage = 0.1 # 10%
-        deployed_stent_length = self.stent_length * (1 - foreshortening_percentage)
-        self.stent_axis_vertices = geometry.resample_stent_axis(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, segment_length, sampling_direction=self.sampling_direction)
-        logger.debug(f"Num vertices for stent of length {self.stent_length} cm, segment length {segment_length} cm: {len(self.stent_axis_vertices)}")
+        deployed_stent_length = self.stent_length * (1 - self.foreshortening_percentage)
+        self.stent_axis_vertices = geometry.resample_stent_axis(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, self.stent_segment_length, sampling_direction=self.sampling_direction)
+        logger.debug(f"Num vertices for stent of length {self.stent_length} cm, segment length {self.stent_segment_length} cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
         
-    def compute_stenosis_minimum_radius_representative(self, pointID):
-        logger.debug(f"Selected stenosis center point ID: {pointID}")
+    def compute_stenosis_minimum_radius_representative(self, point_id):
+        logger.debug(f"Selected stenosis center point ID: {point_id}")
         data_points = self.data["points"]["surface"]
         centerline_points = self.data["points"]["centerline"]
         num_kelvinlet_points = 1
         xs = np.expand_dims(data_points, 1)
         xs = np.tile(xs, (1, num_kelvinlet_points, 1))
-        centers = np.expand_dims(np.array([centerline_points[pointID]]), 0)
-        force_center_normal = self.centerline_tangents[pointID]
+        centers = np.expand_dims(np.array([centerline_points[point_id]]), 0)
+        force_center_normal = self.centerline_tangents[point_id]
         kelvinlet_points_normals = np.array([force_center_normal])
         rotation_matrices = deformation.compute_householder_matrices(kelvinlet_points_normals)
-        original_radius = self.maximum_inscribed_sphere_radius[pointID]
+        original_radius = self.maximum_inscribed_sphere_radius[point_id]
         self.stenosis_minimum_radius_representative, current_radius = deformation.find_stenosis_minimum_radius_representative(data_points, rotation_matrices, xs, centers, original_radius)
         logger.debug(f"Stenosis minimum radius representative index: {self.stenosis_minimum_radius_representative}")
         self.previous_stenosis_minimum_radius = current_radius
         self.previous_aneurysm_maximum_radius = current_radius
 
-    def place_highlight_sphere(self, position, pointID):
+    def place_highlight_sphere(self, position, point_id):
         sphere = vtkSphereSource()
         sphere.SetCenter(position)
         sphere.SetRadius(0.04)
@@ -238,15 +240,15 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         actor.SetMapper(mapper)
         actor.GetProperty().SetColor(1.0, 0.0, 0.0)
         actor.GetProperty().SetOpacity(0.8)
-        actor.centerpointID = pointID
-        actor.sphereSource = sphere 
+        actor.center_point_id = point_id
+        actor.sphere_source = sphere 
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.AddActor(actor)
-        self.redHighlightActors.append(actor)
+        self.highlight_actors.append(actor)
 
         self.lock_camera(position)
-        self.place_radius_of_influence_cylinder(position, pointID)
+        self.place_radius_of_influence_cylinder(position, point_id)
 
     def place_sdf_stent_visualization(self):
         if self.stent_axis_vertices is None:
@@ -347,17 +349,17 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         sdf = deformation.capsule_sdf(p, self.stent_axis_vertices, r)
         logger.timing(f"Computing SDF: {time.time() - time_start:.4f} s")
         render_time_start = time.time()
-        imageData = vtkImageData()
-        imageData.SetDimensions(nx, ny, nz)
+        image_data = vtkImageData()
+        image_data.SetDimensions(nx, ny, nz)
         spacing = ((xmax - xmin) / (nx - 1), (ymax - ymin) / (ny - 1), (zmax - zmin) / (nz - 1))
-        imageData.SetSpacing(spacing)
-        imageData.SetOrigin(xmin, ymin, zmin)
+        image_data.SetSpacing(spacing)
+        image_data.SetOrigin(xmin, ymin, zmin)
         sdf_flat = sdf.ravel(order='F')
         vtk_sdf = numpy_to_vtk(sdf_flat, deep=True, array_type=get_vtk_array_type(np.float32))
         vtk_sdf.SetName("SDF")
-        imageData.GetPointData().SetScalars(vtk_sdf)
+        image_data.GetPointData().SetScalars(vtk_sdf)
         mc = vtkMarchingCubes()
-        mc.SetInputData(imageData)
+        mc.SetInputData(image_data)
         mc.SetValue(0, 0.0)
         mc.Update()
         mapper = vtkPolyDataMapper()
@@ -370,14 +372,14 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render() 
         logger.timing(f"Rendering SDF: {time.time() - render_time_start:.4f} s")
         
-    def place_radius_of_influence_cylinder(self, position, pointID):
+    def place_radius_of_influence_cylinder(self, position, point_id):
         cylinder = vtkCylinderSource()
         cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
         cylinder.SetHeight(2 * self.stent_unit_section_halflength)
         cylinder.SetResolution(100)
 
         default_axis = np.array([0, 1, 0])
-        tangent = self.centerline_tangents[pointID]
+        tangent = self.centerline_tangents[point_id]
         rotation_axis = np.cross(default_axis, tangent)
         angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
 
@@ -398,7 +400,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         actor.GetProperty().SetColor(0.9, 0.9, 0.9)
         actor.GetProperty().SetOpacity(0.0)
         actor.SetPickable(0)
-        actor.centerpointID = pointID
+        actor.center_point_id = point_id
         actor.cylinderSource = cylinder 
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
@@ -407,14 +409,14 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         actor.SetVisibility(self.roi_visible)
         self.roi_actors.append(actor)
 
-    def place_stent_cylinder(self, position, pointID):
+    def place_stent_cylinder(self, position, point_id):
         cylinder = vtkCylinderSource()
         cylinder.SetRadius(self.stent_radius)
         cylinder.SetHeight(2 * self.stent_unit_section_halflength)
         cylinder.SetResolution(100)
 
         default_axis = np.array([0, 1, 0])
-        tangent = self.centerline_tangents[pointID]
+        tangent = self.centerline_tangents[point_id]
         rotation_axis = np.cross(default_axis, tangent)
         angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
 
@@ -435,7 +437,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         actor.GetProperty().SetColor(0.9, 0.9, 0.9)
         actor.GetProperty().SetOpacity(0.2)
         actor.SetPickable(0)
-        actor.centerpointID = pointID
+        actor.center_point_id = point_id
         actor.cylinderSource = cylinder 
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
@@ -445,30 +447,30 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.stent_actors.append(actor)
 
     def update_red_highlight_sphere_position(self, idx):
-        pointID = self.selected_points[idx]
+        point_id = self.selected_points[idx]
         polydata = self.centerline_actor.GetMapper().GetInput()
         sphere_center = [0.0, 0.0, 0.0]
-        polydata.GetPoint(pointID, sphere_center)
+        polydata.GetPoint(point_id, sphere_center)
         
-        highlight_actor = self.redHighlightActors[idx]
-        highlight_sphere = highlight_actor.sphereSource
+        highlight_actor = self.highlight_actors[idx]
+        highlight_sphere = highlight_actor.sphere_source
         highlight_sphere.SetCenter(sphere_center)
 
         self.lock_camera(sphere_center)
         if self.operation_count == 0:
-            self.place_stent_cylinder(sphere_center, pointID)
+            self.place_stent_cylinder(sphere_center, point_id)
         self.operation_count += 1
         if self.operation_count % 5 == 0:
-            self.place_stent_cylinder(sphere_center, pointID)
+            self.place_stent_cylinder(sphere_center, point_id)
 
     def update_radius_of_influence_cylinder(self, idx):
-        pointID = self.selected_points[idx]
+        point_id = self.selected_points[idx]
         polydata = self.centerline_actor.GetMapper().GetInput()
         position = [0.0, 0.0, 0.0]
-        polydata.GetPoint(pointID, position)
+        polydata.GetPoint(point_id, position)
         roi_actor = self.roi_actors[-1]
         default_axis = np.array([0, 1, 0])
-        tangent = self.centerline_tangents[pointID]
+        tangent = self.centerline_tangents[point_id]
         rotation_axis = np.cross(default_axis, tangent)
         angle = 180 / np.pi * np.arccos(np.dot(default_axis, tangent))
         transform = vtkTransform()
@@ -594,8 +596,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             if len(self.selected_points) > 1:
                 self.selected_points.pop(0)
                 renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
-                renderer.RemoveActor(self.redHighlightActors[0])
-                self.redHighlightActors.pop(0)
+                renderer.RemoveActor(self.highlight_actors[0])
+                self.highlight_actors.pop(0)
                 renderer.RemoveActor(self.roi_actors[0])
                 self.roi_actors.pop(0)
             self.GetInteractor().GetRenderWindow().Render()
@@ -798,7 +800,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         step_start_time = time.time()
         eps = affine_params["eps"][model]
         logger.debug(f"Main loop eps={eps}, force_scale={force_scale}")
-        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius)
+        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
         
@@ -844,7 +846,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         step_start_time = time.time()
         eps = affine_params["eps"][model]
         logger.debug(f"Main loop eps={eps}, force_scale={force_scale}")
-        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius)
+        surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, a, b, self.stent_axis_vertices, eps, force_scale, None, normal, stent_halflength, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
         

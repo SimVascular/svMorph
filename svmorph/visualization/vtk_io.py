@@ -59,18 +59,18 @@ def build_parent_tip_map(centerline_polydata):
     vtk_arr = centerline_polydata.GetPointData().GetArray("CenterlineId")
     if vtk_arr is None:
         raise ValueError("Point array 'CenterlineId' not found.")
-    flags = v2n(vtk_arr)            # (N, n_components)
-    logger.debug(f"flags.shape = {flags.shape}")
-    unique_rows, inverse = np.unique(flags, axis=0, return_inverse=True)
+    centerline_ids = v2n(vtk_arr)            # (N, n_components)
+    logger.debug(f"centerline_ids.shape = {centerline_ids.shape}")
+    unique_rows, inverse = np.unique(centerline_ids, axis=0, return_inverse=True)
     if unique_rows.shape[0] == 1:
-        return {pointId: -1 for pointId in range(flags.shape[0])}, np.zeros(flags.shape[0], dtype=bool)
+        return {pointId: -1 for pointId in range(centerline_ids.shape[0])}, np.zeros(centerline_ids.shape[0], dtype=bool)
     segment_points = defaultdict(list)          # seg_id -> [pt_id, ...]
     for pointId, seg_id in enumerate(inverse):
         segment_points[seg_id].append(pointId)
-    seg_tip = {seg_id: max(pts) for seg_id, pts in segment_points.items()}
-    segment_base_mask = np.zeros(flags.shape[0], dtype=bool)
-    for seg_id, pts in segment_points.items():
-        segment_base_mask[min(pts)] = True
+    seg_tip = {seg_id: max(points) for seg_id, points in segment_points.items()}
+    segment_base_mask = np.zeros(centerline_ids.shape[0], dtype=bool)
+    for seg_id, points in segment_points.items():
+        segment_base_mask[min(points)] = True
     seg_bitcount = unique_rows.sum(axis=1)      # (n_segments,)
     parent_tip_for_segment = {}   # seg_id -> parent_tip_point_id
     for child_id, child_mask in enumerate(unique_rows):
@@ -105,15 +105,15 @@ def extract_centerline_tangents(centerline_polydata):
 
 
 def extract_cross_section_areas(centerline_polydata):
-    areas = centerline_polydata.GetPointData().GetArray("CenterlineSectionArea")
-    res = v2n(areas) if areas is not None else np.zeros(centerline_polydata.GetNumberOfPoints())
-    return res
+    vtk_array = centerline_polydata.GetPointData().GetArray("CenterlineSectionArea")
+    areas = v2n(vtk_array) if vtk_array is not None else np.zeros(centerline_polydata.GetNumberOfPoints())
+    return areas
 
 
 def extract_inscribed_sphere_radii(centerline_polydata):
-    radii = centerline_polydata.GetPointData().GetArray("MaximumInscribedSphereRadius")
-    res = v2n(radii) if radii is not None else np.zeros(centerline_polydata.GetNumberOfPoints())
-    return res
+    vtk_array = centerline_polydata.GetPointData().GetArray("MaximumInscribedSphereRadius")
+    radii = v2n(vtk_array) if vtk_array is not None else np.zeros(centerline_polydata.GetNumberOfPoints())
+    return radii
 
 
 def get_centerline_point_and_normal(centerline_polydata, point_id):
@@ -220,10 +220,10 @@ def create_data_from_polydata(centerline_polydata, surface_polydata, other_geome
     else:
         logger.warning("No centerline_coordinate array found on centerline polydata")
     # Process and add other geometry points as JAX arrays
-    for ig, polydata in enumerate(other_geometry_polydatas):
+    for geom_idx, polydata in enumerate(other_geometry_polydatas):
         other_geometry_points = jnp.array(copy.deepcopy(v2n(polydata.GetPoints().GetData())))
         assert other_geometry_points.shape[1] == 3
-        data["points"][f"other_geometry_{ig}"] = other_geometry_points
+        data["points"][f"other_geometry_{geom_idx}"] = other_geometry_points
     return data
 
 
