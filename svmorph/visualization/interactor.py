@@ -25,7 +25,7 @@ from vtkmodules.vtkRenderingCore import (
 from svmorph.core import deformation
 from svmorph.core import geometry
 from svmorph.core import mesh_data
-from svmorph.core.units import L
+from svmorph.core.units import L, unit_name
 from svmorph.visualization import vtk_io
 import numpy as np
 from vtk.util.numpy_support import numpy_to_vtk, get_vtk_array_type
@@ -105,8 +105,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.previous_aneurysm_maximum_radius = None
 
         self.stent_visualization_actors = []
-        self.radius_text_actor = None
-        self.roi_text_actor = None
         self.glyph_actor = None
 
         self.camera_lock = False
@@ -196,43 +194,22 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.centerline_actor.SetPickable(1)
         self.GetInteractor().GetRenderWindow().Render()
 
-    def display_radius_texts(self):
-        """Create and display the on-screen radius and stent-radius text actors."""
-        radius = 0.0
-        selected_point_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
-        selected_point_text_actor.SetInput(f"MIS radius = {radius / L():.4f} cm, lumen effective radius = {radius / L():.4f} cm")
-        selected_point_text_actor.GetTextProperty().SetColor(0.0, 0.0, 0.0)
-        selected_point_text_actor.GetTextProperty().SetFontSize(16)
-        selected_point_text_actor.SetPosition(10, 28)
-        self.radius_text_actor = selected_point_text_actor
-        roi_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
-        roi_text_actor.SetInput(f"stent radius = {(self.current_stent_radius + self.smoothing_k) / L():.4f} cm")
-        roi_text_actor.GetTextProperty().SetColor(0.0, 0.0, 0.0)
-        roi_text_actor.GetTextProperty().SetFontSize(16)
-        roi_text_actor.SetPosition(10, 4)
-        self.roi_text_actor = roi_text_actor
-        
-        self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor2D(self.radius_text_actor)
-        self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().AddActor2D(self.roi_text_actor)
-        self.GetInteractor().GetRenderWindow().Render()
-        
     def update_selected_point_radius_text(self):
-        """Refresh the MIS and lumen effective radius text for the most recently selected point."""
+        """Show MIS and lumen effective radius in the window title bar."""
+        if self._main_window is None:
+            return
         if len(self.selected_points) == 0:
-            self.radius_text_actor.SetInput("MIS radius = 0.0000 cm, lumen effective radius = 0.0000 cm")
-            self.GetInteractor().GetRenderWindow().Render()
+            self._main_window.setWindowTitle("svMorph")
             return
         point_id = self.selected_points[-1]
         area = self.centerline_section_areas[point_id]
-        radius = np.sqrt(area / np.pi)
-        self.radius_text_actor.SetInput(f"MIS radius = {self.maximum_inscribed_sphere_radius[point_id] / L():.4f} cm, lumen effective radius = {radius / L():.4f} cm")
-        self.GetInteractor().GetRenderWindow().Render()
-
-    def update_roi_text(self):
-        """Refresh the on-screen stent radius text actor."""
-        if self.roi_text_actor is None:
-            return
-        self.roi_text_actor.SetInput(f"stent radius = {(self.current_stent_radius + self.smoothing_k) / L():.4f} cm")
+        lumen_r = np.sqrt(area / np.pi)
+        mis_r = self.maximum_inscribed_sphere_radius[point_id]
+        u = unit_name()
+        self._main_window.setWindowTitle(
+            f"svMorph | MIS radius: {mis_r:.4f} {u} | "
+            f"Lumen effective radius: {lumen_r:.4f} {u}"
+        )
 
     def compute_prescribed_stent(self):
         """Resample the centerline to produce stent axis vertices and update the visualisation."""
@@ -404,7 +381,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         """Update the Kelvinlet sharpness and force-scale parameters and refresh the display."""
         self.sharpness = sharpness
         self.force_scale = force_scale
-        self.update_roi_text()
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_prescribed_stent_radius(self, radius):
@@ -429,7 +405,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             for stent_segment_actor in stent_visualization_assembly.GetParts():
                 stent_segment_geometry = stent_segment_actor.geometrySource
                 stent_segment_geometry.SetRadius(self.current_stent_radius + self.smoothing_k)
-        self.update_roi_text()
     
     def update_current_stent_curvature(self):
         """Straighten the stent axis vertices by projecting toward the start–end line."""
@@ -589,8 +564,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if self._main_window is not None:
             self._main_window.setWindowTitle(
                 f"svMorph | FPS: {int(round(1 / elapsed))} | "
-                f"Aneurysm radius: {current_aneurysm_maximum_radius:.4f} cm | "
-                f"Δ: {delta_aneurysm:.4f} cm"
+                f"Aneurysm radius: {current_aneurysm_maximum_radius:.4f} {unit_name()} | "
+                f"Δ: {delta_aneurysm:.4f} {unit_name()}"
             )
 
     def run_stent(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
@@ -627,7 +602,13 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         elapsed = max(time.time() - total_start_time, 1e-9)
         logger.timing(f"Total simulation time: {elapsed:.4f} s")
         if self._main_window is not None:
-            self._main_window.setWindowTitle(f"svMorph | FPS: {int(round(1 / elapsed))}")
+            u = unit_name()
+            r = self.current_stent_radius + self.smoothing_k
+            d = 2 * r
+            self._main_window.setWindowTitle(
+                f"svMorph | FPS: {int(round(1 / elapsed))} | "
+                f"Stent radius: {r:.4f} {u} | Stent diameter: {d:.4f} {u}"
+            )
         return step_size
 
     def run_stent_straightening(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
@@ -664,7 +645,13 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         elapsed = max(time.time() - total_start_time, 1e-9)
         logger.timing(f"Total simulation time: {elapsed:.4f} s")
         if self._main_window is not None:
-            self._main_window.setWindowTitle(f"svMorph | FPS: {int(round(1 / elapsed))}")
+            u = unit_name()
+            r = self.current_stent_radius + self.smoothing_k
+            d = 2 * r
+            self._main_window.setWindowTitle(
+                f"svMorph | FPS: {int(round(1 / elapsed))} | "
+                f"Stent radius: {r:.4f} {u} | Stent diameter: {d:.4f} {u}"
+            )
         return step_size
 
     def run_stenosis(self, force_center_point_id, s, stenosis_radius, stenosis_length, node_point_indices):
@@ -710,7 +697,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if self._main_window is not None:
             self._main_window.setWindowTitle(
                 f"svMorph | FPS: {int(round(1 / elapsed))} | "
-                f"Stenosis radius: {current_stenosis_minimum_radius:.4f} cm | "
-                f"Δ: {delta_stenosis:.4f} cm"
+                f"Stenosis radius: {current_stenosis_minimum_radius:.4f} {unit_name()} | "
+                f"Δ: {delta_stenosis:.4f} {unit_name()}"
             )
         return step_size

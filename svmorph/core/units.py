@@ -24,3 +24,11 @@ def get_unit_scale() -> float:
 def L() -> float:
     """Shorthand for the current length scale factor."""
     return _UNIT_SCALE
+
+
+_UNIT_NAMES = {1.0: "cm", 10.0: "mm"}
+
+
+def unit_name() -> str:
+    """Return a human-readable abbreviation for the current length unit."""
+    return _UNIT_NAMES.get(_UNIT_SCALE, f"{_UNIT_SCALE}×cm")

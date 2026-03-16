@@ -40,7 +40,7 @@ from PyQt6.QtCore import Qt, QTimer
 import math
 import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-from svmorph.core.units import L
+from svmorph.core.units import L, unit_name
 from svmorph.visualization.renderer import SceneManager
 from svmorph.logging import get_logger
 
@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
         """Row 1: Stent Length and Diameter sliders"""
         row = QHBoxLayout()
 
-        self.stent_length_label = QLabel("Stent Length (cm):")
+        self.stent_length_label = QLabel(f"Stent Length ({unit_name()}):")
         row.addWidget(self.stent_length_label)
 
         self.stent_length_slider = QSlider(Qt.Orientation.Horizontal)
@@ -244,7 +244,7 @@ class MainWindow(QMainWindow):
         self.stent_length_value.setFixedWidth(TEXT_INPUT_WIDTH)
         row.addWidget(self.stent_length_value)
 
-        self.stent_radius_label = QLabel("Stent Diameter (cm):")
+        self.stent_radius_label = QLabel(f"Stent Diameter ({unit_name()}):")
         row.addWidget(self.stent_radius_label)
 
         self.stent_diameter_slider = QSlider(Qt.Orientation.Horizontal)
@@ -328,14 +328,14 @@ class MainWindow(QMainWindow):
         """Row 3: Stenosis parameters + Apply Stenosis (One Step) + Apply Stenosis"""
         row = QHBoxLayout()
 
-        self.stenosis_radius_label = QLabel("Stenosis Min Radius (cm):")
+        self.stenosis_radius_label = QLabel(f"Stenosis Min Radius ({unit_name()}):")
         row.addWidget(self.stenosis_radius_label)
         self.stenosis_radius_value = QLineEdit()
         self.stenosis_radius_value.setText(f"{_STENOSIS_RADIUS_DEFAULT_CM * L()}")
         self.stenosis_radius_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
         row.addWidget(self.stenosis_radius_value)
 
-        self.stenosis_length_label = QLabel("Stenosis Region Length (cm):")
+        self.stenosis_length_label = QLabel(f"Stenosis Region Length ({unit_name()}):")
         row.addWidget(self.stenosis_length_label)
         self.stenosis_length_value = QLineEdit()
         self.stenosis_length_value.setText(f"{_STENOSIS_LENGTH_DEFAULT_CM * L()}")
@@ -367,7 +367,7 @@ class MainWindow(QMainWindow):
         """Row 4: Aneurysm Max Radius + Sharpness + Apply Aneurysm"""
         row = QHBoxLayout()
 
-        self.aneurysm_max_radius_label = QLabel("Aneurysm Max Radius (cm):")
+        self.aneurysm_max_radius_label = QLabel(f"Aneurysm Max Radius ({unit_name()}):")
         row.addWidget(self.aneurysm_max_radius_label)
         self.aneurysm_max_radius_value = QLineEdit()
         self.aneurysm_max_radius_value.setText(f"{_ANEURYSM_MAX_RADIUS_DEFAULT_CM * L()}")
@@ -520,9 +520,6 @@ class MainWindow(QMainWindow):
 
         # Initialize UI styling
         UIStyleManager.set_button_active(self.toggle_camera_lock_button, False)
-
-        # Display debugging information about radius as text in viewport
-        self.interactor.display_radius_texts()
 
     def keyPressEvent(self, event):
         """Handle keyboard events forwarded from the Qt window to the VTK interactor."""
