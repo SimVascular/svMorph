@@ -548,7 +548,7 @@ class MainWindow(QMainWindow):
         sharpness = self._current_sharpness
         aneurysm_max_radius = float(self.aneurysm_max_radius_value.text())
         logger.debug(f"Running Kelvinlet deformation with force_scale={force_scale}, sharpness={sharpness}")
-        self.interactor.deform_mesh_sequential(sharpness, force_scale, aneurysm_max_radius)
+        self.interactor.deform_mesh_aneurysm(sharpness, force_scale, aneurysm_max_radius)
 
     def run_deformation_sdf(self):
         """Run SDF-based contact deformation"""
@@ -557,7 +557,7 @@ class MainWindow(QMainWindow):
             return
         force_scale = -self._current_force_scale_raw
         logger.debug(f"Running SDF contact deformation with force_scale={force_scale}")
-        self.interactor.deform_mesh_sdf_contact(force_scale)
+        self.interactor.deform_mesh_stent(force_scale)
 
     def run_deformation_simultaneous(self):
         """Run simultaneous parallel mesh deformation"""
@@ -566,7 +566,7 @@ class MainWindow(QMainWindow):
             return
         force_scale = -self._current_force_scale_raw
         logger.debug(f"Running straightening deformation with force_scale={force_scale}")
-        self.interactor.deform_mesh_with_straightening(force_scale)
+        self.interactor.deform_mesh_stent_straightening(force_scale)
 
     def run_stenosis(self):
         """Run stenosis deformation with user-specified parameters"""

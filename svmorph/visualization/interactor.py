@@ -133,7 +133,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
     def timer_callback(self, obj, event):
         """Repeating timer callback that drives one sequential deformation step."""
-        self.deform_mesh_sequential(self.sharpness, self.force_scale)
+        self.deform_mesh_aneurysm(self.sharpness, self.force_scale)
 
     def key_release_event(self, obj, event):
         """Handle key-release events.  Releasing 'd' destroys the deformation timer."""
@@ -693,8 +693,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             camera.SetFocalPoint(x, y, z)
             self.GetInteractor().GetRenderWindow().Render()
 
-    def deform_mesh_sequential(self, sharpness, force_scale, aneurysm_radius):
-        """Run one step of the aneurysm sequential deformation pipeline."""
+    def deform_mesh_aneurysm(self, sharpness, force_scale, aneurysm_radius):
+        """Run one step of the aneurysm deformation pipeline."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
@@ -707,17 +707,17 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if self.previous_aneurysm_maximum_radius >= aneurysm_radius - 2e-3 * L():
             logger.info("Target aneurysm radius reached.")
             return
-        self.run_aneurysm_sequential(
+        self.run_aneurysm(
             affine_params, model, mu, nu, force_center_point_id, force_scale, self.selected_points)
         self.GetInteractor().GetRenderWindow().Render()
 
-    def deform_mesh_sdf_contact(self, force_scale):
+    def deform_mesh_stent(self, force_scale):
         """Run one step of the SDF-contact stent deployment deformation pipeline."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
         force_center_point_id = self.selected_points[self.force_center_idx]
-        self.run_aneurysm_sdf_contact(
+        self.run_stent(
             force_center_point_id, force_scale, self.selected_points, self.stent_radius)
         self.update_current_stent_radius()
         start_time = time.time()
@@ -742,13 +742,13 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         )
         self.GetInteractor().GetRenderWindow().Render()
 
-    def deform_mesh_with_straightening(self, force_scale):
-        """Run one step of the SDF-contact deformation with stent-axis straightening."""
+    def deform_mesh_stent_straightening(self, force_scale):
+        """Run one step of the SDF-contact stent deployment with stent-axis straightening."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
         force_center_point_id = self.selected_points[self.force_center_idx]
-        self.run_stent_with_straightening(
+        self.run_stent_straightening(
             force_center_point_id, force_scale, self.selected_points, self.stent_radius)
         self.update_current_stent_radius()
         self.update_current_stent_curvature()
@@ -756,7 +756,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
         logger.timing(f"Rendering new frame: {time.time() - start_time:.4f} s")
 
-    def run_aneurysm_sequential(self, affine_params, model, mu, nu, force_center_point_id, 
+    def run_aneurysm(self, affine_params, model, mu, nu, force_center_point_id, 
                         force_scale, node_point_indices):
         """Execute one aneurysm-inflation time step using scaling Kelvinlets.
 
@@ -805,7 +805,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                 f"Δ: {delta_aneurysm:.4f} cm"
             )
 
-    def run_aneurysm_sdf_contact(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
+    def run_stent(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
         """Execute one SDF-contact stent deployment time step.
 
         Computes SDF-contact displacements for both surface and centerline,
@@ -842,10 +842,10 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             self._main_window.setWindowTitle(f"svMorph | FPS: {int(round(1 / elapsed))}")
         return step_size
 
-    def run_stent_with_straightening(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
+    def run_stent_straightening(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
         """Execute one SDF-contact deployment step with concurrent stent-axis straightening.
 
-        Identical to :meth:`run_aneurysm_sdf_contact` but additionally
+        Identical to :meth:`run_stent` but additionally
         straightens the stent axis after each displacement step.
 
         Returns
