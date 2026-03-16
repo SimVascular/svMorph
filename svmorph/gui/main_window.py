@@ -73,6 +73,7 @@ BUTTON_WIDTH_LARGE = 150
 BUTTON_WIDTH_XLARGE = 200
 TEXT_INPUT_WIDTH = 50
 TEXT_INPUT_WIDTH_MEDIUM = 60
+TEXT_INPUT_WIDTH_LARGE = 70
 
 # Timer intervals (milliseconds)
 DEFORMATION_TIMER_INTERVAL = 50
@@ -242,7 +243,7 @@ class MainWindow(QMainWindow):
 
         self.stent_length_value = QLineEdit()
         self.stent_length_value.setText(f"{STENT_LENGTH_DEFAULT_CM * L():.4f}")
-        self.stent_length_value.setFixedWidth(TEXT_INPUT_WIDTH)
+        self.stent_length_value.setFixedWidth(TEXT_INPUT_WIDTH_LARGE)
         row.addWidget(self.stent_length_value)
 
         self.stent_radius_label = QLabel(f"Stent Diameter ({unit_name()}):")
@@ -258,7 +259,7 @@ class MainWindow(QMainWindow):
 
         self.stent_diameter_value = QLineEdit()
         self.stent_diameter_value.setText(f"{STENT_DIAMETER_DEFAULT_CM * L():.4f}")
-        self.stent_diameter_value.setFixedWidth(TEXT_INPUT_WIDTH)
+        self.stent_diameter_value.setFixedWidth(TEXT_INPUT_WIDTH_LARGE)
         row.addWidget(self.stent_diameter_value)
 
         self.layout.addLayout(row)
