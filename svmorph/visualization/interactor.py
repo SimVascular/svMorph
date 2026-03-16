@@ -105,20 +105,18 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.previous_aneurysm_maximum_radius = None
 
         self.stent_visualization_actors = []
-        self.roi_actors = []
         self.radius_text_actor = None
         self.roi_text_actor = None
         self.glyph_actor = None
-        self.roi_visible = True
 
         self.camera_lock = False
         self.previous_focal = [0.0, 0.0, 0.0]
     
     def key_press_event(self, obj, event):
-        """Handle key-press events.  'h' toggles ROI visibility; 'd' starts a repeating deformation timer."""
+        """Handle key-press events.  'h' toggles stent visibility; 'd' starts a repeating deformation timer."""
         key = self.GetInteractor().GetKeySym()
         if key == 'h':
-            self.toggle_roi_cylinder()
+            self.toggle_stent_visualization()
         elif key == 'd':
             self.timer_id = self.GetInteractor().CreateRepeatingTimer(100)
         self.OnKeyPress()
@@ -160,8 +158,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                 self.selected_points.pop(0)
                 renderer.RemoveActor(self.highlight_actors[0])
                 self.highlight_actors.pop(0)
-                renderer.RemoveActor(self.roi_actors[0])
-                self.roi_actors.pop(0)
                 if len(self.stent_visualization_actors) >= 2:
                     renderer.RemoveActor(self.stent_visualization_actors[0])
                     self.stent_visualization_actors.pop(0)
@@ -283,7 +279,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.highlight_actors.append(actor)
 
         self.lock_camera(position)
-        self.place_radius_of_influence_cylinder(position, point_id)
 
     def place_sdf_stent_visualization(self):
         """Build and display the cylinder-and-sphere stent visualisation along the axis vertices."""
@@ -410,59 +405,16 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render() 
         logger.timing(f"Rendering SDF: {time.time() - render_time_start:.4f} s")
         
-    def place_radius_of_influence_cylinder(self, position, point_id):
-        """Add a transparent cylinder actor representing the region of influence at *point_id*."""
-        cylinder = vtkCylinderSource()
-        cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
-        cylinder.SetHeight(2 * self.stent_unit_section_halflength)
-        cylinder.SetResolution(100)
-
-        default_axis = np.array([0, 1, 0])
-        tangent = self.centerline_tangents[point_id]
-        rotation_axis = np.cross(default_axis, tangent)
-        angle = 180 / np.pi * np.arccos(np.clip(np.dot(default_axis, tangent), -1.0, 1.0))
-
-        transform = vtkTransform()
-        transform.Translate(position)
-        transform.RotateWXYZ(angle, rotation_axis)
-
-        transform_filter = vtkmodules.vtkFiltersGeneral.vtkTransformPolyDataFilter()
-        transform_filter.SetInputConnection(cylinder.GetOutputPort())
-        transform_filter.SetTransform(transform)
-        transform_filter.Update()
-
-        mapper = vtkPolyDataMapper()
-        mapper.SetInputConnection(transform_filter.GetOutputPort())
-
-        actor = vtkmodules.vtkRenderingCore.vtkActor()
-        actor.SetMapper(mapper)
-        actor.GetProperty().SetColor(0.9, 0.9, 0.9)
-        actor.GetProperty().SetOpacity(0.0)
-        actor.SetPickable(0)
-        actor.center_point_id = point_id
-        actor.cylinderSource = cylinder 
-
-        ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
-        ren.AddActor(actor)
-
-        actor.SetVisibility(self.roi_visible)
-        self.roi_actors.append(actor)
-
     def update_deformation_parameters(self, sharpness, force_scale):
         """Update the Kelvinlet sharpness and force-scale parameters and refresh the display."""
         self.sharpness = sharpness
         self.force_scale = force_scale
-        for roi_actor in self.roi_actors[-1:]:
-            roi_actor.GetProperty().SetOpacity(abs(force_scale) * 0.7)
         self.update_roi_text()
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_prescribed_stent_radius(self, radius):
-        """Set the target stent radius and update the ROI cylinder display."""
+        """Set the target stent radius."""
         self.stent_radius = radius
-        for roi_actor in self.roi_actors[-1:]:
-            roi_cylinder = roi_actor.cylinderSource
-            roi_cylinder.SetRadius(self.stent_radius)
         self.GetInteractor().GetRenderWindow().Render()
     
     def update_prescribed_stent_length(self, length):
@@ -477,10 +429,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_current_stent_radius(self):
-        """Propagate the current deployment radius to ROI and stent visualisation actors."""
-        for roi_actor in self.roi_actors[-1:]:
-            roi_cylinder = roi_actor.cylinderSource
-            roi_cylinder.SetRadius(self.current_stent_radius + self.smoothing_k)
+        """Propagate the current deployment radius to stent visualisation actors."""
         for stent_visualization_assembly in self.stent_visualization_actors[-1:]:
             for stent_segment_actor in stent_visualization_assembly.GetParts():
                 stent_segment_geometry = stent_segment_actor.geometrySource
@@ -513,11 +462,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         renderer.RemoveActor(self.stent_visualization_actors[0])
         self.stent_visualization_actors.pop(0)
 
-    def toggle_roi_cylinder(self):
-        """Toggle visibility of the ROI cylinders and stent visualisation actors."""
-        self.roi_visible = not self.roi_visible
-        for roi_actor in self.roi_actors:
-            roi_actor.SetVisibility(not roi_actor.GetVisibility())
+    def toggle_stent_visualization(self):
+        """Toggle visibility of the stent visualisation actors."""
         for stent_visualization_assembly in self.stent_visualization_actors:
             stent_visualization_assembly.SetVisibility(not stent_visualization_assembly.GetVisibility())
         self.GetInteractor().GetRenderWindow().Render()

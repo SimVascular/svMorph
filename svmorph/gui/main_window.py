@@ -537,7 +537,7 @@ class MainWindow(QMainWindow):
         if not self.interactor:
             return
         if event.key() == Qt.Key.Key_H:
-            self.interactor.toggle_roi_cylinder()
+            self.interactor.toggle_stent_visualization()
 
     def run_deformation(self):
         """Run kelvinlet-based mesh deformation"""
