@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
 )
 from PyQt6.QtCore import Qt, QTimer
+import math
 import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from svmorph.core.units import L
@@ -69,8 +70,10 @@ STENOSIS_TIMER_INTERVAL = 25
 # Slider ranges and defaults (unit-independent)
 FORCE_SCALE_SLIDER_RANGE = (-1000, 1000)
 FORCE_SCALE_DEFAULT = 1
-SHARPNESS_SLIDER_RANGE = (1, 500)
-SHARPNESS_DEFAULT = 100
+SHARPNESS_SLIDER_RANGE = (40, 200)
+SHARPNESS_SLIDER_CENTER = 100
+SHARPNESS_LOG_SCALE = 60
+SHARPNESS_DEFAULT = 100  # maps to sharpness 1.0
 
 # cm-baseline spatial defaults; actual values are computed via L() at runtime
 _MAX_STENT_SIZE_CM = 2.0
@@ -131,6 +134,21 @@ class SliderMapper:
         clamped_value = max(lo, min(hi, value))
         return int((clamped_value - lo) / (hi - lo) * STENT_LENGTH_NUM_STEPS)
 
+    @staticmethod
+    def sharpness_slider_to_value(slider_val):
+        """Convert sharpness slider to value via exponential mapping.
+
+        Slider 0 → ~0.02, 100 (center) → 1.0, 200 → ~46.
+        """
+        return 10.0 ** ((slider_val - SHARPNESS_SLIDER_CENTER) / SHARPNESS_LOG_SCALE)
+
+    @staticmethod
+    def sharpness_value_to_slider(value):
+        """Convert sharpness value to slider position (inverse of exponential mapping)."""
+        if value <= 0:
+            return 0
+        return int(SHARPNESS_SLIDER_CENTER + SHARPNESS_LOG_SCALE * math.log10(value))
+
 
 class UIStyleManager:
     """Helper class for managing UI styling and button states"""
@@ -167,8 +185,8 @@ class MainWindow(QMainWindow):
 
     @property
     def _current_sharpness(self):
-        """Current sharpness value from the slider (0.01 – 5.0)."""
-        return self.sharpness_slider.value() / 100.0
+        """Current sharpness value from the slider (0.1 – 10.0, exponential)."""
+        return SliderMapper.sharpness_slider_to_value(self.sharpness_slider.value())
 
     @property
     def _current_force_scale_raw(self):
@@ -402,7 +420,7 @@ class MainWindow(QMainWindow):
         self.controls_layout5.addWidget(self.sharpness_slider)
 
         self.sharpness_value = QLineEdit()
-        self.sharpness_value.setText(f"{self._current_sharpness}")
+        self.sharpness_value.setText(f"{self._current_sharpness:.3f}")
         self.sharpness_value.setFixedWidth(TEXT_INPUT_WIDTH)
         self.controls_layout5.addWidget(self.sharpness_value)
 
@@ -459,8 +477,8 @@ class MainWindow(QMainWindow):
 
     def _on_sharpness_slider_change(self, value):
         """Handle sharpness slider changes"""
-        sharpness_value = value / 100.0
-        self.sharpness_value.setText(f"{sharpness_value}")
+        sharpness_value = SliderMapper.sharpness_slider_to_value(value)
+        self.sharpness_value.setText(f"{sharpness_value:.3f}")
         if self.interactor:
             self.interactor.update_deformation_parameters(sharpness_value, -self._current_force_scale_raw)
 
@@ -468,7 +486,7 @@ class MainWindow(QMainWindow):
         """Handle sharpness text input changes"""
         try:
             value = float(text)
-            self.sharpness_slider.setValue(int(value * 100))
+            self.sharpness_slider.setValue(SliderMapper.sharpness_value_to_slider(value))
             if self.interactor:
                 self.interactor.update_deformation_parameters(value, -self._current_force_scale_raw)
         except ValueError:
