@@ -81,6 +81,7 @@ _STENT_DIAMETER_DEFAULT_CM = 0.8
 _STENT_LENGTH_DEFAULT_CM = 1.7
 _STENOSIS_RADIUS_DEFAULT_CM = 0.1
 _STENOSIS_LENGTH_DEFAULT_CM = 0.5
+_ANEURYSM_MAX_RADIUS_DEFAULT_CM = 0.5
 
 # Colors and styling
 ACTIVE_BUTTON_COLOR = "#d84005"
@@ -327,6 +328,13 @@ class MainWindow(QMainWindow):
         self.stenosis_length_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
         self.controls_layout3.addWidget(self.stenosis_length_value)
 
+        self.aneurysm_max_radius_label = QLabel("Aneurysm Max Radius:")
+        self.controls_layout3.addWidget(self.aneurysm_max_radius_label)
+        self.aneurysm_max_radius_value = QLineEdit()
+        self.aneurysm_max_radius_value.setText(f"{_ANEURYSM_MAX_RADIUS_DEFAULT_CM * L()}")
+        self.aneurysm_max_radius_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
+        self.controls_layout3.addWidget(self.aneurysm_max_radius_value)
+
         self.controls_layout3.addStretch(1)
 
         self.continuous_stenosis_button = QPushButton("Continuous Stenosis Apply")
@@ -520,8 +528,9 @@ class MainWindow(QMainWindow):
             return
         force_scale = -self._current_force_scale_raw
         sharpness = self._current_sharpness
+        aneurysm_max_radius = float(self.aneurysm_max_radius_value.text())
         logger.debug(f"Running Kelvinlet deformation with force_scale={force_scale}, sharpness={sharpness}")
-        self.interactor.deform_mesh_sequential(sharpness, force_scale)
+        self.interactor.deform_mesh_sequential(sharpness, force_scale, aneurysm_max_radius)
 
     def run_deformation_sdf(self):
         """Run SDF-based contact deformation"""

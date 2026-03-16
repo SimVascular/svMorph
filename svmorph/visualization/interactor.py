@@ -693,7 +693,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             camera.SetFocalPoint(x, y, z)
             self.GetInteractor().GetRenderWindow().Render()
 
-    def deform_mesh_sequential(self, sharpness, force_scale):
+    def deform_mesh_sequential(self, sharpness, force_scale, aneurysm_radius):
         """Run one step of the aneurysm sequential deformation pipeline."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
@@ -704,7 +704,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
         mu = 1
         nu = 0.2
-        aneurysm_radius = 0.5 * L()
         if self.previous_aneurysm_maximum_radius >= aneurysm_radius - 2e-3 * L():
             logger.info("Target aneurysm radius reached.")
             return
