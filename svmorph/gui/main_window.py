@@ -214,72 +214,22 @@ class MainWindow(QMainWindow):
 
     def _setup_ui_controls(self):
         """Setup all UI control layouts and widgets"""
-        self._setup_force_scale_controls()
-        self._setup_stent_parameter_controls()
-        self._setup_stenosis_controls()
-        self._setup_import_export_controls()
-        self._setup_sharpness_controls()
+        self._setup_stent_parameter_row()
+        self._setup_stent_operations_row()
+        self._setup_stenosis_row()
+        self._setup_aneurysm_row()
+        self._setup_utility_row()
 
         # Finalize layout
         self.frame.setLayout(self.layout)
         self.setCentralWidget(self.frame)
 
-    def _setup_force_scale_controls(self):
-        """Setup the force scale slider and related controls (first row)"""
-        self.controls_layout = QHBoxLayout()
+    def _setup_stent_parameter_row(self):
+        """Row 1: Stent Length and Diameter sliders"""
+        row = QHBoxLayout()
 
-        # Force scale slider with nonlinear mapping
-        self.slider_label = QLabel("Force Scale:")
-        self.controls_layout.addWidget(self.slider_label)
-
-        self.force_scale_slider = QSlider(Qt.Orientation.Horizontal)
-        self.force_scale_slider.setRange(*FORCE_SCALE_SLIDER_RANGE)
-        self.force_scale_slider.setValue(
-            SliderMapper.force_scale_value_to_slider(FORCE_SCALE_DEFAULT)
-        )
-        self.controls_layout.addWidget(self.force_scale_slider)
-
-        self.slider_value = QLineEdit()
-        slider_value = SliderMapper.force_scale_slider_to_value(
-            self.force_scale_slider.value()
-        )
-        self.slider_value.setText(
-            f"{slider_value:.3f}" if slider_value >= 0 else f"-{abs(slider_value):.3f}"
-        )
-        self.slider_value.setFixedWidth(TEXT_INPUT_WIDTH)
-        self.controls_layout.addWidget(self.slider_value)
-
-        # Action buttons
-        self.show_nodes_button = QPushButton("Select Point")
-        self.show_nodes_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout.addWidget(self.show_nodes_button)
-
-        self.run_button = QPushButton("Contact Apply")
-        self.run_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout.addWidget(self.run_button)
-
-        self.continuous_sdf_button = QPushButton("Continuous Contact Apply")
-        self.continuous_sdf_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
-        self.controls_layout.addWidget(self.continuous_sdf_button)
-
-        self.layout.addLayout(self.controls_layout)
-
-        # Connect signals
-        self.force_scale_slider.valueChanged.connect(self.on_force_scale_slider_change)
-        self.slider_value.textChanged.connect(self.on_force_scale_text_change)
-        self.run_button.clicked.connect(self.run_deformation_sdf)
-        self.show_nodes_button.clicked.connect(self.display_centerline_nodes)
-        self.timer.timeout.connect(self.run_deformation_sdf)
-        self.continuous_sdf_button.pressed.connect(self.start_continuous_deformation)
-        self.continuous_sdf_button.released.connect(self.stop_continuous_deformation)
-
-    def _setup_stent_parameter_controls(self):
-        """Setup stent length and diameter controls (second row)"""
-        self.controls_layout2 = QHBoxLayout()
-
-        # Stent length controls
-        self.stent_length_label = QLabel("Stent Length:")
-        self.controls_layout2.addWidget(self.stent_length_label)
+        self.stent_length_label = QLabel("Stent Length (cm):")
+        row.addWidget(self.stent_length_label)
 
         self.stent_length_slider = QSlider(Qt.Orientation.Horizontal)
         self.stent_length_slider.setRange(0, STENT_LENGTH_NUM_STEPS)
@@ -287,16 +237,15 @@ class MainWindow(QMainWindow):
             _STENT_LENGTH_DEFAULT_CM * L()
         )
         self.stent_length_slider.setValue(default_length_slider_value)
-        self.controls_layout2.addWidget(self.stent_length_slider)
+        row.addWidget(self.stent_length_slider)
 
         self.stent_length_value = QLineEdit()
         self.stent_length_value.setText(f"{_STENT_LENGTH_DEFAULT_CM * L():.4f}")
         self.stent_length_value.setFixedWidth(TEXT_INPUT_WIDTH)
-        self.controls_layout2.addWidget(self.stent_length_value)
+        row.addWidget(self.stent_length_value)
 
-        # Stent diameter controls
-        self.stent_radius_label = QLabel("Stent Diameter:")
-        self.controls_layout2.addWidget(self.stent_radius_label)
+        self.stent_radius_label = QLabel("Stent Diameter (cm):")
+        row.addWidget(self.stent_radius_label)
 
         self.stent_diameter_slider = QSlider(Qt.Orientation.Horizontal)
         self.stent_diameter_slider.setRange(0, STENT_DIAMETER_NUM_STEPS)
@@ -304,16 +253,15 @@ class MainWindow(QMainWindow):
             _STENT_DIAMETER_DEFAULT_CM * L()
         )
         self.stent_diameter_slider.setValue(default_diameter_slider_value)
-        self.controls_layout2.addWidget(self.stent_diameter_slider)
+        row.addWidget(self.stent_diameter_slider)
 
         self.stent_diameter_value = QLineEdit()
         self.stent_diameter_value.setText(f"{_STENT_DIAMETER_DEFAULT_CM * L():.4f}")
         self.stent_diameter_value.setFixedWidth(TEXT_INPUT_WIDTH)
-        self.controls_layout2.addWidget(self.stent_diameter_value)
+        row.addWidget(self.stent_diameter_value)
 
-        self.layout.addLayout(self.controls_layout2)
+        self.layout.addLayout(row)
 
-        # Connect signals
         self.stent_length_slider.valueChanged.connect(
             self._on_stent_length_slider_change
         )
@@ -323,45 +271,89 @@ class MainWindow(QMainWindow):
         )
         self.stent_diameter_value.textChanged.connect(self.update_stent_diameter_slider)
 
-    def _setup_stenosis_controls(self):
-        """Setup stenosis-related controls (third row)"""
-        self.controls_layout3 = QHBoxLayout()
+    def _setup_stent_operations_row(self):
+        """Row 2: Force Scale + Select Point + Straighten Stent + Expand Stent (One Step) + Expand Stent"""
+        row = QHBoxLayout()
 
-        self.run_stenosis_button = QPushButton("Stenosis Apply")
-        self.run_stenosis_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout3.addWidget(self.run_stenosis_button)
+        self.slider_label = QLabel("Force Scale:")
+        row.addWidget(self.slider_label)
 
-        # Stenosis parameter inputs
-        self.stenosis_radius_label = QLabel("Stenosis Minimum Radius:")
-        self.controls_layout3.addWidget(self.stenosis_radius_label)
+        self.force_scale_slider = QSlider(Qt.Orientation.Horizontal)
+        self.force_scale_slider.setRange(*FORCE_SCALE_SLIDER_RANGE)
+        self.force_scale_slider.setValue(
+            SliderMapper.force_scale_value_to_slider(FORCE_SCALE_DEFAULT)
+        )
+        row.addWidget(self.force_scale_slider)
+
+        self.slider_value = QLineEdit()
+        slider_value = SliderMapper.force_scale_slider_to_value(
+            self.force_scale_slider.value()
+        )
+        self.slider_value.setText(
+            f"{slider_value:.3f}" if slider_value >= 0 else f"-{abs(slider_value):.3f}"
+        )
+        self.slider_value.setFixedWidth(TEXT_INPUT_WIDTH)
+        row.addWidget(self.slider_value)
+
+        self.show_nodes_button = QPushButton("Select Point")
+        self.show_nodes_button.setFixedWidth(BUTTON_WIDTH_SMALL)
+        row.addWidget(self.show_nodes_button)
+
+        self.simultaneous_apply_button = QPushButton("Straighten Stent")
+        self.simultaneous_apply_button.setFixedWidth(BUTTON_WIDTH_LARGE)
+        row.addWidget(self.simultaneous_apply_button)
+
+        self.run_button = QPushButton("Expand Stent (One Step)")
+        self.run_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
+        row.addWidget(self.run_button)
+
+        self.continuous_sdf_button = QPushButton("Expand Stent")
+        self.continuous_sdf_button.setFixedWidth(BUTTON_WIDTH_LARGE)
+        row.addWidget(self.continuous_sdf_button)
+
+        self.layout.addLayout(row)
+
+        self.force_scale_slider.valueChanged.connect(self.on_force_scale_slider_change)
+        self.slider_value.textChanged.connect(self.on_force_scale_text_change)
+        self.run_button.clicked.connect(self.run_deformation_sdf)
+        self.show_nodes_button.clicked.connect(self.display_centerline_nodes)
+        self.timer.timeout.connect(self.run_deformation_sdf)
+        self.continuous_sdf_button.pressed.connect(self.start_continuous_deformation)
+        self.continuous_sdf_button.released.connect(self.stop_continuous_deformation)
+        self.simultaneous_apply_button.clicked.connect(
+            self.run_deformation_simultaneous
+        )
+
+    def _setup_stenosis_row(self):
+        """Row 3: Stenosis parameters + Apply Stenosis (One Step) + Apply Stenosis"""
+        row = QHBoxLayout()
+
+        self.stenosis_radius_label = QLabel("Stenosis Min Radius (cm):")
+        row.addWidget(self.stenosis_radius_label)
         self.stenosis_radius_value = QLineEdit()
         self.stenosis_radius_value.setText(f"{_STENOSIS_RADIUS_DEFAULT_CM * L()}")
         self.stenosis_radius_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
-        self.controls_layout3.addWidget(self.stenosis_radius_value)
+        row.addWidget(self.stenosis_radius_value)
 
-        self.stenosis_length_label = QLabel("Stenosis Region Length:")
-        self.controls_layout3.addWidget(self.stenosis_length_label)
+        self.stenosis_length_label = QLabel("Stenosis Region Length (cm):")
+        row.addWidget(self.stenosis_length_label)
         self.stenosis_length_value = QLineEdit()
         self.stenosis_length_value.setText(f"{_STENOSIS_LENGTH_DEFAULT_CM * L()}")
         self.stenosis_length_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
-        self.controls_layout3.addWidget(self.stenosis_length_value)
+        row.addWidget(self.stenosis_length_value)
 
-        self.aneurysm_max_radius_label = QLabel("Aneurysm Max Radius:")
-        self.controls_layout3.addWidget(self.aneurysm_max_radius_label)
-        self.aneurysm_max_radius_value = QLineEdit()
-        self.aneurysm_max_radius_value.setText(f"{_ANEURYSM_MAX_RADIUS_DEFAULT_CM * L()}")
-        self.aneurysm_max_radius_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
-        self.controls_layout3.addWidget(self.aneurysm_max_radius_value)
+        row.addStretch(1)
 
-        self.controls_layout3.addStretch(1)
+        self.run_stenosis_button = QPushButton("Apply Stenosis (One Step)")
+        self.run_stenosis_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
+        row.addWidget(self.run_stenosis_button)
 
-        self.continuous_stenosis_button = QPushButton("Continuous Stenosis Apply")
-        self.continuous_stenosis_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
-        self.controls_layout3.addWidget(self.continuous_stenosis_button)
+        self.continuous_stenosis_button = QPushButton("Apply Stenosis")
+        self.continuous_stenosis_button.setFixedWidth(BUTTON_WIDTH_LARGE)
+        row.addWidget(self.continuous_stenosis_button)
 
-        self.layout.addLayout(self.controls_layout3)
+        self.layout.addLayout(row)
 
-        # Connect signals
         self.run_stenosis_button.clicked.connect(self.run_stenosis)
         self.stenosis_timer.timeout.connect(self.run_stenosis)
         self.continuous_stenosis_button.pressed.connect(
@@ -371,76 +363,40 @@ class MainWindow(QMainWindow):
             self.stop_continuous_stenosis_deformation
         )
 
-    def _setup_import_export_controls(self):
-        """Setup import/export and mode control buttons (fourth row)"""
-        self.controls_layout4 = QHBoxLayout()
+    def _setup_aneurysm_row(self):
+        """Row 4: Aneurysm Max Radius + Sharpness + Apply Aneurysm"""
+        row = QHBoxLayout()
 
-        # Import buttons
-        self.import_mesh_button = QPushButton("Import Mesh")
-        self.import_mesh_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.import_mesh_button.clicked.connect(self.import_mesh)
-        self.controls_layout4.addWidget(self.import_mesh_button)
-
-        self.import_centerline_button = QPushButton("Import Centerline")
-        self.import_centerline_button.setFixedWidth(BUTTON_WIDTH_LARGE)
-        self.import_centerline_button.clicked.connect(self.import_centerline)
-        self.controls_layout4.addWidget(self.import_centerline_button)
-
-        # Save button
-        self.controls_layout4.addStretch(1)
-        self.run_save_button = QPushButton("Save")
-        self.run_save_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout4.addWidget(self.run_save_button)
-        self.run_save_button.clicked.connect(self.save_mesh)
-
-        # Mode control buttons
-        self.toggle_camera_lock_button = QPushButton("Camera Lock")
-        self.toggle_camera_lock_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout4.addWidget(self.toggle_camera_lock_button)
-        self.toggle_camera_lock_button.clicked.connect(self.toggle_camera_lock)
-
-        # Additional action buttons
-        self.place_stent_button = QPushButton("Place Stent")
-        self.place_stent_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout4.addWidget(self.place_stent_button)
-        self.place_stent_button.pressed.connect(self.save_current_stent)
-
-        self.layout.addLayout(self.controls_layout4)
-
-    def _setup_sharpness_controls(self):
-        """Setup sharpness and additional control buttons (fifth row)"""
-        self.controls_layout5 = QHBoxLayout()
+        self.aneurysm_max_radius_label = QLabel("Aneurysm Max Radius (cm):")
+        row.addWidget(self.aneurysm_max_radius_label)
+        self.aneurysm_max_radius_value = QLineEdit()
+        self.aneurysm_max_radius_value.setText(f"{_ANEURYSM_MAX_RADIUS_DEFAULT_CM * L()}")
+        self.aneurysm_max_radius_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
+        row.addWidget(self.aneurysm_max_radius_value)
 
         self.sharpness_label = QLabel("Sharpness:")
-        self.controls_layout5.addWidget(self.sharpness_label)
+        row.addWidget(self.sharpness_label)
 
         self.sharpness_slider = QSlider(Qt.Orientation.Horizontal)
         self.sharpness_slider.setRange(*SHARPNESS_SLIDER_RANGE)
         self.sharpness_slider.setValue(SHARPNESS_DEFAULT)
-        self.controls_layout5.addWidget(self.sharpness_slider)
+        row.addWidget(self.sharpness_slider)
 
         self.sharpness_value = QLineEdit()
         self.sharpness_value.setText(f"{self._current_sharpness:.3f}")
         self.sharpness_value.setFixedWidth(TEXT_INPUT_WIDTH)
-        self.controls_layout5.addWidget(self.sharpness_value)
+        row.addWidget(self.sharpness_value)
 
-        self.controls_layout5.addStretch(1)
+        row.addStretch(1)
 
-        self.render_sdf_button = QPushButton("Render SDF")
-        self.render_sdf_button.setFixedWidth(BUTTON_WIDTH_SMALL)
-        self.controls_layout5.addWidget(self.render_sdf_button)
-        self.render_sdf_button.clicked.connect(self.render_sdf)
+        self.continuous_kelvinlet_button = QPushButton("Apply Aneurysm")
+        self.continuous_kelvinlet_button.setFixedWidth(BUTTON_WIDTH_LARGE)
+        row.addWidget(self.continuous_kelvinlet_button)
 
-        self.simultaneous_apply_button = QPushButton("Straighten Apply")
-        self.simultaneous_apply_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
-        self.controls_layout5.addWidget(self.simultaneous_apply_button)
-        self.simultaneous_apply_button.clicked.connect(
-            self.run_deformation_simultaneous
-        )
+        self.layout.addLayout(row)
 
-        self.continuous_kelvinlet_button = QPushButton("Continuous Aneurysm Apply")
-        self.continuous_kelvinlet_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
-        self.controls_layout5.addWidget(self.continuous_kelvinlet_button)
+        self.sharpness_slider.valueChanged.connect(self._on_sharpness_slider_change)
+        self.sharpness_value.textChanged.connect(self._on_sharpness_text_change)
         self.kelvinlet_timer.timeout.connect(self.run_deformation)
         self.continuous_kelvinlet_button.pressed.connect(
             self.start_continuous_kelvinlet_deformation
@@ -449,10 +405,43 @@ class MainWindow(QMainWindow):
             self.stop_continuous_kelvinlet_deformation
         )
 
-        self.layout.addLayout(self.controls_layout5)
+    def _setup_utility_row(self):
+        """Row 5: Import/Export and mode control buttons"""
+        row = QHBoxLayout()
 
-        self.sharpness_slider.valueChanged.connect(self._on_sharpness_slider_change)
-        self.sharpness_value.textChanged.connect(self._on_sharpness_text_change)
+        self.import_mesh_button = QPushButton("Import Mesh")
+        self.import_mesh_button.setFixedWidth(BUTTON_WIDTH_SMALL)
+        self.import_mesh_button.clicked.connect(self.import_mesh)
+        row.addWidget(self.import_mesh_button)
+
+        self.import_centerline_button = QPushButton("Import Centerline")
+        self.import_centerline_button.setFixedWidth(BUTTON_WIDTH_LARGE)
+        self.import_centerline_button.clicked.connect(self.import_centerline)
+        row.addWidget(self.import_centerline_button)
+
+        row.addStretch(1)
+
+        self.toggle_camera_lock_button = QPushButton("Camera Lock")
+        self.toggle_camera_lock_button.setFixedWidth(BUTTON_WIDTH_SMALL)
+        self.toggle_camera_lock_button.clicked.connect(self.toggle_camera_lock)
+        row.addWidget(self.toggle_camera_lock_button)
+
+        self.render_sdf_button = QPushButton("Visualize SDF")
+        self.render_sdf_button.setFixedWidth(BUTTON_WIDTH_SMALL)
+        self.render_sdf_button.clicked.connect(self.render_sdf)
+        row.addWidget(self.render_sdf_button)
+
+        self.place_stent_button = QPushButton("Place Stent")
+        self.place_stent_button.setFixedWidth(BUTTON_WIDTH_SMALL)
+        self.place_stent_button.pressed.connect(self.save_current_stent)
+        row.addWidget(self.place_stent_button)
+
+        self.run_save_button = QPushButton("Save Mesh")
+        self.run_save_button.setFixedWidth(BUTTON_WIDTH_SMALL)
+        self.run_save_button.clicked.connect(self.save_mesh)
+        row.addWidget(self.run_save_button)
+
+        self.layout.addLayout(row)
 
     def _setup_vtk_components(self):
         """Initialize VTK-related components"""

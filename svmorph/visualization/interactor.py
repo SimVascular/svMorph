@@ -200,13 +200,13 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         """Create and display the on-screen radius and stent-radius text actors."""
         radius = 0.0
         selected_point_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
-        selected_point_text_actor.SetInput(f"MIS radius = {radius:.4f}, lumen effective radius = {radius:.4f}")
+        selected_point_text_actor.SetInput(f"MIS radius = {radius / L():.4f} cm, lumen effective radius = {radius / L():.4f} cm")
         selected_point_text_actor.GetTextProperty().SetColor(0.0, 0.0, 0.0)
         selected_point_text_actor.GetTextProperty().SetFontSize(16)
         selected_point_text_actor.SetPosition(10, 28)
         self.radius_text_actor = selected_point_text_actor
         roi_text_actor = vtkmodules.vtkRenderingCore.vtkTextActor()
-        roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius + self.smoothing_k:.4f}")
+        roi_text_actor.SetInput(f"stent radius = {(self.current_stent_radius + self.smoothing_k) / L():.4f} cm")
         roi_text_actor.GetTextProperty().SetColor(0.0, 0.0, 0.0)
         roi_text_actor.GetTextProperty().SetFontSize(16)
         roi_text_actor.SetPosition(10, 4)
@@ -219,20 +219,20 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
     def update_selected_point_radius_text(self):
         """Refresh the MIS and lumen effective radius text for the most recently selected point."""
         if len(self.selected_points) == 0:
-            self.radius_text_actor.SetInput("MIS radius = 0.0000, lumen effective radius = 0.0000")
+            self.radius_text_actor.SetInput("MIS radius = 0.0000 cm, lumen effective radius = 0.0000 cm")
             self.GetInteractor().GetRenderWindow().Render()
             return
         point_id = self.selected_points[-1]
         area = self.centerline_section_areas[point_id]
         radius = np.sqrt(area / np.pi)
-        self.radius_text_actor.SetInput(f"MIS radius = {self.maximum_inscribed_sphere_radius[point_id]:.4f}, lumen effective radius = {radius:.4f}")
+        self.radius_text_actor.SetInput(f"MIS radius = {self.maximum_inscribed_sphere_radius[point_id] / L():.4f} cm, lumen effective radius = {radius / L():.4f} cm")
         self.GetInteractor().GetRenderWindow().Render()
 
     def update_roi_text(self):
         """Refresh the on-screen stent radius text actor."""
         if self.roi_text_actor is None:
             return
-        self.roi_text_actor.SetInput(f"stent radius = {self.current_stent_radius + self.smoothing_k:.4f}")
+        self.roi_text_actor.SetInput(f"stent radius = {(self.current_stent_radius + self.smoothing_k) / L():.4f} cm")
 
     def compute_prescribed_stent(self):
         """Resample the centerline to produce stent axis vertices and update the visualisation."""
