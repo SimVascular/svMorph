@@ -26,6 +26,17 @@ from svmorph.core import deformation
 from svmorph.core import geometry
 from svmorph.core import mesh_data
 from svmorph.core.units import L, unit_name
+from svmorph.core.defaults import (
+    STENT_DIAMETER_DEFAULT_CM,
+    STENT_LENGTH_DEFAULT_CM,
+    SMOOTHING_K_CM,
+    UNDEPLOYED_STENT_DIAMETER_CM,
+    STENT_UNIT_SECTION_HALFLENGTH_CM,
+    STENT_SEGMENT_LENGTH_CM,
+    FORESHORTENING_PERCENTAGE,
+    INFLUENCE_RADIUS_CM,
+    CONTACT_DISTANCE_CM,
+)
 from svmorph.visualization import vtk_io
 import numpy as np
 from vtk.util.numpy_support import numpy_to_vtk, get_vtk_array_type
@@ -91,16 +102,16 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
         self.sharpness = 1.0
         self.force_scale = -1.0
-        self.stent_radius = 0.45 * L()
-        self.stent_length = 1.7 * L()
-        self.smoothing_k = 0.01 * L()
-        self.undeployed_stent_radius = 0.05 * L() - self.smoothing_k
+        self.stent_radius = (STENT_DIAMETER_DEFAULT_CM / 2) * L()
+        self.stent_length = STENT_LENGTH_DEFAULT_CM * L()
+        self.smoothing_k = SMOOTHING_K_CM * L()
+        self.undeployed_stent_radius = (UNDEPLOYED_STENT_DIAMETER_CM / 2) * L() - self.smoothing_k
         self.current_stent_radius = self.undeployed_stent_radius
-        self.stent_unit_section_halflength = 0.2 * L()
-        self.stent_segment_length = 0.1 * L()
-        self.foreshortening_percentage = 0.1  # 10%
-        self.influence_radius = 0.65 * L()  # doi from paper
-        self.contact_distance = 0.001 * L()  # doc from paper
+        self.stent_unit_section_halflength = STENT_UNIT_SECTION_HALFLENGTH_CM * L()
+        self.stent_segment_length = STENT_SEGMENT_LENGTH_CM * L()
+        self.foreshortening_percentage = FORESHORTENING_PERCENTAGE
+        self.influence_radius = INFLUENCE_RADIUS_CM * L()
+        self.contact_distance = CONTACT_DISTANCE_CM * L()
         self.previous_stenosis_minimum_radius = None
         self.previous_aneurysm_maximum_radius = None
 
@@ -479,6 +490,9 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
+        if (self.current_stent_radius + self.smoothing_k) >= self.stent_radius - 1e-3 * L():
+            logger.info("Target stent diameter reached.")
+            return
         force_center_point_id = self.selected_points[0]
         self.run_stent(
             force_center_point_id, force_scale, self.selected_points, self.stent_radius)
@@ -509,6 +523,9 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         """Run one step of the SDF-contact stent deployment with stent-axis straightening."""
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
+            return
+        if (self.current_stent_radius + self.smoothing_k) >= self.stent_radius - 1e-3 * L():
+            logger.info("Target stent diameter reached.")
             return
         force_center_point_id = self.selected_points[0]
         self.run_stent_straightening(
