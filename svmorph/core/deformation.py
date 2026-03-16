@@ -17,6 +17,7 @@ from scipy.spatial import cKDTree
 import jax as jx
 import jax.numpy as jnp
 
+from svmorph.core.units import L
 from svmorph.logging import get_logger
 
 logger = get_logger(__name__)
@@ -95,7 +96,7 @@ def mix(a: jx.Array, b: jx.Array, t: jx.Array) -> jx.Array:
     return a + (b - a) * t
 
 def smin_and_gradient(
-    a: jx.Array, da: jx.Array, b: jx.Array, db: jx.Array, k: float = 0.01,
+    a: jx.Array, da: jx.Array, b: jx.Array, db: jx.Array, k: float | None = None,
 ) -> tuple[jx.Array, jx.Array]:
     """Smooth-minimum of two scalar fields with gradient blending.
 
@@ -109,8 +110,8 @@ def smin_and_gradient(
         Scalar distance fields.
     da, db : jx.Array
         Gradients (or direction vectors) associated with *a* and *b*.
-    k : float
-        Smoothing radius.
+    k : float or None
+        Smoothing radius.  ``None`` (default) uses ``0.01 * L()``.
 
     Returns
     -------
@@ -119,6 +120,8 @@ def smin_and_gradient(
     grad : jx.Array
         Blended gradient.
     """
+    if k is None:
+        k = 0.01 * L()
     k = k * 4.0 # a quirk from the math in the paper
     h = jnp.maximum(k - jnp.abs(a - b), 0.0) / k
     n = 0.5 * h
@@ -272,9 +275,9 @@ def kelvinlets_truncated_spherical_expansion(
         Per-point displacement vectors, shape ``(N, K, 3)``.
     """
     num_mesh_points, num_kelvinlet_points, ndims = rv.shape
-    f_scale = 0.01
+    f_scale = 0.01 * L()**3
     rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
-    re = jnp.sqrt(rx**2 + ry**2 + rz**2)
+    re = jnp.sqrt(rx**2 + ry**2 + rz**2 + eps**2)
     re = jnp.expand_dims(re, 2)
     re3 = re**3
     re5 = re**5
@@ -606,8 +609,8 @@ def stent_bounding_box(
     jx.Array
         Boolean mask of length *N*.
     """
-    min_coords = jnp.min(stent_vertices, axis=0) - target_stent_radius - influence_radius - contact_distance - 0.01
-    max_coords = jnp.max(stent_vertices, axis=0) + target_stent_radius + influence_radius + contact_distance + 0.01
+    min_coords = jnp.min(stent_vertices, axis=0) - target_stent_radius - influence_radius - contact_distance - 0.01 * L()
+    max_coords = jnp.max(stent_vertices, axis=0) + target_stent_radius + influence_radius + contact_distance + 0.01 * L()
     mask = jnp.all((data_points >= min_coords) & (data_points <= max_coords), axis=1)
     return mask
 
@@ -615,8 +618,8 @@ def compute_sdf_contact_displacements(
     data: dict, stent_vertices: jx.Array,
     s: float,
     target_stent_radius: float, current_stent_radius: float, *,
-    influence_radius: float = 0.65, contact_distance: float = 0.001,
-    f_scale: float = 0.01,
+    influence_radius: float | None = None, contact_distance: float | None = None,
+    f_scale: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Compute SDF-contact displacements for stent deployment.
 
@@ -657,6 +660,13 @@ def compute_sdf_contact_displacements(
     step_size : float
         Scalar step size for stent radius increment tracking.
     """
+    if influence_radius is None:
+        influence_radius = 0.65 * L()
+    if contact_distance is None:
+        contact_distance = 0.001 * L()
+    if f_scale is None:
+        f_scale = 0.01 * L()
+
     # ── 1. Extract geometry from simulation data ──────────────────────
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Selected pointId: {force_center_point_id}")
