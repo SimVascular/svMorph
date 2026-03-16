@@ -387,7 +387,9 @@ class MainWindow(QMainWindow):
         self.sharpness_value.setFixedWidth(TEXT_INPUT_WIDTH)
         row.addWidget(self.sharpness_value)
 
-        row.addStretch(1)
+        self.run_aneurysm_button = QPushButton("Apply Aneurysm (One Step)")
+        self.run_aneurysm_button.setFixedWidth(BUTTON_WIDTH_XLARGE)
+        row.addWidget(self.run_aneurysm_button)
 
         self.continuous_kelvinlet_button = QPushButton("Apply Aneurysm")
         self.continuous_kelvinlet_button.setFixedWidth(BUTTON_WIDTH_LARGE)
@@ -397,6 +399,7 @@ class MainWindow(QMainWindow):
 
         self.sharpness_slider.valueChanged.connect(self._on_sharpness_slider_change)
         self.sharpness_value.textChanged.connect(self._on_sharpness_text_change)
+        self.run_aneurysm_button.clicked.connect(self.run_deformation)
         self.kelvinlet_timer.timeout.connect(self.run_deformation)
         self.continuous_kelvinlet_button.pressed.connect(
             self.start_continuous_kelvinlet_deformation
