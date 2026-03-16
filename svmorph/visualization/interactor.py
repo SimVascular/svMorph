@@ -698,7 +698,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
-        epsilon = 0.08 * sharpness * L()
+        epsilon = 0.08 / sharpness * L()
         force_center_point_id = self.selected_points[self.force_center_idx]
         model = "test_aneurysm"
         affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}

@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> None:
 
     _, normal = vtk_io.get_centerline_point_and_normal(ctx.centerline_pd, args.center)
     a, b = mesh_data.compute_material_constants(1.0, 0.2)
-    eps = 0.08 * args.sharpness * L()
+    eps = 0.08 / args.sharpness * L()
 
     representative, current_R = common.find_radius_representative(ctx, args.center)
     logger.info(f"Initial radius = {current_R:.4f}, target = {args.target_R:.4f}")
