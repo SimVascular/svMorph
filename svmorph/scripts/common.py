@@ -15,8 +15,11 @@ import numpy as np
 import vtk
 
 from svmorph.core import deformation
+from svmorph.core.units import set_unit_scale
 from svmorph.logging import get_logger, setup_logging as _setup_logging, TIMING
 from svmorph.visualization import vtk_io
+
+_UNIT_SCALES = {"cm": 1.0, "mm": 10.0}
 
 logger = get_logger(__name__)
 
@@ -185,14 +188,21 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--out-cl", default=None, help="Output centerline (optional)")
     parser.add_argument(
         "--save-step", type=float, default=None,
-        help="Write intermediate snapshots every this many cm of radius change (omit to disable)",
+        help="Write intermediate snapshots every this many radius change (omit to disable)",
+    )
+    parser.add_argument(
+        "--units", choices=list(_UNIT_SCALES), default="cm",
+        help="Coordinate unit system of input geometry (default: cm)",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable TIMING-level logging")
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging")
 
 
 def setup_logging(args: argparse.Namespace) -> None:
-    """Configure svmorph logging from parsed CLI args."""
+    """Configure svmorph logging and unit scale from parsed CLI args."""
+    units = getattr(args, "units", "cm")
+    set_unit_scale(_UNIT_SCALES[units])
+
     if getattr(args, "debug", False):
         level = logging.DEBUG
     elif getattr(args, "verbose", False):

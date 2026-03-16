@@ -39,19 +39,14 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 import vtkmodules.all as vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+from svmorph.core.units import L
 from svmorph.visualization.renderer import SceneManager
 from svmorph.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Application Constants
-# Stent parameter ranges and steps
-MAX_STENT_SIZE = 2.0  # 1cm = 10mm diameter
-MIN_STENT_SIZE = 0.1  # 0.1cm = 1mm diameter
+# Application Constants (unit-independent)
 STENT_DIAMETER_NUM_STEPS = 190
-
-MAX_STENT_LENGTH = 8.0  # 80mm length
-MIN_STENT_LENGTH = 1.0  # 20mm length
 STENT_LENGTH_NUM_STEPS = 70
 
 # UI Constants
@@ -71,13 +66,21 @@ TEXT_INPUT_WIDTH_MEDIUM = 60
 DEFORMATION_TIMER_INTERVAL = 50
 STENOSIS_TIMER_INTERVAL = 25
 
-# Slider ranges and defaults
+# Slider ranges and defaults (unit-independent)
 FORCE_SCALE_SLIDER_RANGE = (-1000, 1000)
 FORCE_SCALE_DEFAULT = 1
 SHARPNESS_SLIDER_RANGE = (1, 500)
 SHARPNESS_DEFAULT = 100
-STENT_DIAMETER_DEFAULT = 0.8  # 9mm stent
-STENT_LENGTH_DEFAULT = 1.7  # 17mm stent
+
+# cm-baseline spatial defaults; actual values are computed via L() at runtime
+_MAX_STENT_SIZE_CM = 2.0
+_MIN_STENT_SIZE_CM = 0.1
+_MAX_STENT_LENGTH_CM = 8.0
+_MIN_STENT_LENGTH_CM = 1.0
+_STENT_DIAMETER_DEFAULT_CM = 0.8
+_STENT_LENGTH_DEFAULT_CM = 1.7
+_STENOSIS_RADIUS_DEFAULT_CM = 0.1
+_STENOSIS_LENGTH_DEFAULT_CM = 0.5
 
 # Colors and styling
 ACTIVE_BUTTON_COLOR = "#d84005"
@@ -104,36 +107,28 @@ class SliderMapper:
     @staticmethod
     def stent_diameter_slider_to_value(slider_val):
         """Convert stent diameter slider value to actual diameter"""
-        return MIN_STENT_SIZE + (slider_val / STENT_DIAMETER_NUM_STEPS) * (
-            MAX_STENT_SIZE - MIN_STENT_SIZE
-        )
+        lo, hi = _MIN_STENT_SIZE_CM * L(), _MAX_STENT_SIZE_CM * L()
+        return lo + (slider_val / STENT_DIAMETER_NUM_STEPS) * (hi - lo)
 
     @staticmethod
     def stent_diameter_value_to_slider(value):
         """Convert stent diameter value to slider position"""
-        clamped_value = max(MIN_STENT_SIZE, min(MAX_STENT_SIZE, value))
-        return int(
-            (clamped_value - MIN_STENT_SIZE)
-            / (MAX_STENT_SIZE - MIN_STENT_SIZE)
-            * STENT_DIAMETER_NUM_STEPS
-        )
+        lo, hi = _MIN_STENT_SIZE_CM * L(), _MAX_STENT_SIZE_CM * L()
+        clamped_value = max(lo, min(hi, value))
+        return int((clamped_value - lo) / (hi - lo) * STENT_DIAMETER_NUM_STEPS)
 
     @staticmethod
     def stent_length_slider_to_value(slider_val):
         """Convert stent length slider value to actual length"""
-        return MIN_STENT_LENGTH + (slider_val / STENT_LENGTH_NUM_STEPS) * (
-            MAX_STENT_LENGTH - MIN_STENT_LENGTH
-        )
+        lo, hi = _MIN_STENT_LENGTH_CM * L(), _MAX_STENT_LENGTH_CM * L()
+        return lo + (slider_val / STENT_LENGTH_NUM_STEPS) * (hi - lo)
 
     @staticmethod
     def stent_length_value_to_slider(value):
         """Convert stent length value to slider position"""
-        clamped_value = max(MIN_STENT_LENGTH, min(MAX_STENT_LENGTH, value))
-        return int(
-            (clamped_value - MIN_STENT_LENGTH)
-            / (MAX_STENT_LENGTH - MIN_STENT_LENGTH)
-            * STENT_LENGTH_NUM_STEPS
-        )
+        lo, hi = _MIN_STENT_LENGTH_CM * L(), _MAX_STENT_LENGTH_CM * L()
+        clamped_value = max(lo, min(hi, value))
+        return int((clamped_value - lo) / (hi - lo) * STENT_LENGTH_NUM_STEPS)
 
 
 class UIStyleManager:
@@ -270,13 +265,13 @@ class MainWindow(QMainWindow):
         self.stent_length_slider = QSlider(Qt.Orientation.Horizontal)
         self.stent_length_slider.setRange(0, STENT_LENGTH_NUM_STEPS)
         default_length_slider_value = SliderMapper.stent_length_value_to_slider(
-            STENT_LENGTH_DEFAULT
+            _STENT_LENGTH_DEFAULT_CM * L()
         )
         self.stent_length_slider.setValue(default_length_slider_value)
         self.controls_layout2.addWidget(self.stent_length_slider)
 
         self.stent_length_value = QLineEdit()
-        self.stent_length_value.setText(f"{STENT_LENGTH_DEFAULT:.4f}")
+        self.stent_length_value.setText(f"{_STENT_LENGTH_DEFAULT_CM * L():.4f}")
         self.stent_length_value.setFixedWidth(TEXT_INPUT_WIDTH)
         self.controls_layout2.addWidget(self.stent_length_value)
 
@@ -287,13 +282,13 @@ class MainWindow(QMainWindow):
         self.stent_diameter_slider = QSlider(Qt.Orientation.Horizontal)
         self.stent_diameter_slider.setRange(0, STENT_DIAMETER_NUM_STEPS)
         default_diameter_slider_value = SliderMapper.stent_diameter_value_to_slider(
-            STENT_DIAMETER_DEFAULT
+            _STENT_DIAMETER_DEFAULT_CM * L()
         )
         self.stent_diameter_slider.setValue(default_diameter_slider_value)
         self.controls_layout2.addWidget(self.stent_diameter_slider)
 
         self.stent_diameter_value = QLineEdit()
-        self.stent_diameter_value.setText(f"{STENT_DIAMETER_DEFAULT:.4f}")
+        self.stent_diameter_value.setText(f"{_STENT_DIAMETER_DEFAULT_CM * L():.4f}")
         self.stent_diameter_value.setFixedWidth(TEXT_INPUT_WIDTH)
         self.controls_layout2.addWidget(self.stent_diameter_value)
 
@@ -321,14 +316,14 @@ class MainWindow(QMainWindow):
         self.stenosis_radius_label = QLabel("Stenosis Minimum Radius:")
         self.controls_layout3.addWidget(self.stenosis_radius_label)
         self.stenosis_radius_value = QLineEdit()
-        self.stenosis_radius_value.setText("0.1")
+        self.stenosis_radius_value.setText(f"{_STENOSIS_RADIUS_DEFAULT_CM * L()}")
         self.stenosis_radius_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
         self.controls_layout3.addWidget(self.stenosis_radius_value)
 
         self.stenosis_length_label = QLabel("Stenosis Region Length:")
         self.controls_layout3.addWidget(self.stenosis_length_label)
         self.stenosis_length_value = QLineEdit()
-        self.stenosis_length_value.setText("0.5")
+        self.stenosis_length_value.setText(f"{_STENOSIS_LENGTH_DEFAULT_CM * L()}")
         self.stenosis_length_value.setFixedWidth(TEXT_INPUT_WIDTH_MEDIUM)
         self.controls_layout3.addWidget(self.stenosis_length_value)
 
@@ -437,8 +432,8 @@ class MainWindow(QMainWindow):
         """Initialize VTK-related components"""
         self.vtk_interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
         self.vtk_handler = None
-        self.mesh_file = "input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426.vtp"
-        self.centerline_file = "input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426-centerlines.vtp"
+        self.mesh_file = "../input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426.vtp"
+        self.centerline_file = "../input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426-centerlines.vtp"
 
     def _on_stent_length_slider_change(self, value):
         """Handle stent length slider changes"""

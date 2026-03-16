@@ -21,12 +21,11 @@ import time
 import jax.numpy as jnp
 
 from svmorph.core import deformation, geometry, mesh_data
+from svmorph.core.units import L
 from svmorph.logging import get_logger
 from svmorph.scripts import common
 
 logger = get_logger(__name__)
-
-SMOOTHING_K = 0.01
 
 
 def straighten_axis(vertices: jnp.ndarray, strength: float) -> jnp.ndarray:
@@ -64,9 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--start", type=int, required=True,
         help="Centerline point ID for stent distal tip",
     )
-    parser.add_argument("--target-R", type=float, default=0.4, help="Target deployed stent radius [cm]")
-    parser.add_argument("--start-R", type=float, default=0.05, help="Initial crimped stent radius [cm]")
-    parser.add_argument("--length", type=float, default=3.0, help="Stent length along centerline [cm]")
+    parser.add_argument("--target-R", type=float, default=None, help="Target deployed stent radius (default: 0.4 cm)")
+    parser.add_argument("--start-R", type=float, default=None, help="Initial crimped stent radius (default: 0.05 cm)")
+    parser.add_argument("--length", type=float, default=None, help="Stent length along centerline (default: 3.0 cm)")
     parser.add_argument(
         "--straightening-strength", type=float, default=0.075,
         help="Per-step fraction of displacement toward the straight line",
@@ -78,6 +77,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     common.setup_logging(args)
+
+    if args.target_R is None:
+        args.target_R = 0.4 * L()
+    if args.start_R is None:
+        args.start_R = 0.05 * L()
+    if args.length is None:
+        args.length = 3.0 * L()
+
+    smoothing_k = 0.01 * L()
 
     logger.info("Loading simulation data...")
     ctx = common.load_simulation_data(args.mesh, args.cline)
@@ -92,10 +100,10 @@ def main(argv: list[str] | None = None) -> None:
         ctx.segment_base_mask,
         args.start,
         deployed_length,
-        0.1,
+        0.1 * L(),
         sampling_direction=-1,
     )
-    logger.info(f"Stent axis: {len(axis_pts)} vertices over {deployed_length:.2f} cm")
+    logger.info(f"Stent axis: {len(axis_pts)} vertices over {deployed_length:.2f}")
 
     a, b = mesh_data.compute_material_constants(1.0, 0.2)
 
@@ -110,8 +118,8 @@ def main(argv: list[str] | None = None) -> None:
         data=ctx.data,
     )
 
-    cur_R = args.start_R - SMOOTHING_K
-    logger.info(f"Starting R = {args.start_R:.4f} cm, target R = {args.target_R:.4f} cm")
+    cur_R = args.start_R - smoothing_k
+    logger.info(f"Starting R = {args.start_R:.4f}, target R = {args.target_R:.4f}")
 
     iteration = 0
     t0 = time.time()
@@ -131,7 +139,7 @@ def main(argv: list[str] | None = None) -> None:
         cur_R += dR
         axis_pts = straighten_axis(axis_pts, args.straightening_strength)
         iteration += 1
-        displayed_R = cur_R + SMOOTHING_K
+        displayed_R = cur_R + smoothing_k
         logger.info(f"Step {iteration:3d}: dR={dR:.5f}  R={displayed_R:.5f}")
         snapshots.check_and_save(displayed_R)
 

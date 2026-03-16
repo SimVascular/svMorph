@@ -24,8 +24,9 @@ from vtkmodules.vtkRenderingCore import (
 )
 from svmorph.core import deformation
 from svmorph.core import geometry
-from svmorph.visualization import vtk_io
 from svmorph.core import mesh_data
+from svmorph.core.units import L
+from svmorph.visualization import vtk_io
 import numpy as np
 from vtk.util.numpy_support import numpy_to_vtk, get_vtk_array_type
 import jax.numpy as jnp
@@ -91,16 +92,16 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
         self.sharpness = 1.0
         self.force_scale = -1.0
-        self.stent_radius = 0.45
-        self.stent_length = 1.7
-        self.smoothing_k = 0.01
-        self.undeployed_stent_radius = 0.05 - self.smoothing_k
+        self.stent_radius = 0.45 * L()
+        self.stent_length = 1.7 * L()
+        self.smoothing_k = 0.01 * L()
+        self.undeployed_stent_radius = 0.05 * L() - self.smoothing_k
         self.current_stent_radius = self.undeployed_stent_radius
-        self.stent_unit_section_halflength = 0.2
-        self.stent_segment_length = 0.1  # cm
+        self.stent_unit_section_halflength = 0.2 * L()
+        self.stent_segment_length = 0.1 * L()
         self.foreshortening_percentage = 0.1  # 10%
-        self.influence_radius = 0.65  # doi from paper
-        self.contact_distance = 0.001  # doc from paper
+        self.influence_radius = 0.65 * L()  # doi from paper
+        self.contact_distance = 0.001 * L()  # doc from paper
         self.previous_stenosis_minimum_radius = None
         self.previous_aneurysm_maximum_radius = None
 
@@ -147,7 +148,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
 
         picker = vtkPointPicker()
-        picker.SetTolerance(0.01)
+        picker.SetTolerance(0.01 * L())
         picker.PickFromListOn()
         picker.AddPickList(self.centerline_actor)
         picker.Pick(click_pos[0], click_pos[1], 0, renderer)
@@ -189,7 +190,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.debug(f"# points in centerline: {num_points}")
 
         sphere_source = vtkSphereSource()
-        sphere_source.SetRadius(0.01)  # Adjust radius as needed.
+        sphere_source.SetRadius(0.01 * L())
         sphere_source.SetThetaResolution(8)
         sphere_source.SetPhiResolution(8)
         sphere_source.Update()
@@ -275,7 +276,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         """Add a red highlight sphere at *position* and lock the camera to it."""
         sphere = vtkSphereSource()
         sphere.SetCenter(position)
-        sphere.SetRadius(0.04)
+        sphere.SetRadius(0.04 * L())
 
         mapper = vtkPolyDataMapper()
         mapper.SetInputConnection(sphere.GetOutputPort())
@@ -378,7 +379,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if self.stent_axis_vertices is None:
             return
         r = self.current_stent_radius + self.smoothing_k            # capsule radius
-        r_render = r + 0.1
+        r_render = r + 0.1 * L()
         nx, ny, nz = 100, 100, 100
         xmin = jnp.min(self.stent_axis_vertices[:,0]) - r_render
         xmax = jnp.max(self.stent_axis_vertices[:,0]) + r_render
@@ -697,14 +698,14 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
-        epsilon = 0.08 * sharpness
+        epsilon = 0.08 * sharpness * L()
         force_center_point_id = self.selected_points[self.force_center_idx]
         model = "test_aneurysm"
         affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
         mu = 1
         nu = 0.2
-        aneurysm_radius = 0.5
-        if self.previous_aneurysm_maximum_radius >= aneurysm_radius - 2e-3:
+        aneurysm_radius = 0.5 * L()
+        if self.previous_aneurysm_maximum_radius >= aneurysm_radius - 2e-3 * L():
             logger.info("Target aneurysm radius reached.")
             return
         self.run_aneurysm_sequential(
@@ -733,7 +734,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             logger.warning("Using only the most recent point picked.")
             self.selected_points = self.selected_points[-1:]
 
-        if self.previous_stenosis_minimum_radius <= stenosis_radius + 2e-3:
+        if self.previous_stenosis_minimum_radius <= stenosis_radius + 2e-3 * L():
             logger.info("Target stenosis radius reached.")
 
         force_center_point_id = self.selected_points[0]

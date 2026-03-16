@@ -21,6 +21,7 @@ import time
 import numpy as np
 
 from svmorph.core import deformation, mesh_data
+from svmorph.core.units import L
 from svmorph.logging import get_logger
 from svmorph.scripts import common
 from svmorph.visualization import vtk_io
@@ -38,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--center", type=int, required=True,
         help="Centerline point ID for aneurysm center",
     )
-    parser.add_argument("--target-R", type=float, default=0.5, help="Target aneurysm radius [cm]")
+    parser.add_argument("--target-R", type=float, default=None, help="Target aneurysm radius (default: 0.5 cm)")
     parser.add_argument("--sharpness", type=float, default=1.0, help="Kelvinlet sharpness parameter")
     parser.add_argument("--force-scale", type=float, default=-1.0, help="Signed force scale")
     parser.set_defaults(out_mesh="aneurysm_surface.vtp")
@@ -49,6 +50,9 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     common.setup_logging(args)
 
+    if args.target_R is None:
+        args.target_R = 0.5 * L()
+
     logger.info("Loading simulation data...")
     ctx = common.load_simulation_data(args.mesh, args.cline)
     deformation.set_node_indices(ctx.data, [args.center])
@@ -56,10 +60,10 @@ def main(argv: list[str] | None = None) -> None:
 
     _, normal = vtk_io.get_centerline_point_and_normal(ctx.centerline_pd, args.center)
     a, b = mesh_data.compute_material_constants(1.0, 0.2)
-    eps = 0.08 * args.sharpness
+    eps = 0.08 * args.sharpness * L()
 
     representative, current_R = common.find_radius_representative(ctx, args.center)
-    logger.info(f"Initial radius = {current_R:.4f} cm, target = {args.target_R:.4f} cm")
+    logger.info(f"Initial radius = {current_R:.4f}, target = {args.target_R:.4f}")
 
     snapshots = common.SnapshotManager(
         start_value=current_R,
@@ -74,7 +78,7 @@ def main(argv: list[str] | None = None) -> None:
 
     iteration = 0
     t0 = time.time()
-    while current_R < args.target_R - 2e-3:
+    while current_R < args.target_R - 2e-3 * L():
         surf_disp = deformation.compute_aneurysm_displacements(
             ctx.data, a, b, eps, args.force_scale, None, normal,
         )
