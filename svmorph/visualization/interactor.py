@@ -86,7 +86,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
         self.selected_points = []
         self.select_multiple_points = False
-        self.force_center_idx = 0
         self.stent_axis_vertices = None
         self.stenosis_minimum_radius_representative = None
 
@@ -107,18 +106,11 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
         self.stent_visualization_actors = []
         self.roi_actors = []
-        self.stent_actors = []
         self.radius_text_actor = None
         self.roi_text_actor = None
         self.glyph_actor = None
         self.roi_visible = True
 
-        self.sampling_direction = -1
-        self.animation_direction = 1
-        self.num_kelvinlet_points = 1
-        self.interleave_mode = False
-        self.operation_count = 0
-        self.total_displacement_distance = 0.0
         self.camera_lock = False
         self.previous_focal = [0.0, 0.0, 0.0]
     
@@ -160,13 +152,11 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             polydata = self.centerline_actor.GetMapper().GetInput()
             sphere_center = [0.0, 0.0, 0.0]
             polydata.GetPoint(point_id, sphere_center)
-            self.operation_count = 0
-            self.total_displacement_distance = 0.0
             self.place_highlight_sphere(sphere_center, point_id)
             self.compute_prescribed_stent()
             self.compute_stenosis_minimum_radius_representative(point_id)
             
-            if len(self.selected_points) > self.num_kelvinlet_points:
+            if len(self.selected_points) > 1:
                 self.selected_points.pop(0)
                 renderer.RemoveActor(self.highlight_actors[0])
                 self.highlight_actors.pop(0)
@@ -251,7 +241,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
     def compute_prescribed_stent(self):
         """Resample the centerline to produce stent axis vertices and update the visualisation."""
         deployed_stent_length = self.stent_length * (1 - self.foreshortening_percentage)
-        self.stent_axis_vertices = geometry.resample_stent_axis(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, self.stent_segment_length, sampling_direction=self.sampling_direction)
+        self.stent_axis_vertices = geometry.resample_stent_axis(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, self.stent_segment_length, sampling_direction=-1)
         logger.debug(f"# vertices for stent of length {self.stent_length} cm, segment length {self.stent_segment_length} cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
         
@@ -458,83 +448,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         actor.SetVisibility(self.roi_visible)
         self.roi_actors.append(actor)
 
-    def place_stent_cylinder(self, position, point_id):
-        """Add a semi-transparent stent cylinder actor at *position* aligned to the centerline tangent."""
-        cylinder = vtkCylinderSource()
-        cylinder.SetRadius(self.stent_radius)
-        cylinder.SetHeight(2 * self.stent_unit_section_halflength)
-        cylinder.SetResolution(100)
-
-        default_axis = np.array([0, 1, 0])
-        tangent = self.centerline_tangents[point_id]
-        rotation_axis = np.cross(default_axis, tangent)
-        angle = 180 / np.pi * np.arccos(np.clip(np.dot(default_axis, tangent), -1.0, 1.0))
-
-        transform = vtkTransform()
-        transform.Translate(position)
-        transform.RotateWXYZ(angle, rotation_axis)
-
-        transform_filter = vtkmodules.vtkFiltersGeneral.vtkTransformPolyDataFilter()
-        transform_filter.SetInputConnection(cylinder.GetOutputPort())
-        transform_filter.SetTransform(transform)
-        transform_filter.Update()
-
-        mapper = vtkPolyDataMapper()
-        mapper.SetInputConnection(transform_filter.GetOutputPort())
-
-        actor = vtkmodules.vtkRenderingCore.vtkActor()
-        actor.SetMapper(mapper)
-        actor.GetProperty().SetColor(0.9, 0.9, 0.9)
-        actor.GetProperty().SetOpacity(0.2)
-        actor.SetPickable(0)
-        actor.center_point_id = point_id
-        actor.cylinderSource = cylinder 
-
-        ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
-        ren.AddActor(actor)
-
-        actor.SetVisibility(self.roi_visible)
-        self.stent_actors.append(actor)
-
-    def update_red_highlight_sphere_position(self, idx):
-        """Move the highlight sphere for selection *idx* to the current centerline position."""
-        point_id = self.selected_points[idx]
-        polydata = self.centerline_actor.GetMapper().GetInput()
-        sphere_center = [0.0, 0.0, 0.0]
-        polydata.GetPoint(point_id, sphere_center)
-        
-        highlight_actor = self.highlight_actors[idx]
-        highlight_sphere = highlight_actor.sphere_source
-        highlight_sphere.SetCenter(sphere_center)
-
-        self.lock_camera(sphere_center)
-        if self.operation_count == 0:
-            self.place_stent_cylinder(sphere_center, point_id)
-        self.operation_count += 1
-        if self.operation_count % 5 == 0:
-            self.place_stent_cylinder(sphere_center, point_id)
-
-    def update_radius_of_influence_cylinder(self, idx):
-        """Reposition and reorient the ROI cylinder for selection *idx*."""
-        point_id = self.selected_points[idx]
-        polydata = self.centerline_actor.GetMapper().GetInput()
-        position = [0.0, 0.0, 0.0]
-        polydata.GetPoint(point_id, position)
-        roi_actor = self.roi_actors[-1]
-        default_axis = np.array([0, 1, 0])
-        tangent = self.centerline_tangents[point_id]
-        rotation_axis = np.cross(default_axis, tangent)
-        angle = 180 / np.pi * np.arccos(np.clip(np.dot(default_axis, tangent), -1.0, 1.0))
-        transform = vtkTransform()
-        transform.Translate(position)
-        transform.RotateWXYZ(angle, rotation_axis)
-        transform_filter = vtkmodules.vtkFiltersGeneral.vtkTransformPolyDataFilter()
-        transform_filter.SetInputConnection(roi_actor.cylinderSource.GetOutputPort())
-        transform_filter.SetTransform(transform)
-        transform_filter.Update()
-        roi_actor.GetMapper().SetInputConnection(transform_filter.GetOutputPort())
-        self.GetInteractor().GetRenderWindow().Render()
-
     def update_deformation_parameters(self, sharpness, force_scale):
         """Update the Kelvinlet sharpness and force-scale parameters and refresh the display."""
         self.sharpness = sharpness
@@ -600,97 +513,31 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         renderer.RemoveActor(self.stent_visualization_actors[0])
         self.stent_visualization_actors.pop(0)
 
-
-    def update_selected_point(self):
-        """Advance the single selected point along the centerline and refresh visual elements."""
-        if len(self.selected_points) == 0:
-            return
-        self.selected_points[0] += self.animation_direction * 5
-        if self.selected_points[0] >= self.centerline.GetNumberOfPoints():
-            self.selected_points[0] = 0
-        elif self.selected_points[0] < 0:
-            self.selected_points[0] = self.centerline.GetNumberOfPoints() - 1
-        self.update_red_highlight_sphere_position(0)
-        self.update_radius_of_influence_cylinder(0)
-
-    
-    def interleave_update_selected_points(self):
-        """Advance the active interleave point along the centerline, alternating direction."""
-        if len(self.selected_points) == 0:
-            return
-        
-        self.update_force_center_idx()
-        self.selected_points[self.force_center_idx] += self.animation_direction * 2
-        self.reverse_animation_direction()
-        
-        if self.selected_points[self.force_center_idx] >= self.centerline.GetNumberOfPoints():
-            self.selected_points[self.force_center_idx] = 0
-        elif self.selected_points[self.force_center_idx] < 0:
-            self.selected_points[self.force_center_idx] = self.centerline.GetNumberOfPoints() - 1
-        
-        self.update_red_highlight_sphere_position(self.force_center_idx)
-
-    def reverse_animation_direction(self):
-        """Flip both the animation and sampling direction signs."""
-        self.animation_direction *= -1
-        self.sampling_direction *= -1
-
-    def update_force_center_idx(self):
-        """Set the force-center index to 0 or 1 based on the current animation direction."""
-        self.force_center_idx = (self.animation_direction - 1) // 2
-
     def toggle_roi_cylinder(self):
-        """Toggle visibility of the ROI cylinders, stent cylinders, and stent visualisation actors."""
+        """Toggle visibility of the ROI cylinders and stent visualisation actors."""
         self.roi_visible = not self.roi_visible
         for roi_actor in self.roi_actors:
             roi_actor.SetVisibility(not roi_actor.GetVisibility())
-        for stent_actor in self.stent_actors:
-            stent_actor.SetVisibility(not stent_actor.GetVisibility())
         for stent_visualization_assembly in self.stent_visualization_actors:
             stent_visualization_assembly.SetVisibility(not stent_visualization_assembly.GetVisibility())
         self.GetInteractor().GetRenderWindow().Render()
 
-    def toggle_interleave_mode(self):
-        """Toggle interleave mode between single- and dual-point selection."""
-        self.interleave_mode = not self.interleave_mode
-        self.num_kelvinlet_points = 2 if self.interleave_mode else 1
-        if not self.interleave_mode:
-            if len(self.selected_points) > 1:
-                self.selected_points.pop(0)
-                renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
-                renderer.RemoveActor(self.highlight_actors[0])
-                self.highlight_actors.pop(0)
-                renderer.RemoveActor(self.roi_actors[0])
-                self.roi_actors.pop(0)
-            self.GetInteractor().GetRenderWindow().Render()
-
     def toggle_camera_lock(self):
-        """Toggle camera focal-point lock to the selected centerline point(s)."""
+        """Toggle camera focal-point lock to the selected centerline point."""
         if self.camera_lock:
             self.lock_camera(self.previous_focal)
             self.camera_lock = False
         else:
             self.camera_lock = True
-            if len(self.selected_points) == 1:
+            if len(self.selected_points) >= 1:
                 self.lock_camera(self.centerline.GetPoint(self.selected_points[-1]))
-            elif self.interleave_mode and len(self.selected_points) >= 2:
-                mid_point = [(self.centerline.GetPoint(self.selected_points[0])[i] + self.centerline.GetPoint(self.selected_points[-1])[i]) / 2.0 for i in range(3)]
-                self.lock_camera_interleave(mid_point[0], mid_point[1], mid_point[2])
 
     def lock_camera(self, position):
-        """Set the camera focal point to *position* when camera lock is active (non-interleave mode)."""
-        if self.camera_lock and not self.interleave_mode:
-            camera = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActiveCamera()
-            self.previous_focal = camera.GetFocalPoint()
-            camera.SetFocalPoint(position)
-            self.GetInteractor().GetRenderWindow().Render()
-
-    def lock_camera_interleave(self, x, y, z):
-        """Set the camera focal point to *(x, y, z)* when camera lock is active (interleave mode)."""
+        """Set the camera focal point to *position* when camera lock is active."""
         if self.camera_lock:
             camera = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer().GetActiveCamera()
             self.previous_focal = camera.GetFocalPoint()
-            camera.SetFocalPoint(x, y, z)
+            camera.SetFocalPoint(position)
             self.GetInteractor().GetRenderWindow().Render()
 
     def deform_mesh_aneurysm(self, sharpness, force_scale, aneurysm_radius):
@@ -699,7 +546,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
         epsilon = 0.08 / sharpness * L()
-        force_center_point_id = self.selected_points[self.force_center_idx]
+        force_center_point_id = self.selected_points[0]
         model = "test_aneurysm"
         affine_params = {"eps": {model: epsilon}, "scale": {model: 1.1}}
         mu = 1
@@ -716,7 +563,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
-        force_center_point_id = self.selected_points[self.force_center_idx]
+        force_center_point_id = self.selected_points[0]
         self.run_stent(
             force_center_point_id, force_scale, self.selected_points, self.stent_radius)
         self.update_current_stent_radius()
@@ -747,7 +594,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
-        force_center_point_id = self.selected_points[self.force_center_idx]
+        force_center_point_id = self.selected_points[0]
         self.run_stent_straightening(
             force_center_point_id, force_scale, self.selected_points, self.stent_radius)
         self.update_current_stent_radius()
