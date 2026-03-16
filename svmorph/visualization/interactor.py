@@ -245,15 +245,11 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         """Identify the surface point representing minimum vessel radius at *point_id*."""
         data_points = self.data["points"]["surface"]
         centerline_points = self.data["points"]["centerline"]
-        num_kelvinlet_points = 1
-        xs = np.expand_dims(data_points, 1)
-        xs = np.tile(xs, (1, num_kelvinlet_points, 1))
-        centers = np.expand_dims(np.array([centerline_points[point_id]]), 0)
+        centers = np.array([centerline_points[point_id]])
         force_center_normal = self.centerline_tangents[point_id]
-        kelvinlet_points_normals = np.array([force_center_normal])
-        rotation_matrices = deformation.compute_householder_matrices(kelvinlet_points_normals)
+        rotation_matrices = deformation.compute_householder_matrices(np.array([force_center_normal]))
         original_radius = self.maximum_inscribed_sphere_radius[point_id]
-        self.stenosis_minimum_radius_representative, current_radius = deformation.find_stenosis_minimum_radius_representative(data_points, rotation_matrices, xs, centers, original_radius)
+        self.stenosis_minimum_radius_representative, current_radius = deformation.find_stenosis_minimum_radius_representative(data_points, rotation_matrices, centers, original_radius)
         logger.debug(f"Stenosis minimum radius representative index: {self.stenosis_minimum_radius_representative}")
         self.previous_stenosis_minimum_radius = current_radius
         self.previous_aneurysm_maximum_radius = current_radius
@@ -378,7 +374,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         z = jnp.linspace(zmin, zmax, nz)
         X, Y, Z = jnp.meshgrid(x, y, z, indexing='ij')
         p = jnp.stack((X.ravel(order='F'), Y.ravel(order='F'), Z.ravel(order='F')), axis=1)
-        p = p[:, None, :]
         sdf = deformation.capsule_sdf(p, self.stent_axis_vertices, r)
         logger.timing(f"Computing SDF: {time.time() - time_start:.4f} s")
         render_time_start = time.time()

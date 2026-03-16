@@ -74,23 +74,21 @@ def find_radius_representative(
 
     Returns
     -------
-    representative : np.ndarray
-        Index (1-element array) into the surface point array.
+    representative : np.intp
+        Index into the surface point array.
     current_R : float
         Estimated current vessel radius.
     """
     data_points = ctx.data["points"]["surface"]
     centerline_points = ctx.data["points"]["centerline"]
-    query_points = np.expand_dims(data_points, 1)
-    query_points = np.tile(query_points, (1, 1, 1))
-    centers = np.expand_dims(np.array([centerline_points[center_id]]), 0)
+    centers = np.array([centerline_points[center_id]])
     normal = ctx.tangents[center_id]
     rotation_matrices = np.array(
         deformation.compute_householder_matrices(np.array([normal]))
     )
     original_radius = ctx.inscribed_sphere_radii[center_id]
     representative, current_R = deformation.find_stenosis_minimum_radius_representative(
-        data_points, rotation_matrices, query_points, centers, original_radius,
+        data_points, rotation_matrices, centers, original_radius,
     )
     return representative, current_R
 

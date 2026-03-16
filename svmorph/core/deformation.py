@@ -184,7 +184,7 @@ def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float) -> jx.Array:
     Parameters
     ----------
     p : jx.Array
-        Query points, shape ``(N, 1, 3)``.
+        Query points, shape ``(N, 3)``.
     stent_vertices : jx.Array
         Stent axis vertices, shape ``(V, 3)``.
     r : float
@@ -196,7 +196,7 @@ def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float) -> jx.Array:
         Signed distance for each query point, shape ``(N, 1)``.
     """
     ba_all = jnp.diff(stent_vertices, axis=0)
-    pa_all = p - stent_vertices[None, :-1, :]
+    pa_all = p[:, None, :] - stent_vertices[None, :-1, :]
     ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
     ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
     h_all = jnp.clip(ba_dot_pa_all / ba_dot_ba_all, 0, 1)
@@ -222,7 +222,7 @@ def kelvinlets_truncated_spherical_contraction(
     Parameters
     ----------
     rv : jx.Array
-        Centerline-aligned relative positions, shape ``(N, K, 3)``.
+        Centerline-aligned relative positions, shape ``(N, 3)``.
     f_scale : float
         Force magnitude scaling factor.
     s : float
@@ -235,18 +235,16 @@ def kelvinlets_truncated_spherical_contraction(
     Returns
     -------
     jx.Array
-        Per-point displacement vectors, shape ``(N, K, 3)``.
+        Per-point displacement vectors, shape ``(N, 3)``.
     """
-    num_mesh_points, num_kelvinlet_points, ndims = rv.shape
-    rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+    rx, ry, rz = rv[:, 0], rv[:, 1], rv[:, 2]
     re = jnp.sqrt(rx**2 + ry**2 + rz**2)
     re_no_z = jnp.sqrt(rx**2 + ry**2)
     inner_mask = (re_no_z >= r_min).astype(int)
     outer_mask = (re <= r_max).astype(int)
-    re = jnp.expand_dims(re, 2)
-    rv = rv.at[:, :, 2].set(0 * rv[:, :, 2])
-    displacements = f_scale * (r_max - r_min) * ((re / (r_max)) ** 2 - 1) ** 2 * (-s) * rv
-    displacements = displacements * inner_mask[:, :, None] * outer_mask[:, :, None]
+    rv = rv.at[:, 2].set(0 * rv[:, 2])
+    displacements = f_scale * (r_max - r_min) * ((re[:, None] / r_max) ** 2 - 1) ** 2 * (-s) * rv
+    displacements = displacements * inner_mask[:, None] * outer_mask[:, None]
     return displacements
 
 def kelvinlets_truncated_spherical_expansion(
@@ -261,7 +259,7 @@ def kelvinlets_truncated_spherical_expansion(
     Parameters
     ----------
     rv : jx.Array
-        Centerline-aligned relative positions, shape ``(N, K, 3)``.
+        Centerline-aligned relative positions, shape ``(N, 3)``.
     a, b : float
         Kelvinlet material parameters.
     eps : float
@@ -272,16 +270,14 @@ def kelvinlets_truncated_spherical_expansion(
     Returns
     -------
     jx.Array
-        Per-point displacement vectors, shape ``(N, K, 3)``.
+        Per-point displacement vectors, shape ``(N, 3)``.
     """
-    num_mesh_points, num_kelvinlet_points, ndims = rv.shape
     f_scale = 0.01 * L()**3
-    rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+    rx, ry, rz = rv[:, 0], rv[:, 1], rv[:, 2]
     re = jnp.sqrt(rx**2 + ry**2 + rz**2 + eps**2)
-    re = jnp.expand_dims(re, 2)
-    re3 = re**3
-    re5 = re**5
-    rv = rv.at[:, :, 2].set(0 * rv[:, :, 2])
+    re3 = re[:, None]**3
+    re5 = re[:, None]**5
+    rv = rv.at[:, 2].set(0 * rv[:, 2])
     displacements = f_scale * (2 * b - a) * (1 / re3 + 3 * eps**2 / (2 * re5)) * s * rv
 
     return displacements
@@ -301,7 +297,7 @@ def smin_sdf_capsule_contact_sculpt(
     Parameters
     ----------
     rv : jx.Array
-        Query points, shape ``(N, 1, 3)``.
+        Query points, shape ``(N, 3)``.
     stent_vertices : jx.Array
         Stent axis vertices, shape ``(V, 3)``.
     r_current : float
@@ -315,7 +311,7 @@ def smin_sdf_capsule_contact_sculpt(
         Unit outward direction from the stent axis, shape ``(N, 3)``.
     """
     ba_all = jnp.diff(stent_vertices, axis=0)
-    pa_all = rv - stent_vertices[None, :-1, :]
+    pa_all = rv[:, None, :] - stent_vertices[None, :-1, :]
     ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
     ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
     h_all = jnp.clip(ba_dot_pa_all / ba_dot_ba_all, 0, 1)
@@ -331,26 +327,24 @@ def smin_sdf_capsule_contact_sculpt(
 
 @jx.jit
 def get_scaling_kelvinlet_displacements_inner(
-    data_points: jx.Array, rotation_matrices: jx.Array, query_points: jx.Array,
+    data_points: jx.Array, rotation_matrices: jx.Array,
     centers: jx.Array, a: float, b: float, eps: float, s: float,
     surface_mesh_scale_factor: float | None,
 ) -> jx.Array:
     """JIT-compiled inner loop for scaling Kelvinlet displacement computation.
 
-    Rotates mesh points into each center's local frame, computes sculpt
-    displacements via the scaling Kelvinlet kernel (F = s·I), rotates
-    back to global coordinates, and sums over all force centers.
+    Rotates mesh points into the center's local frame, computes sculpt
+    displacements via the scaling Kelvinlet kernel (F = s·I), and rotates
+    back to global coordinates.
 
     Parameters
     ----------
     data_points : jx.Array
         Surface mesh vertices, shape ``(N, 3)``.
     rotation_matrices : jx.Array
-        Householder matrices for each center, shape ``(K, 3, 3)``.
-    query_points : jx.Array
-        Tiled mesh points, shape ``(N, K, 3)``.
+        Householder matrices, shape ``(1, 3, 3)``.
     centers : jx.Array
-        Kelvinlet force centers, shape ``(1, K, 3)``.
+        Kelvinlet force center, shape ``(1, 3)``.
     a, b : float
         Kelvinlet material parameters.
     eps : float
@@ -365,24 +359,18 @@ def get_scaling_kelvinlet_displacements_inner(
     displacement : jx.Array
         Net displacement per mesh point, shape ``(N, 3)``.
     """
-    num_mesh_points = data_points.shape[0]
-    centers = jnp.tile(centers, (num_mesh_points, 1, 1))
-    rv = query_points - centers
-    # Rotate rv to the global frame
-    rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
+    rv = data_points - centers
     centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
-    # Compute Kelvinlet displacements
     displacement_local = kelvinlets_truncated_spherical_expansion(centerline_aligned_rv, a, b, eps, s)
-    displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
-    displacement = jnp.sum(displacement_global, axis=1)
+    displacement = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     if surface_mesh_scale_factor is not None:
         displacement *= surface_mesh_scale_factor
     return displacement
 
 def find_stenosis_minimum_radius_representative(
     data_points: np.ndarray, rotation_matrices: np.ndarray,
-    query_points: np.ndarray, centers: np.ndarray, original_radius: float,
-) -> tuple[np.ndarray, float]:
+    centers: np.ndarray, original_radius: float,
+) -> tuple[np.intp, float]:
     """Find the surface point that best represents the minimum vessel radius.
 
     Among surface points on the annular shell between 1.0× and 1.1× the
@@ -395,31 +383,24 @@ def find_stenosis_minimum_radius_representative(
     data_points : np.ndarray
         Surface mesh vertices, shape ``(N, 3)``.
     rotation_matrices : np.ndarray
-        Householder matrices, shape ``(K, 3, 3)``.
-    query_points : np.ndarray
-        Tiled mesh points, shape ``(N, K, 3)``.
+        Householder matrices, shape ``(1, 3, 3)``.
     centers : np.ndarray
-        Kelvinlet center(s), shape ``(1, K, 3)``.
+        Kelvinlet center, shape ``(1, 3)``.
     original_radius : float
         Maximum inscribed sphere radius at this centerline point.
 
     Returns
     -------
-    index_for_min_rz : np.ndarray
+    index_for_min_rz : np.intp
         Index into *data_points* of the representative surface point.
     current_radius : float
         Estimated current vessel radius at this cross-section.
     """
-    num_mesh_points = data_points.shape[0]
-    centers = np.tile(centers, (num_mesh_points, 1, 1))
-    rv = query_points - centers
-    # Rotate rv to the global frame
-    rotation_matrices = np.expand_dims(rotation_matrices, 0)
+    rv = data_points - centers
     rv = np.einsum('...ij,...j->...i', rotation_matrices, rv)
-    num_mesh_points, num_kelvinlet_points, ndims = rv.shape
-    rx, ry, rz = rv[:, :, 0], rv[:, :, 1], rv[:, :, 2]
+    rx, ry, rz = rv[:, 0], rv[:, 1], rv[:, 2]
     rz_magnitude = np.abs(rz)
-    radial_magnitude_squared = (rx**2 + ry**2)
+    radial_magnitude_squared = rx**2 + ry**2
 
     # Estimate the actual current vessel radius:
     # 1. Euclidean nearest neighbors → local surface points
@@ -427,11 +408,11 @@ def find_stenosis_minimum_radius_representative(
     # Their radial distances give the current vessel radius, even after
     # deformation.  This naturally excludes outlet cap points (which have
     # nonzero |rz|) unless the center is exactly on the cap.
-    euclidean_dist_sq = rx[:, 0]**2 + ry[:, 0]**2 + rz[:, 0]**2
+    euclidean_dist_sq = rx**2 + ry**2 + rz**2
     nearest_dist = np.sqrt(np.min(euclidean_dist_sq))
     nearby = euclidean_dist_sq < (nearest_dist * 1.5)**2
-    nearby_rz_mag = np.abs(rz[nearby, 0])
-    nearby_radial = np.sqrt(radial_magnitude_squared[nearby, 0])
+    nearby_rz_mag = np.abs(rz[nearby])
+    nearby_radial = np.sqrt(radial_magnitude_squared[nearby])
     rz_cutoff = np.percentile(nearby_rz_mag, 5)
     on_plane = nearby_rz_mag <= rz_cutoff
     if np.any(on_plane):
@@ -440,15 +421,14 @@ def find_stenosis_minimum_radius_representative(
         current_radius = float(original_radius)
 
     mask = ((current_radius * 1.0) ** 2 <= radial_magnitude_squared) * (radial_magnitude_squared <= (current_radius * 1.1) ** 2)
-    # Set rz_magnitude to a large value where mask is False so they are not selected as min
     rz_magnitude_masked = np.where(mask, rz_magnitude, np.inf)
-    index_for_min_rz = np.argmin(rz_magnitude_masked, axis=0)
+    index_for_min_rz = np.argmin(rz_magnitude_masked)
     logger.debug(f"Estimated current radius: {current_radius}")
     return index_for_min_rz, current_radius
 
 @jx.jit
 def get_stenosis_displacements_inner(
-    data_points: jx.Array, rotation_matrices: jx.Array, query_points: jx.Array,
+    data_points: jx.Array, rotation_matrices: jx.Array,
     centers: jx.Array, s: float,
     r_min: float, r_max: float,
 ) -> tuple[jx.Array, jx.Array]:
@@ -462,11 +442,9 @@ def get_stenosis_displacements_inner(
     data_points : jx.Array
         Surface mesh vertices, shape ``(N, 3)``.
     rotation_matrices : jx.Array
-        Householder matrices, shape ``(K, 3, 3)``.
-    query_points : jx.Array
-        Tiled mesh points, shape ``(N, K, 3)``.
+        Householder matrices, shape ``(1, 3, 3)``.
     centers : jx.Array
-        Kelvinlet center(s), shape ``(1, K, 3)``.
+        Kelvinlet center, shape ``(1, 3)``.
     s : float
         Signed force scale.
     r_min : float
@@ -481,18 +459,12 @@ def get_stenosis_displacements_inner(
     step_size : jx.Array
         Scalar step size for radius tracking.
     """
-    num_mesh_points = data_points.shape[0]
-    centers = jnp.tile(centers, (num_mesh_points, 1, 1))
-    rv = query_points - centers
-    # Rotate rv to the global frame
-    rotation_matrices = jnp.expand_dims(rotation_matrices, 0)
+    rv = data_points - centers
     centerline_aligned_rv = jnp.einsum('...ij,...j->...i', rotation_matrices, rv)
-    # Compute Kelvinlet displacements
     f_scale = 0.01 / (r_max - r_min)
     step_size = f_scale * (r_max - r_min) * s
     displacement_local = kelvinlets_truncated_spherical_contraction(centerline_aligned_rv, f_scale, s, r_min, r_max)
-    displacement_global = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
-    displacement = jnp.sum(displacement_global, axis=1)
+    displacement = jnp.einsum('...ij,...j->...i', rotation_matrices, displacement_local)
     return displacement, step_size
 
 def compute_aneurysm_displacements(
@@ -528,14 +500,10 @@ def compute_aneurysm_displacements(
     logger.debug(f"Selected pointId: {force_center_point_id}")
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
-    num_kelvinlet_points = 1
-    query_points = jnp.expand_dims(data_points, 1)
-    query_points = jnp.tile(query_points, (1, num_kelvinlet_points, 1))
-    centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
-    kelvinlet_points_normals = jnp.array([force_center_normal])
-    rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
+    centers = jnp.array([centerline_points[force_center_point_id]])
+    rotation_matrices = compute_householder_matrices(jnp.array([force_center_normal]))
     displacements = get_scaling_kelvinlet_displacements_inner(
-        data_points, rotation_matrices, query_points, centers, a, b, eps, s, surface_mesh_scale_factor
+        data_points, rotation_matrices, centers, a, b, eps, s, surface_mesh_scale_factor
     )
     return np.array(displacements)
 
@@ -570,17 +538,12 @@ def compute_stenosis_displacements(
     """
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Selected pointId: {force_center_point_id}")
-    # Prepare other data
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
-    num_kelvinlet_points = 1
-    query_points = jnp.expand_dims(data_points, 1)
-    query_points = jnp.tile(query_points, (1, num_kelvinlet_points, 1))
-    centers = jnp.expand_dims(jnp.array([centerline_points[force_center_point_id]]), 0)
-    kelvinlet_points_normals = jnp.array([force_center_normal])
-    rotation_matrices = compute_householder_matrices(kelvinlet_points_normals)
+    centers = jnp.array([centerline_points[force_center_point_id]])
+    rotation_matrices = compute_householder_matrices(jnp.array([force_center_normal]))
     displacements, step_size = get_stenosis_displacements_inner(
-        data_points, rotation_matrices, query_points, centers, s, r_min, r_max
+        data_points, rotation_matrices, centers, s, r_min, r_max
     )
     return np.array(displacements), step_size
 
@@ -672,7 +635,6 @@ def compute_sdf_contact_displacements(
     logger.debug(f"Selected pointId: {force_center_point_id}")
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
-    num_kelvinlet_points = 1
 
     # ── 2. Bounding-box culling ──────────────────────────────────────
     # Restrict the expensive SDF evaluation to the axis-aligned bounding
@@ -698,17 +660,14 @@ def compute_sdf_contact_displacements(
 
     # Concatenate surface + centerline into one batch so the SDF kernel
     # is called only once (GPU kernel-launch overhead dominates otherwise).
-    data_and_centerline_points_masked = np.concatenate((data_points_masked, centerline_points_masked), axis=0)
-    query_points_np = np.expand_dims(data_and_centerline_points_masked, 1)
-    query_points = np.tile(query_points_np, (1, num_kelvinlet_points, 1))
+    query_points = np.concatenate((data_points_masked, centerline_points_masked), axis=0)
 
     # ── 3. Smooth-min capsule SDF evaluation ─────────────────────────
     # Evaluate the signed distance from every candidate point to the
     # capsule-chain stent surface.  The smooth-min reduction over
     # segments ensures C¹-continuous distance and direction fields.
     start_time = time.time()
-    total_num_vertices = query_points.shape[0]
-    logger.debug(f"Total # surface and centerline points combined: {total_num_vertices}")
+    logger.debug(f"Total # surface and centerline points combined: {query_points.shape[0]}")
     combined_final_dist_to_surface, combined_final_direction = smin_sdf_capsule_contact_sculpt(query_points, stent_vertices, current_stent_radius)
     combined_final_dist_to_surface = np.array(combined_final_dist_to_surface)
     combined_final_direction = np.array(combined_final_direction)
