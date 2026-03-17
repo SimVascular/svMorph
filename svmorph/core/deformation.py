@@ -148,7 +148,7 @@ def fold_smin(
     tuple[tuple[jx.Array, jx.Array], None]
         Updated carry and a ``None`` scan placeholder.
     """
-    cur_min_d, cur_min_dir = carry 
+    cur_min_d, cur_min_dir = carry
     d, direction = elem
     new_d, new_dir = smin_and_gradient(cur_min_d, cur_min_dir, d, direction)
     return (new_d, new_dir), None
@@ -318,7 +318,7 @@ def smin_sdf_capsule_contact_sculpt(
     axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
     dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
     direction_all = axis_to_point_all / dist_all
-    dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments) 
+    dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments)
     dist_to_surface_all = dist_all_squeezed - r_current
     # Vectorize the folding over all mesh points:
     final_dist_to_surface, final_direction = jx.vmap(compute_min_dist_and_direction)(dist_to_surface_all, direction_all)

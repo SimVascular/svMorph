@@ -6,7 +6,7 @@ vertices, gradually straightening the deployed stent.
 
 Usage::
 
-    python -m svmorph.scripts.deploy_stent_straight \\
+    python -m svmorph.scripts.deploy_stent_straighten \\
         --mesh surface.vtp --cline centerline.vtp \\
         --start 123 --target-R 0.4 --start-R 0.05 \\
         --length 3.0 --straightening-strength 0.075 \\

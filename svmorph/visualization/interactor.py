@@ -120,7 +120,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
         self.camera_lock = False
         self.previous_focal = [0.0, 0.0, 0.0]
-    
+
     def key_press_event(self, obj, event):
         """Handle key-press events.  'h' toggles stent visibility; 'd' starts a repeating deformation timer."""
         key = self.GetInteractor().GetKeySym()
@@ -162,7 +162,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             self.place_highlight_sphere(sphere_center, point_id)
             self.compute_prescribed_stent()
             self.compute_stenosis_minimum_radius_representative(point_id)
-            
+
             if len(self.selected_points) > 1:
                 self.selected_points.pop(0)
                 renderer.RemoveActor(self.highlight_actors[0])
@@ -228,7 +228,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.stent_axis_vertices = geometry.resample_stent_axis(self.data["points"]["centerline_points_view_np"], self.parent_tip_map, self.segment_base_mask, self.selected_points[-1], deployed_stent_length, self.stent_segment_length, sampling_direction=-1)
         logger.debug(f"# vertices for stent of length {self.stent_length} cm, segment length {self.stent_segment_length} cm: {len(self.stent_axis_vertices)}")
         self.place_sdf_stent_visualization()
-        
+
     def compute_stenosis_minimum_radius_representative(self, point_id):
         """Identify the surface point representing minimum vessel radius at *point_id*."""
         data_points = self.data["points"]["surface"]
@@ -256,7 +256,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         actor.GetProperty().SetColor(1.0, 0.0, 0.0)
         actor.GetProperty().SetOpacity(0.8)
         actor.center_point_id = point_id
-        actor.sphere_source = sphere 
+        actor.sphere_source = sphere
 
         ren = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         ren.AddActor(actor)
@@ -318,7 +318,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             sphere.SetThetaResolution(50)
             sphere.SetPhiResolution(50)
             sphere.Update()
-            
+
             mapper = vtkPolyDataMapper()
             mapper.SetInputConnection(sphere.GetOutputPort())
             actor = vtkActor()
@@ -385,9 +385,9 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         actor.GetProperty().SetColor(vtkNamedColors().GetColor3d("Tomato"))
         renderer = self.GetInteractor().GetRenderWindow().GetRenderers().GetFirstRenderer()
         renderer.AddActor(actor)
-        self.GetInteractor().GetRenderWindow().Render() 
+        self.GetInteractor().GetRenderWindow().Render()
         logger.timing(f"Rendering SDF: {time.time() - render_time_start:.4f} s")
-        
+
     def update_deformation_parameters(self, sharpness, force_scale):
         """Update the Kelvinlet sharpness and force-scale parameters and refresh the display."""
         self.sharpness = sharpness
@@ -398,7 +398,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         """Set the target stent radius."""
         self.stent_radius = radius
         self.GetInteractor().GetRenderWindow().Render()
-    
+
     def update_prescribed_stent_length(self, length):
         """Set the target stent length, recompute stent axis vertices, and refresh the display."""
         self.stent_length = length
@@ -416,7 +416,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             for stent_segment_actor in stent_visualization_assembly.GetParts():
                 stent_segment_geometry = stent_segment_actor.geometrySource
                 stent_segment_geometry.SetRadius(self.current_stent_radius + self.smoothing_k)
-    
+
     def update_current_stent_curvature(self):
         """Straighten the stent axis vertices by projecting toward the start–end line."""
         straightening_strength = 0.075
@@ -434,7 +434,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
                 displacement = closest_point_on_line - point
                 vertices = vertices.at[i].set(point + strength * displacement)
             return vertices
-        
+
         start_point = self.stent_axis_vertices[0]
         end_point = self.stent_axis_vertices[-1]
         self.stent_axis_vertices = lerp(self.stent_axis_vertices, start_point, end_point, straightening_strength)
@@ -536,7 +536,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         self.GetInteractor().GetRenderWindow().Render()
         logger.timing(f"Rendering new frame: {time.time() - start_time:.4f} s")
 
-    def run_aneurysm(self, affine_params, model, mu, nu, force_center_point_id, 
+    def run_aneurysm(self, affine_params, model, mu, nu, force_center_point_id,
                         force_scale, node_point_indices):
         """Execute one aneurysm-inflation time step using scaling Kelvinlets.
 
@@ -552,7 +552,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         simulation_data = deformation.set_node_indices(self.data, node_point_indices)
         simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
-        
+
         calc_displacement_start_time = time.time()
         origin, normal = vtk_io.get_centerline_point_and_normal(self.centerline, simulation_data["nodes"]["force_center_point_id"])
         logger.timing(f"Getting coordinates and normal: {time.time() - calc_displacement_start_time:.4f} s")
@@ -562,7 +562,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         logger.debug(f"eps={eps}, force_scale={force_scale}")
         surface_displacements = deformation.compute_aneurysm_displacements(simulation_data, a, b, eps, force_scale, None, normal)
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
-        
+
         # --- Scale Displacements to Match Desired Area ---
         displacement_start_time = time.time()
         simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
@@ -602,13 +602,13 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         simulation_data = deformation.set_node_indices(self.data, node_point_indices)
         simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
-        
+
         step_start_time = time.time()
         logger.debug(f"SDF contact force_scale={force_scale}")
         surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, self.stent_axis_vertices, force_scale, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
-        
+
         displacement_start_time = time.time()
         simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
         simulation_data = mesh_data.apply_displacements(simulation_data, centerline_displacements, "centerline")
@@ -645,13 +645,13 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
         simulation_data = deformation.set_node_indices(self.data, node_point_indices)
         simulation_data = deformation.set_force_center(simulation_data, force_center_point_id)
         logger.timing(f"Converting to jnp arrays and force location: {time.time() - setup_start_time:.4f} s")
-        
+
         step_start_time = time.time()
         logger.debug(f"SDF contact with straightening force_scale={force_scale}")
         surface_displacements, centerline_displacements, step_size = deformation.compute_sdf_contact_displacements(simulation_data, self.stent_axis_vertices, force_scale, stent_radius, self.current_stent_radius, influence_radius=self.influence_radius, contact_distance=self.contact_distance)
         self.current_stent_radius += step_size
         logger.timing(f"Affine displacements calculation: {time.time() - step_start_time:.4f} s")
-        
+
         displacement_start_time = time.time()
         simulation_data = mesh_data.apply_displacements(simulation_data, surface_displacements, "surface")
         simulation_data = mesh_data.apply_displacements(simulation_data, centerline_displacements, "centerline")
