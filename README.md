@@ -447,3 +447,11 @@ This project is licensed under the [MIT License](https://opensource.org/licenses
 - [JAX](https://github.com/jax-ml/jax) — composable transformations and JIT compilation
 - [PyQt6](https://riverbankcomputing.com/software/pyqt/) — cross-platform GUI framework
 - [SimVascular](https://simvascular.github.io/) — cardiovascular modeling pipeline
+
+---
+
+## Contact
+
+**Jeff Bohan Li**
+Cardiovascular Biomechanics Computation Lab, Stanford University
+bohan1@stanford.edu
