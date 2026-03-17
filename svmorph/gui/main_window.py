@@ -452,8 +452,8 @@ class MainWindow(QMainWindow):
         """Initialize VTK-related components"""
         self.vtk_interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
         self.vtk_handler = None
-        self.mesh_file = "../input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426.vtp"
-        self.centerline_file = "../input/TST-STAN-3/TST-STAN-3-preop-FINAL-030426-centerlines.vtp"
+        self.mesh_file = None
+        self.centerline_file = None
 
     def _on_stent_length_slider_change(self, value):
         """Handle stent length slider changes"""
