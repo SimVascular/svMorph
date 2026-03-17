@@ -14,3 +14,6 @@ obtained/
 
 # Legacy code (superseded by svmorph/)
 kelvinlet_core/
+
+# Test directory (input data, scripts, and results)
+tests/

@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--target-R", type=float, default=None, help="Target deployed stent radius (default: 0.4 cm)")
     parser.add_argument("--start-R", type=float, default=None, help="Initial crimped stent radius (default: 0.05 cm)")
-    parser.add_argument("--length", type=float, default=None, help="Stent length along centerline (default: 3.0 cm)")
+    parser.add_argument("--length", type=float, default=None, help="Stent length along centerline (default: 1.7 cm)")
     parser.add_argument(
         "--straightening-strength", type=float, default=0.075,
         help="Per-step fraction of displacement toward the straight line",
@@ -83,7 +83,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.start_R is None:
         args.start_R = 0.05 * L()
     if args.length is None:
-        args.length = 3.0 * L()
+        args.length = 1.7 * L()
 
     smoothing_k = 0.01 * L()
 

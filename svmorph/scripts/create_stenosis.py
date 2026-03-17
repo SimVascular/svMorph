@@ -39,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--center", type=int, required=True,
         help="Centerline point ID for stenosis center",
     )
-    parser.add_argument("--target-R", type=float, default=None, help="Target lumen radius (default: 0.15 cm)")
+    parser.add_argument("--target-R", type=float, default=None, help="Target lumen radius (default: 0.1 cm)")
     parser.add_argument(
         "--stenosis-length", type=float, default=None,
         help="Outer annular cutoff r_max (default: 0.5 cm)",
@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> None:
     common.setup_logging(args)
 
     if args.target_R is None:
-        args.target_R = 0.15 * L()
+        args.target_R = 0.1 * L()
     if args.stenosis_length is None:
         args.stenosis_length = 0.5 * L()
 
