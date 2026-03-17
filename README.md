@@ -452,6 +452,6 @@ This project is licensed under the [MIT License](https://opensource.org/licenses
 
 ## Contact
 
-**Jeff Bohan Li**
-Cardiovascular Biomechanics Computation Lab, Stanford University
-bohan1@stanford.edu
+**Jeff Bohan Li**  
+[Cardiovascular Biomechanics Computation Lab](https://cbcl.stanford.edu/), Stanford University  
+bohan1@stanford.edu  
