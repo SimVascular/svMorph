@@ -159,7 +159,7 @@ print(f'Qt     {PyQt6.QtCore.PYQT_VERSION_STR}')
 
 ```bash
 python main.py                  # default: cm units, INFO logging
-python main.py --units mm       # millimetre geometry
+python main.py --units mm       # millimeter geometry
 python main.py --verbose        # show per-step timing
 python main.py --debug          # full diagnostic output
 ```
@@ -176,12 +176,12 @@ python main.py --debug          # full diagnostic output
 
 | Key | Action |
 |---|---|
-| `H` | Toggle stent visualisation visibility |
+| `H` | Toggle stent visualization visibility |
 | `D` (hold) | Continuous aneurysm deformation while held |
 
 ### GUI control panel reference
 
-The control panel sits below the 3D viewport and is organised into five
+The control panel sits below the 3D viewport and is organized into five
 horizontal rows.  Each row groups related controls for a specific workflow.
 
 ```
@@ -251,11 +251,11 @@ typing a value snaps the slider to match.
 
 | Control | Type | Description |
 |---|---|---|
-| **Import Mesh** | button | Opens a file dialog to load a surface `.vtp`.  The viewport reinitialises once both mesh and centerline are loaded. |
+| **Import Mesh** | button | Opens a file dialog to load a surface `.vtp`.  The viewport reinitializes once both mesh and centerline are loaded. |
 | **Import Centerline** | button | Opens a file dialog to load a centerline `.vtp`. |
 | **Camera Lock** | toggle button | Locks the camera focal point to the currently selected centerline vertex.  The button turns orange when active.  Click again to release. |
 | **Visualize SDF** | button | Evaluates the capsule-chain SDF on a 100&times;100&times;100 regular grid and renders the zero iso-surface via marching cubes.  Useful for inspecting stent geometry before or during deployment. |
-| **Place Stent** | button | Commits the current stent visualisation as a persistent actor in the scene, so it remains visible when selecting a new point. |
+| **Place Stent** | button | Commits the current stent visualization as a persistent actor in the scene, so it remains visible when selecting a new point. |
 | **Save Mesh** | button | Opens a "Save As" dialog to write the deformed surface mesh to a new `.vtp` file. |
 
 ### Headless CLI scripts
@@ -339,6 +339,48 @@ are used to construct a parent-tip map for arc-length walks across bifurcations.
 
 ---
 
+## Unit system (cm vs mm)
+
+svMorph defaults to **centimeters** (`--units cm`).  This matches the convention
+used by [SimVascular](https://simvascular.github.io/), where exported surface
+meshes and centerlines are typically in cm.  Some pipelines (e.g. certain VMTK
+or 3D Slicer workflows) produce geometry in **millimeters** instead.
+
+The `--units` flag (available on both the GUI and all CLI scripts) tells svMorph
+which coordinate system your input files use.  When you switch to `--units mm`,
+**all built-in default parameters are automatically scaled by a factor of 10** so
+they remain physically correct — you do not need to manually convert them.
+
+| Parameter | Default (cm mode) | Default (mm mode) |
+|---|---|---|
+| Stent diameter | 0.8 cm | 8.0 mm |
+| Stent length | 1.7 cm | 17.0 mm |
+| Target stent radius | 0.4 cm | 4.0 mm |
+| Initial crimped radius | 0.05 cm | 0.5 mm |
+| Stenosis target radius | 0.1 cm | 1.0 mm |
+| Influence radius | 0.65 cm | 6.5 mm |
+
+**Key rules:**
+
+1. **Match `--units` to your mesh.**  If your VTP coordinates are in millimeters,
+   pass `--units mm`.  If they are in centimeters (SimVascular default), use the
+   default `--units cm` or omit the flag.
+
+2. **User-supplied values must be in the active unit.**  When you provide
+   explicit arguments such as `--target-R 4.0` or `--length 17.0`, those numbers
+   are interpreted in the unit system you selected.  In mm mode, `--target-R 4.0`
+   means 4.0 mm; in cm mode it would mean 4.0 cm.
+
+3. **GUI labels update automatically.**  Slider labels and text fields display
+   the active unit name (e.g. "Stent Length (mm):") so there is no ambiguity
+   while interacting.
+
+4. **Internally, all constants live in centimeters** in `defaults.py` and are
+   multiplied by the runtime scale factor `L()` from `units.py`.  If you add new
+   spatial constants, follow the same pattern.
+
+---
+
 ## Extending svMorph
 
 ### For 3D Slicer / ParaView plugin developers
@@ -383,7 +425,7 @@ This project is licensed under the [MIT License](https://opensource.org/licenses
 
 ## Acknowledgements
 
-- [VTK](https://vtk.org/) — 3D visualisation and mesh processing
+- [VTK](https://vtk.org/) — 3D visualization and mesh processing
 - [JAX](https://github.com/jax-ml/jax) — composable transformations and JIT compilation
 - [PyQt6](https://riverbankcomputing.com/software/pyqt/) — cross-platform GUI framework
 - [SimVascular](https://simvascular.github.io/) — cardiovascular modeling pipeline
