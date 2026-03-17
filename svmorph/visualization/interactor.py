@@ -582,7 +582,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             self._main_window.setWindowTitle(
                 f"svMorph | FPS: {int(round(1 / elapsed))} | "
                 f"Aneurysm radius: {current_aneurysm_maximum_radius:.4f} {unit_name()} | "
-                f"Δ: {delta_aneurysm:.4f} {unit_name()}"
+                f"Delta: {delta_aneurysm:.4f} {unit_name()}"
             )
 
     def run_stent(self, force_center_point_id, force_scale, node_point_indices, stent_radius):
@@ -715,6 +715,6 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
             self._main_window.setWindowTitle(
                 f"svMorph | FPS: {int(round(1 / elapsed))} | "
                 f"Stenosis radius: {current_stenosis_minimum_radius:.4f} {unit_name()} | "
-                f"Δ: {delta_stenosis:.4f} {unit_name()}"
+                f"Delta: {delta_stenosis:.4f} {unit_name()}"
             )
         return step_size

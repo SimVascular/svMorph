@@ -15,7 +15,7 @@ _UNIT_SCALES = {"cm": 1.0, "mm": 10.0}
 
 def main():
     """Parse CLI arguments, configure logging, and launch the Qt application."""
-    parser = argparse.ArgumentParser(description="svMorph – interactive vascular morphing")
+    parser = argparse.ArgumentParser(description="svMorph - interactive vascular morphing")
     parser.add_argument(
         "--units", choices=list(_UNIT_SCALES), default="cm",
         help="Coordinate unit system of input geometry (default: cm)",

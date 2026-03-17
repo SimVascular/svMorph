@@ -31,4 +31,4 @@ _UNIT_NAMES = {1.0: "cm", 10.0: "mm"}
 
 def unit_name() -> str:
     """Return a human-readable abbreviation for the current length unit."""
-    return _UNIT_NAMES.get(_UNIT_SCALE, f"{_UNIT_SCALE}×cm")
+    return _UNIT_NAMES.get(_UNIT_SCALE, f"{_UNIT_SCALE}x cm")
