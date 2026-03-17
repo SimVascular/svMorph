@@ -4,6 +4,12 @@ Identical to :mod:`deploy_stent` but after each displacement step the stent
 axis vertices are projected toward the line connecting the first and last
 vertices, gradually straightening the deployed stent.
 
+.. note::
+
+   ``--start-R`` must be smaller than the local vessel radius at the
+   deployment site so the stent begins fully inside the lumen.  A value
+   of 0.05 cm works well for typical cardiovascular geometries.
+
 Usage::
 
     python -m svmorph.scripts.deploy_stent_straighten \\

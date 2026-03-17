@@ -262,27 +262,40 @@ typing a value snaps the slider to match.
 
 All scripts accept `--help` for full argument documentation.
 
-**Deploy a stent:**
+**Deploy a stent** — expands a crimped stent (initial radius 0.05 cm) to a
+deployed radius of 0.4 cm (diameter 0.8 cm), with a total stent length of
+1.7 cm.  The distal tip is placed at centerline point ID 123.  Intermediate
+snapshots are saved every 0.1 cm of radius change.
+
+> **Note:** `--start-R` must be smaller than the local vessel radius at the
+> deployment site so the stent begins fully inside the lumen.  A value of
+> 0.05 cm works well for typical cardiovascular geometries.
 
 ```bash
 python -m svmorph.scripts.deploy_stent \
     --mesh surface.vtp --cline centerline.vtp \
-    --start 123 --target-R 0.4 --start-R 0.05 --length 3.0 \
+    --start 123 --target-R 0.4 --start-R 0.05 --length 1.7 \
     --save-step 0.1 \
     --out-mesh deployed_surface.vtp --out-cl deployed_centerline.vtp
 ```
 
-**Deploy with concurrent axis straightening:**
+**Deploy with concurrent axis straightening** — same stent geometry as above,
+but after each expansion step the stent axis is projected toward the straight
+line connecting its endpoints (strength 0.075), gradually removing curvature
+from the deployed configuration.
 
 ```bash
 python -m svmorph.scripts.deploy_stent_straighten \
     --mesh surface.vtp --cline centerline.vtp \
-    --start 123 --target-R 0.4 --start-R 0.05 --length 3.0 \
+    --start 123 --target-R 0.4 --start-R 0.05 --length 1.7 \
     --straightening-strength 0.075 \
     --out-mesh deployed_surface.vtp --out-cl deployed_centerline.vtp
 ```
 
-**Create an aneurysm:**
+**Create an aneurysm** — inflates the vessel wall at centerline point ID 456
+until the local maximum radius reaches 0.5 cm.  Sharpness 1.0 gives a moderate
+focal bulge; lower values spread the deformation over a wider region.  Snapshots
+are saved every 0.02 cm of radius growth.
 
 ```bash
 python -m svmorph.scripts.create_aneurysm \
@@ -291,12 +304,14 @@ python -m svmorph.scripts.create_aneurysm \
     --save-step 0.02 --out-mesh aneurysm_surface.vtp
 ```
 
-**Create a stenosis:**
+**Create a stenosis** — narrows the vessel at centerline point ID 789 until the
+minimum lumen radius shrinks to 0.1 cm.  The stenosis region extends 0.5 cm
+axially from the center.  Snapshots are saved every 0.02 cm of radius reduction.
 
 ```bash
 python -m svmorph.scripts.create_stenosis \
     --mesh surface.vtp --cline centerline.vtp \
-    --center 789 --target-R 0.15 --stenosis-length 0.5 --force-scale 1.0 \
+    --center 789 --target-R 0.1 --stenosis-length 0.5 --force-scale 1.0 \
     --save-step 0.02 --out-mesh stenosis_surface.vtp
 ```
 

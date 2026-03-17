@@ -4,6 +4,12 @@ Deploys a crimped stent inside a vascular surface mesh until the stent
 radius reaches a prescribed target, using the SDF-contact Kelvinlet
 deformation routine.
 
+.. note::
+
+   ``--start-R`` must be smaller than the local vessel radius at the
+   deployment site so the stent begins fully inside the lumen.  A value
+   of 0.05 cm works well for typical cardiovascular geometries.
+
 Usage::
 
     python -m svmorph.scripts.deploy_stent \\
