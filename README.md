@@ -158,8 +158,8 @@ print(f'Qt     {PyQt6.QtCore.PYQT_VERSION_STR}')
 ### Interactive GUI
 
 ```bash
-python main.py                  # default: cm units, INFO logging
-python main.py --units mm       # millimeter geometry
+python main.py                  # default: units in cm, INFO logging on
+python main.py --units mm       # for editing millimeter geometry, units in mm
 python main.py --verbose        # show per-step timing
 python main.py --debug          # full diagnostic output
 ```
@@ -341,10 +341,12 @@ are used to construct a parent-tip map for arc-length walks across bifurcations.
 
 ## Unit system (cm vs mm)
 
-svMorph defaults to **centimeters** (`--units cm`).  This matches the convention
-used by [SimVascular](https://simvascular.github.io/), where exported surface
-meshes and centerlines are typically in cm.  Some pipelines (e.g. certain VMTK
-or 3D Slicer workflows) produce geometry in **millimeters** instead.
+svMorph defaults to **centimeters** when `--units` is unspecified (equivalent to
+`--units cm`).  This matches the convention used by 
+[SimVascular](https://simvascular.github.io/), where exported surface
+meshes, centerlines and TetGen'ed mesh exteriors are typically in cm.  
+Some pipelines (e.g. certain VMTK or 3D Slicer workflows) produce geometry 
+in **millimeters** instead.
 
 The `--units` flag (available on both the GUI and all CLI scripts) tells svMorph
 which coordinate system your input files use.  When you switch to `--units mm`,
@@ -358,7 +360,8 @@ they remain physically correct — you do not need to manually convert them.
 | Target stent radius | 0.4 cm | 4.0 mm |
 | Initial crimped radius | 0.05 cm | 0.5 mm |
 | Stenosis target radius | 0.1 cm | 1.0 mm |
-| Influence radius | 0.65 cm | 6.5 mm |
+| Influence radius (doi in paper) | 0.65 cm | 6.5 mm |
+| Contact distance (doc in paper) | 0.001 cm | 0.01 mm|
 
 **Key rules:**
 
