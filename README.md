@@ -1,6 +1,6 @@
 # svMorph
 
-**Interactive vascular morphing with regularized Kelvinlets and SDF-contact mechanics**
+**Interactive vascular morphing with SDF-contact sculpting and regularized Kelvinlets**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB.svg)](https://www.python.org)
@@ -15,9 +15,10 @@ vascular geometries.  It enables interactive and scriptable creation of syntheti
 vascular pathologies — aneurysms, stenoses, and stent-deployed configurations — on
 triangulated surface meshes with associated centerlines.
 
-The deformation engine couples **regularized Kelvinlet** displacement kernels
-(de Goes & James, 2017) with a **signed-distance-field (SDF) contact** formulation
-that naturally respects the stent–wall interface during simulated device deployment.
+The deformation engine includes a **signed-distance-field (SDF) contact** formulation
+that naturally mimics the stent–wall interface during simulated stent deployment, and
+**regularized Kelvinlet** displacement kernels (de Goes & James, 2017, Pham et al., 2024) 
+that model synthetic aneurysm and stenosis shapes.
 All heavy numerics are JIT-compiled with [JAX](https://github.com/jax-ml/jax) for
 real-time feedback on commodity hardware.
 
