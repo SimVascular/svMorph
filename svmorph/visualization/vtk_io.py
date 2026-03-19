@@ -107,10 +107,38 @@ def build_parent_tip_map(
     for a VTK centre-line tree whose segments are encoded by a
     {0,1}-flag array (one component per leaf branch).
     Returns dict { pointId (int) : parent_tip_pointId (int) }.
+
+    If the 'CenterlineId' array is missing, uses the first line cell in the polydata as centerline.
+
+    Raises ValueError if no polyline cells are found.
     """
     vtk_arr = centerline_polydata.GetPointData().GetArray("CenterlineId")
     if vtk_arr is None:
-        raise ValueError("Point array 'CenterlineId' not found.")
+        # Fallback: use only the first polyline cell as the centerline
+        n_points = centerline_polydata.GetNumberOfPoints()
+        point_to_parent_tip = {pointId: -1 for pointId in range(n_points)}
+        segment_base_mask = np.zeros(n_points, dtype=bool)
+        lines = centerline_polydata.GetLines()
+        polyline_count = lines.GetNumberOfCells() if lines else 0
+        if polyline_count > 0:
+            id_list = vtk.vtkIdList()
+            lines.InitTraversal()
+            found = False
+            # Only mark the first polyline's base
+            while lines.GetNextCell(id_list):
+                if id_list.GetNumberOfIds() > 0:
+                    if not found:
+                        segment_base_mask[id_list.GetId(0)] = True
+                        found = True
+                    break  # Only process the first polyline
+            if polyline_count > 1:
+                import warnings
+                warnings.warn(f"Centerline polydata contains {polyline_count} polylines; only the first non-empty line will be used.")
+            if not found:
+                raise ValueError("No valid polyline cell found in centerline polydata: cannot determine start point for simple centerline.")
+        else:
+            raise ValueError("No polyline cell found in centerline polydata: cannot determine start point for simple centerline.")
+        return point_to_parent_tip, segment_base_mask
     centerline_ids = v2n(vtk_arr)            # (N, n_components)
     unique_rows, inverse = np.unique(centerline_ids, axis=0, return_inverse=True)
     if unique_rows.shape[0] == 1:
