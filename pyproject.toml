@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "svmorph"
+version = "2.0.0"
+description = "Interactive vascular morphing with Kelvinlets and SDF contact"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [
+    { name = "svMorph contributors" },
+]
+keywords = [
+    "vascular morphing",
+    "cardiovascular simulation",
+    "Kelvinlets",
+    "SDF contact",
+    "biomedical",
+    "mesh deformation",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "vtk>=9.2",
+    "jax>=0.4",
+]
+
+[project.optional-dependencies]
+gui = ["pyqt6>=6.7"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+svmorph-gui              = "svmorph._gui_entry:main"
+svmorph-deploy-stent     = "svmorph.scripts.deploy_stent:main"
+svmorph-deploy-stent-straighten = "svmorph.scripts.deploy_stent_straighten:main"
+svmorph-create-aneurysm  = "svmorph.scripts.create_aneurysm:main"
+svmorph-create-stenosis  = "svmorph.scripts.create_stenosis:main"
+
+[project.urls]
+Homepage   = "https://github.com/jeffbli/svMorph"
+Repository = "https://github.com/jeffbli/svMorph"
+Issues     = "https://github.com/jeffbli/svMorph/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["svmorph*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["svmorph"]
+omit = ["svmorph/gui/*", "svmorph/visualization/*"]
