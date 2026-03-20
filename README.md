@@ -104,6 +104,10 @@ from svmorph.core import (
 ### Option A &mdash; pip into an existing environment
 
 ```bash
+pip install -r requirements-gui.txt
+```
+or if you only wish to use the scripts, not the GUI:
+```bash
 pip install -r requirements.txt
 ```
 
