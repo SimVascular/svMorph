@@ -482,6 +482,38 @@ exists, prefer a new env name or remove the old one rather than mixing architect
 
 ---
 
+### PyQt6 6.10 freezes on macOS (as of March 20, 2026)
+
+Qt 6.10 (released October 2025) introduced a regression in its macOS platform integration that causes PyQt6 applications launched from the command line to freeze immediately on startup — the window never appears and the process shows "Application Not Responding." This affects macOS Sequoia and macOS 26 Tahoe.
+
+PyQt6 versions **6.7, 6.8, and 6.9** all work correctly up through macOS Tahoe. The `requirements-gui.txt` is pinned to `pyqt6>=6.7,<6.10` to avoid the broken release. If you are seeing this freeze, check which PyQt6 version is installed:
+
+```bash
+python -c "import PyQt6.QtCore; print(PyQt6.QtCore.PYQT_VERSION_STR)"
+```
+
+If the output is `6.10.x`, force-downgrade to a working version:
+
+```bash
+pip install "pyqt6>=6.7,<6.10"
+```
+
+---
+
+### First launch is slow (up to ~2 minutes)
+
+This is expected and only happens once. The deformation engine uses **JAX** with JIT (Just-In-Time) compilation: the first time each `@jax.jit`-decorated function is called, JAX traces it and compiles it to optimized XLA machine code for your hardware. There are several such functions in the deformation module, and each compilation step can take 20–30 seconds, adding up to roughly 1–2 minutes on the very first run.
+
+JAX automatically caches the compiled artifacts to disk (typically `~/.jax_cache`). Every subsequent run loads those precompiled binaries directly, so startup is effectively instant.
+
+**This is not a bug** — it is the standard JAX/XLA warm-up cost, paid once in exchange for fast GPU-accelerated numerics on all future runs. The cache persists across terminal sessions, so you only recompile if you:
+
+- Delete the JAX cache manually
+- Upgrade or change JAX/XLA/Python versions
+- Switch to a different machine or hardware
+
+---
+
 ## Contact
 
 **Jeff Bohan Li**  
