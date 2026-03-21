@@ -103,10 +103,11 @@ from svmorph.core import (
 
 ### Option A &mdash; pip into an existing environment
 
+Full Installation:
 ```bash
 pip install -r requirements-gui.txt
 ```
-or if you only wish to use the scripts, not the GUI:
+If you only wish to use the scripts, not the GUI:
 ```bash
 pip install -r requirements.txt
 ```
@@ -147,14 +148,17 @@ micromamba remove -n svmorph qt6-main --force
 
 ```bash
 python -c "
-import numpy, scipy, vtk, jax, PyQt6.QtCore
+import numpy, scipy, jax, PyQt6.QtCore
+from vtkmodules.vtkCommonCore import vtkVersion
 print(f'NumPy  {numpy.__version__}')
 print(f'SciPy  {scipy.__version__}')
-print(f'VTK    {vtk.vtkVersion.GetVTKVersion()}')
+print(f'VTK    {vtkVersion.GetVTKVersion()}')
 print(f'JAX    {jax.__version__}')
 print(f'Qt     {PyQt6.QtCore.PYQT_VERSION_STR}')
 "
 ```
+
+This uses `vtkmodules.vtkCommonCore.vtkVersion` instead of `import vtk` so the check stays quick; it is the same `vtkVersion` class exposed as `vtk.vtkVersion` when you import the full `vtk` package.
 
 ---
 
@@ -452,6 +456,29 @@ This project is licensed under the [MIT License](https://opensource.org/licenses
 - [JAX](https://github.com/jax-ml/jax) — composable transformations and JIT compilation
 - [PyQt6](https://riverbankcomputing.com/software/pyqt/) — cross-platform GUI framework
 - [SimVascular](https://simvascular.github.io/) — cardiovascular modeling pipeline
+
+---
+
+## Troubleshooting
+
+### macOS (Apple Silicon), Option A
+
+If `import jax` fails after a successful `pip install`, your interpreter may be **x86_64**
+(Rosetta) instead of native ARM. On Apple Silicon, the JAX wheels pip installs expect a
+native **arm64** Python; an x86_64 interpreter will not load those wheels.
+
+Create or recreate the environment forcing the **osx-arm64** package subdir (and use
+Python 3.9 as elsewhere in this README) before installing:
+
+```bash
+CONDA_SUBDIR=osx-arm64 conda create -y -n svmorph python=3.9
+conda activate svmorph
+pip install -r requirements-gui.txt   # or requirements.txt
+```
+
+(With plain **conda**, `CONDA_SUBDIR=osx-arm64` applies for that command; with **mamba**
+/ **micromamba**, the same variable works the same way. If an old x86_64 env already
+exists, prefer a new env name or remove the old one rather than mixing architectures.)
 
 ---
 
