@@ -5,6 +5,11 @@
 __pycache__/
 *.pyc
 
+# Build / packaging artifacts
+dist/
+build/
+*.egg-info/
+
 # Geometry and mesh files
 *.vtp
 
