@@ -101,37 +101,57 @@ from svmorph.core import (
 
 ## Installation
 
-### Option A &mdash; pip into an existing environment
+### Option A &mdash; Express installation (recommended)
+1. Create a new conda environment and activate it
+```bash
+conda create -y -n svmorph python=3.9\
+conda activate svmorph
+```
+2. To install svMorph with the optional full GUI:
+```bash
+pip install "svmorph[gui]"
+```
+3. Alternatively, to just use the core deformation engine and scripts without the GUI:
+```bash
+pip install svmorph
+```
 
-Full Installation:
+### Option B &mdash; Manual installation for development purposes
+1. Create a new conda environment
+```bash
+conda create -y -n svmorph python=3.9\
+conda activate svmorph
+```
+2. svMorph with the optional full GUI:
 ```bash
 pip install -r requirements-gui.txt
 ```
-If you only wish to use the scripts, not the GUI:
+3. Core deformation engine and scripts without the GUI:
 ```bash
 pip install -r requirements.txt
 ```
 
-### Option B &mdash; Conda / Micromamba (recommended for Apple Silicon)
+### Option C &mdash; Micromamba (might be preferred by Apple Silicon developers)
 
 [Micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html)
 resolves native VTK binaries quickly and coexists with Homebrew and system Python.
 
+1. Create environment with conda-forge packages
 ```bash
-# 1. Create environment with conda-forge packages
 micromamba create -y -n svmorph \
     python=3.9.19 \
     numpy=1.24.4 \
     scipy=1.10.1 \
     vtk=9.3.0 \
     -c conda-forge
-
-# 2. Activate and install pip-only packages
-eval "$(micromamba shell hook --shell zsh)"   # first-time shell init
+```
+2. Activate and install pip-only packages
+```bash
 micromamba activate svmorph
 pip install "jax[cpu]==0.4.30" "pyqt6==6.7"
-
-# 3. Remove the duplicate Qt runtime pulled by VTK's conda deps
+```
+3. Remove the duplicate Qt runtime pulled by VTK's conda deps
+```bash
 micromamba remove -n svmorph qt6-main --force
 ```
 
