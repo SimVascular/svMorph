@@ -1,6 +1,6 @@
 # svMorph
 
-**Interactive vascular morphing with SDF-contact sculpting and regularized Kelvinlets**
+**Real-time interactive virtual stenting and vascular morphing with SDF-contact sculpting and regularized Kelvinlets**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB.svg)](https://www.python.org)
@@ -12,8 +12,8 @@
 
 svMorph is a research tool for *in-silico* morphological editing of patient-specific
 vascular geometries.  It enables interactive and scriptable creation of synthetic
-vascular pathologies — aneurysms, stenoses, and stent-deployed configurations — on
-triangulated surface meshes with associated centerlines.
+vascular pathologies — aneurysms, stenoses, and synthetic interventions — stenting, 
+on triangulated surface meshes with associated centerlines.
 
 The deformation engine includes a **signed-distance-field (SDF) contact** formulation
 that naturally mimics the stent–wall interface during simulated stent deployment, and
@@ -107,21 +107,24 @@ from svmorph.core import (
 conda create -y -n svmorph python=3.9
 conda activate svmorph
 ```
-2. Install svMorph with the full GUI (optional):
+
+2. Decide based on the use case:  
+
+- to install svMorph with the full interactive GUI:
 ```bash
 pip install "svmorph[gui]"
 ```
-3. Install the core deformation engine and scripts without GUI:
+- to install only the core deformation engine and scripts without the GUI:
 ```bash
 pip install svmorph
 ```
 
 ### Option B &mdash; Manual installation for development purposes
-1. svMorph with the optional full GUI:
+svMorph with the optional full GUI:
 ```bash
 pip install -r requirements-gui.txt
 ```
-2. Core deformation engine and scripts without the GUI:
+Core deformation engine and scripts without the GUI:
 ```bash
 pip install -r requirements.txt
 ```
