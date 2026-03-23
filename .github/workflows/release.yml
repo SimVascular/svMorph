@@ -3,7 +3,7 @@ name: Release to PyPI
 on:
   push:
     tags:
-      - "v*.*.*"   # e.g. v2.0.0, v2.1.0-rc1
+      - "v*.*.*"   # e.g. v0.1.0, v0.1.1-rc1
 
 permissions:
   contents: write   # needed to create the GitHub Release
