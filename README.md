@@ -102,7 +102,7 @@ from svmorph.core import (
 ## Installation
 
 ### Option A &mdash; Express installation (recommended)
-1. Create a new conda environment and activate it
+1. Create a new conda environment and activate it:
 ```bash
 conda create -y -n svmorph python=3.9
 conda activate svmorph
@@ -117,11 +117,11 @@ pip install svmorph
 ```
 
 ### Option B &mdash; Manual installation for development purposes
-svMorph with the optional full GUI:
+1. svMorph with the optional full GUI:
 ```bash
 pip install -r requirements-gui.txt
 ```
-Core deformation engine and scripts without the GUI:
+2. Core deformation engine and scripts without the GUI:
 ```bash
 pip install -r requirements.txt
 ```
@@ -131,7 +131,7 @@ pip install -r requirements.txt
 [Micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html)
 resolves native VTK binaries quickly and coexists with Homebrew and system Python.
 
-1. Create environment with conda-forge packages
+1. Create environment with conda-forge packages:
 ```bash
 micromamba create -y -n svmorph \
     python=3.9.19 \
@@ -140,12 +140,12 @@ micromamba create -y -n svmorph \
     vtk=9.3.0 \
     -c conda-forge
 ```
-2. Activate and install pip-only packages
+2. Activate and install pip-only packages:
 ```bash
 micromamba activate svmorph
 pip install "jax[cpu]==0.4.30" "pyqt6==6.7"
 ```
-3. Remove the duplicate Qt runtime pulled by VTK's conda deps
+3. Remove the duplicate Qt runtime pulled by VTK's conda deps:
 ```bash
 micromamba remove -n svmorph qt6-main --force
 ```
