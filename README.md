@@ -104,29 +104,24 @@ from svmorph.core import (
 ### Option A &mdash; Express installation (recommended)
 1. Create a new conda environment and activate it
 ```bash
-conda create -y -n svmorph python=3.9\
+conda create -y -n svmorph python=3.9
 conda activate svmorph
 ```
-2. To install svMorph with the optional full GUI:
+2. Install svMorph with the full GUI (optional):
 ```bash
 pip install "svmorph[gui]"
 ```
-3. Alternatively, to just use the core deformation engine and scripts without the GUI:
+3. Install the core deformation engine and scripts without GUI:
 ```bash
 pip install svmorph
 ```
 
 ### Option B &mdash; Manual installation for development purposes
-1. Create a new conda environment
-```bash
-conda create -y -n svmorph python=3.9\
-conda activate svmorph
-```
-2. svMorph with the optional full GUI:
+svMorph with the optional full GUI:
 ```bash
 pip install -r requirements-gui.txt
 ```
-3. Core deformation engine and scripts without the GUI:
+Core deformation engine and scripts without the GUI:
 ```bash
 pip install -r requirements.txt
 ```
