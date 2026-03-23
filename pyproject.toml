@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "svmorph"
-version = "2.0.0"
+version = "0.1.0"
 description = "Interactive vascular morphing with Kelvinlets and SDF contact"
 readme = "README.md"
 license = "MIT"
@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["pyqt6>=6.7"]
+gui = ["pyqt6>=6.7,<6.10"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
