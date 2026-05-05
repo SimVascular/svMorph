@@ -106,13 +106,21 @@ from svmorph.core import (
 ## Installation
 
 ### Option A &mdash; Express installation (recommended)
-1. Create a new conda environment and activate it:
+1. Create and activate an environment (with `conda` or `uv`, etc.):
+
+- **Conda**
 ```bash
 conda create -y -n svmorph python=3.9
 conda activate svmorph
 ```
 
-2. Decide based on the use case:  
+- **uv**
+```bash
+uv venv --python 3.9
+source .venv/bin/activate
+```
+
+2. Decide based on the use case, then install with `pip`:  
 
 - to install svMorph with the full interactive GUI:
 ```bash
