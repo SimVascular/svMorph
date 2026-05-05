@@ -6,7 +6,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB.svg)](https://www.python.org)
 [![VTK 9.3](https://img.shields.io/badge/VTK-9.3-398593.svg)](https://vtk.org)
 [![JAX](https://img.shields.io/badge/JAX-0.4.30-A435F0.svg)](https://github.com/jax-ml/jax)
-[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.1.2-green.svg)](#)
 
 ---
 
