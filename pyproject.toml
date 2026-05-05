@@ -55,9 +55,9 @@ svmorph-create-aneurysm  = "svmorph.scripts.create_aneurysm:main"
 svmorph-create-stenosis  = "svmorph.scripts.create_stenosis:main"
 
 [project.urls]
-Homepage   = "https://github.com/jeffbli/svMorph"
-Repository = "https://github.com/jeffbli/svMorph"
-Issues     = "https://github.com/jeffbli/svMorph/issues"
+Homepage   = "https://github.com/SimVascular/svMorph/"
+Repository = "https://github.com/SimVascular/svMorph/"
+Issues     = "https://github.com/SimVascular/svMorph/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

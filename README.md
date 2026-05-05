@@ -1,6 +1,6 @@
 # svMorph
 
-**Real-time interactive virtual stenting and vascular morphing with SDF-contact sculpting and regularized Kelvinlets**
+**Real-time interactive vascular morphing with SDFStent virtual stenting and regularized Kelvinlets**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB.svg)](https://www.python.org)
@@ -11,19 +11,23 @@
 ---
 
 svMorph is a research tool for *in-silico* morphological editing of patient-specific
-vascular geometries.  It enables interactive and scriptable creation of synthetic
-vascular pathologies — aneurysms, stenoses, and synthetic interventions — stenting, 
-on triangulated surface meshes with associated centerlines.
+vascular geometries. It enables interactive and scriptable editing on triangulated
+surface meshes with associated centerlines through three core workflows: **SDFStent**
+for virtual stenting, **regularized Kelvinlet** virtual aneurysm creation, and
+geometry-based synthetic stenosis creation.
 
-The deformation engine includes a **signed-distance-field (SDF) contact** formulation
-that naturally mimics the stent–wall interface during simulated stent deployment, and
-**regularized Kelvinlet** displacement kernels (de Goes & James, 2017, Pham et al., 2024) 
-that model synthetic aneurysm and stenosis shapes.
+The deformation engine includes **SDFStent**, a signed-distance-field (SDF)-based
+virtual stenting method that mimics stent-wall interaction during deployment, and
+**regularized Kelvinlet** displacement kernels (de Goes & James, 2017, Pham et al., 2024)
+for virtual aneurysm and synthetic stenosis modeling.
 All heavy numerics are JIT-compiled with [JAX](https://github.com/jax-ml/jax) for
 real-time feedback on commodity hardware.
 
-> **Paper** &nbsp; If you use svMorph in published work, please cite the companion
-> paper (reference forthcoming).
+> **Citation guidance**
+> - If you use **SDFStent** (virtual stenting), please cite the **SDFStent paper** (reference forthcoming).
+> - If you use **virtual aneurysm** or **virtual stenosis** creation, please cite:
+>   *svMorph: Interactive Geometry-Editing Tools for Virtual Patient-Specific Vascular Anatomies*,
+>   DOI: [10.1115/1.4056055](https://doi.org/10.1115/1.4056055).
 
 ---
 
@@ -31,8 +35,8 @@ real-time feedback on commodity hardware.
 
 | Mode | Description |
 |---|---|
-| **Stent deployment** | SDF-contact expansion of a crimped capsule-chain stent against the vessel wall, with bounding-box culling, KD-tree influence blending, and smooth-min C&sup1;-continuous distance fields. |
-| **Stent deployment with straightening** | Identical to above, with concurrent projection of the stent axis toward a straight line at each step. |
+| **SDFStent deployment** | Signed-distance-field virtual stenting with expansion of a crimped capsule-chain stent against the vessel wall, with bounding-box culling, KD-tree influence blending, and smooth-min C&sup1;-continuous distance fields. |
+| **SDFStent + straightening** | Same SDFStent deployment, with concurrent projection of the stent axis toward a straight line at each step. |
 | **Aneurysm creation** | Outward inflation at a centerline point via the scaling regularized Kelvinlet (F&nbsp;=&nbsp;s&middot;I). |
 | **Stenosis creation** | Inward contraction using a truncated-sphere quartic bump profile. |
 
@@ -46,7 +50,7 @@ All four modes are available through both the **interactive GUI** (PyQt6 + VTK) 
 ```
 svmorph/
 ├── core/                  # Pure computation — no VTK, no Qt
-│   ├── deformation.py     #   Kelvinlet kernels, SDF-contact, displacement assembly
+│   ├── deformation.py     #   Kelvinlet kernels, SDFStent (SDF-contact), displacement assembly
 │   ├── geometry.py         #   Arc-length centerline resampling (branch-aware)
 │   ├── mesh_data.py        #   Material constants, displacement application
 │   ├── defaults.py         #   Spatial default constants (cm)
@@ -119,7 +123,9 @@ pip install "svmorph[gui]"
 pip install svmorph
 ```
 
-### Option B &mdash; Manual installation for development purposes
+### Option B &mdash; Manual installation from source (development)
+Clone the repository first, then install dependencies.
+
 svMorph with the optional full GUI:
 ```bash
 pip install -r requirements-gui.txt
@@ -184,6 +190,15 @@ This uses `vtkmodules.vtkCommonCore.vtkVersion` instead of `import vtk` so the c
 
 ### Interactive GUI
 
+If you installed `svmorph` directly from pip (Option A), launch with the installed console entry point:
+```bash
+svmorph-gui                    # default: units in cm, INFO logging on
+svmorph-gui --units mm         # for editing millimeter geometry, units in mm
+svmorph-gui --verbose          # show per-step timing
+svmorph-gui --debug            # full diagnostic output
+```
+
+If you cloned this repository and are running from source (Option B, developer workflow), launch with:
 ```bash
 python main.py                  # default: units in cm, INFO logging on
 python main.py --units mm       # for editing millimeter geometry, units in mm
@@ -220,7 +235,7 @@ horizontal rows.  Each row groups related controls for a specific workflow.
 ├──── Row 1 ── Stent geometry ─────────────────────────────────────────────┤
 │ Stent Length (cm): ◄══════════╪══════════► [1.7000]                      │
 │ Stent Diameter (cm): ◄══════════╪══════════► [0.8000]                    │
-├──── Row 2 ── Stent deployment ───────────────────────────────────────────┤
+├──── Row 2 ── SDFStent deployment ────────────────────────────────────────┤
 │ Force Scale: ◄══════════╪══════════► [1.000]                             │
 │ [Select Point] [Straighten Stent] [Expand Stent (One Step)] [Expand …]  │
 ├──── Row 3 ── Stenosis ──────────────────────────────────────────────────┤
@@ -241,20 +256,20 @@ horizontal rows.  Each row groups related controls for a specific workflow.
 | Control | Type | Description |
 |---|---|---|
 | **Stent Length** | slider + text | Length of the capsule-chain stent along the centerline (1.0–8.0 cm). Adjusting this recomputes and redraws the stent axis vertices in real time. |
-| **Stent Diameter** | slider + text | Target deployed diameter of the stent (0.1–2.0 cm). This sets the radius goal for the SDF-contact expansion loop. |
+| **Stent Diameter** | slider + text | Target deployed diameter of the stent (0.1–2.0 cm). This sets the radius goal for the SDFStent expansion loop. |
 
 Both controls are bidirectional: dragging the slider updates the text field, and
 typing a value snaps the slider to match.
 
-#### Row 2 — Stent deployment
+#### Row 2 — SDFStent deployment
 
 | Control | Type | Description |
 |---|---|---|
 | **Force Scale** | slider + text | Scales the magnitude of each displacement step (&#8722;1.0 to 1.0).  Higher values produce larger per-step deformations; negative values reverse the direction. |
 | **Select Point** | button | Enters point-selection mode: the mesh becomes translucent and cyan glyphs appear at every centerline vertex. Click a vertex to select the stent's distal starting point. |
-| **Straighten Stent** | button | Runs one combined step of SDF-contact stent expansion **and** axis straightening — the stent is projected toward the line connecting its endpoints. |
-| **Expand Stent (One Step)** | button | Executes a single SDF-contact displacement iteration: the stent radius increments by one step and the vessel wall deforms outward at contact points. |
-| **Expand Stent** | hold button | Hold to run continuous SDF-contact expansion (fires every 50 ms). Release to stop. The title bar shows live FPS, current stent radius, and diameter. |
+| **Straighten Stent** | button | Runs one combined step of SDFStent expansion **and** axis straightening — the stent is projected toward the line connecting its endpoints. |
+| **Expand Stent (One Step)** | button | Executes a single SDFStent displacement iteration: the stent radius increments by one step and the vessel wall deforms outward at contact points. |
+| **Expand Stent** | hold button | Hold to run continuous SDFStent expansion (fires every 50 ms). Release to stop. The title bar shows live FPS, current stent radius, and diameter. |
 
 #### Row 3 — Stenosis creation
 
@@ -289,7 +304,7 @@ typing a value snaps the slider to match.
 
 All scripts accept `--help` for full argument documentation.
 
-**Deploy a stent** — expands a crimped stent (initial radius 0.05 cm) to a
+**Deploy a stent (SDFStent)** — expands a crimped stent (initial radius 0.05 cm) to a
 deployed radius of 0.4 cm (diameter 0.8 cm), with a total stent length of
 1.7 cm.  The distal tip is placed at centerline point ID 123.  Intermediate
 snapshots are saved every 0.1 cm of radius change.
@@ -306,7 +321,7 @@ python -m svmorph.scripts.deploy_stent \
     --out-mesh deployed_surface.vtp --out-cl deployed_centerline.vtp
 ```
 
-**Deploy with concurrent axis straightening** — same stent geometry as above,
+**Deploy with concurrent axis straightening (SDFStent)** — same stent geometry as above,
 but after each expansion step the stent axis is projected toward the straight
 line connecting its endpoints (strength 0.075), gradually removing curvature
 from the deployed configuration.
