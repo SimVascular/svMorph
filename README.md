@@ -87,13 +87,16 @@ pip install svmorph
 ```
 
 ### Option B &mdash; Manual installation from source (development)
-Clone the repository first, then install dependencies.
-
-svMorph with the optional full GUI:
+Clone the repository first, 
+```bash
+git clone https://github.com/SimVascular/svMorph
+```
+then install the dependencies.
+For svMorph with the optional full GUI:
 ```bash
 pip install -r requirements-gui.txt
 ```
-Core deformation engine and scripts without the GUI:
+For the deformation engine and scripts without the GUI:
 ```bash
 pip install -r requirements.txt
 ```
