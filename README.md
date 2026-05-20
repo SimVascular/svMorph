@@ -60,7 +60,7 @@ All four modes are available through both the **interactive GUI** (PyQt6 + VTK) 
 
 ## Installation
 
-### Option A &mdash; Express installation (recommended)
+### Option A &mdash; Express installation (recommended) (no need to clone repo)
 1. Create and activate an environment (with `conda` or `uv`, etc.):
 
 - **Conda**
