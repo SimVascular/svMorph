@@ -149,51 +149,6 @@ This uses `vtkmodules.vtkCommonCore.vtkVersion` instead of `import vtk` so the c
 
 ---
 
-## Architecture
-
-```
-svmorph/
-├── core/                  # Pure computation — no VTK, no Qt
-│   ├── deformation.py     #   Kelvinlet kernels, SDFStent (SDF-contact), displacement assembly
-│   ├── geometry.py         #   Arc-length centerline resampling (branch-aware)
-│   ├── mesh_data.py        #   Material constants, displacement application
-│   ├── defaults.py         #   Spatial default constants (cm)
-│   └── units.py            #   Runtime cm ↔ mm unit scaling
-│
-├── visualization/         # VTK rendering and I/O
-│   ├── vtk_io.py           #   VTP read/write, mesh array extraction, centerline utilities
-│   ├── renderer.py         #   SceneManager — VTK pipeline construction
-│   └── interactor.py       #   MeshInteractor — interactive trackball camera + deformation dispatch
-│
-├── gui/                   # PyQt6 application
-│   └── main_window.py      #   MainWindow with sliders, buttons, and VTK render widget
-│
-├── scripts/               # Headless CLI entry points
-│   ├── common.py           #   SimulationContext, SnapshotManager, shared CLI helpers
-│   ├── deploy_stent.py
-│   ├── deploy_stent_straighten.py
-│   ├── create_aneurysm.py
-│   └── create_stenosis.py
-│
-└── logging.py             # Structured logging with custom TIMING level
-```
-
-The `core/` subpackage is **dependency-light** (JAX, NumPy, SciPy only) and carries
-no VTK or Qt dependency, making it straightforward for downstream tools — such as
-[3D Slicer](https://www.slicer.org/) extensions or [ParaView](https://www.paraview.org/)
-plugins — to import and build upon the deformation engine independently:
-
-```python
-from svmorph.core import (
-    compute_sdf_contact_displacements,
-    compute_aneurysm_displacements,
-    compute_stenosis_displacements,
-    resample_stent_axis,
-)
-```
-
----
-
 ## Usage
 
 ### Interactive GUI
@@ -446,6 +401,51 @@ they remain physically correct — you do not need to manually convert them.
 4. **Internally, all constants live in centimeters** in `defaults.py` and are
    multiplied by the runtime scale factor `L()` from `units.py`.  If you add new
    spatial constants, follow the same pattern.
+
+---
+
+## Architecture
+
+```
+svmorph/
+├── core/                  # Pure computation — no VTK, no Qt
+│   ├── deformation.py     #   Kelvinlet kernels, SDFStent (SDF-contact), displacement assembly
+│   ├── geometry.py         #   Arc-length centerline resampling (branch-aware)
+│   ├── mesh_data.py        #   Material constants, displacement application
+│   ├── defaults.py         #   Spatial default constants (cm)
+│   └── units.py            #   Runtime cm ↔ mm unit scaling
+│
+├── visualization/         # VTK rendering and I/O
+│   ├── vtk_io.py           #   VTP read/write, mesh array extraction, centerline utilities
+│   ├── renderer.py         #   SceneManager — VTK pipeline construction
+│   └── interactor.py       #   MeshInteractor — interactive trackball camera + deformation dispatch
+│
+├── gui/                   # PyQt6 application
+│   └── main_window.py      #   MainWindow with sliders, buttons, and VTK render widget
+│
+├── scripts/               # Headless CLI entry points
+│   ├── common.py           #   SimulationContext, SnapshotManager, shared CLI helpers
+│   ├── deploy_stent.py
+│   ├── deploy_stent_straighten.py
+│   ├── create_aneurysm.py
+│   └── create_stenosis.py
+│
+└── logging.py             # Structured logging with custom TIMING level
+```
+
+The `core/` subpackage is **dependency-light** (JAX, NumPy, SciPy only) and carries
+no VTK or Qt dependency, making it straightforward for downstream tools — such as
+[3D Slicer](https://www.slicer.org/) extensions or [ParaView](https://www.paraview.org/)
+plugins — to import and build upon the deformation engine independently:
+
+```python
+from svmorph.core import (
+    compute_sdf_contact_displacements,
+    compute_aneurysm_displacements,
+    compute_stenosis_displacements,
+    resample_stent_axis,
+)
+```
 
 ---
 
