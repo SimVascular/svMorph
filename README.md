@@ -91,7 +91,7 @@ Clone the repository first,
 ```bash
 git clone https://github.com/SimVascular/svMorph
 ```
-then install the dependencies.
+then install the dependencies. 
 For svMorph with the optional full GUI:
 ```bash
 pip install -r requirements-gui.txt
