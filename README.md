@@ -81,9 +81,17 @@ source .venv/bin/activate
 ```bash
 pip install "svmorph[gui]"
 ```
+or if using uv:
+```bash
+uv pip install "svmorph[gui]"
+```
 - to install only the core deformation engine and scripts without the GUI:
 ```bash
 pip install svmorph
+```
+or if using uv:
+```bash
+uv pip install svmorph
 ```
 
 ### Option B &mdash; Manual installation from source (development)
