@@ -295,6 +295,28 @@ python -m svmorph.scripts.deploy_stent \
     --out-mesh deployed_surface.vtp --out-cl deployed_centerline.vtp
 ```
 
+**Deploy a flared stent (SDFStent, variable radius)** — same as above, but the
+stent radius follows a profile along the centerline instead of being uniform:
+the end opposite the `--start` point flares from the 0.4 cm body radius to
+0.6 cm over the last 0.5 cm of the stent (funnel/trumpet shape).
+`--cap-height-fraction` flattens the capsule end caps into half ellipsoids
+(axial semi-axis = fraction × local radius); this keeps the wide flared end
+from inflating a spherical bulge into the vessel beyond the stent end, and
+also lets concave radius profiles (local narrowings) deploy without being
+filled in by the neighboring wide capsules.  Arbitrary radius profiles can be
+built programmatically with `svmorph.core.stent_radius_profile` (control
+points) or `svmorph.core.flared_stent_radius_profile` and passed as the
+per-vertex `current_stent_radius` of `compute_sdf_contact_displacements`.
+
+```bash
+python -m svmorph.scripts.deploy_stent \
+    --mesh surface.vtp --cline centerline.vtp \
+    --start 123 --target-R 0.4 --start-R 0.05 --length 1.7 \
+    --flare-R 0.6 --flare-length 0.5 --flare-end end \
+    --cap-height-fraction 0.35 \
+    --out-mesh deployed_surface.vtp --out-cl deployed_centerline.vtp
+```
+
 **Deploy with concurrent axis straightening (SDFStent)** — same stent geometry as above,
 but after each expansion step the stent axis is projected toward the straight
 line connecting its endpoints (strength 0.075), gradually removing curvature

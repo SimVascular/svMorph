@@ -1,9 +1,13 @@
-"""Tests for svmorph.core.geometry – centerline resampling."""
+"""Tests for svmorph.core.geometry – centerline resampling and radius profiles."""
 
 import numpy as np
 import pytest
 
-from svmorph.core.geometry import resample_stent_axis
+from svmorph.core.geometry import (
+    flared_stent_radius_profile,
+    resample_stent_axis,
+    stent_radius_profile,
+)
 
 
 def _straight_line(n: int = 20, length: float = 2.0) -> np.ndarray:
@@ -70,3 +74,39 @@ def test_too_few_points_raises():
     ptm, sbm = _flat_maps(1)
     with pytest.raises(ValueError, match="Not enough points"):
         resample_stent_axis(pts, ptm, sbm, 0, 0.5, 0.1, sampling_direction=-1)
+
+
+def test_stent_radius_profile_interpolates_control_points():
+    pts = _straight_line(n=11, length=1.0)
+    radii = stent_radius_profile(pts, [(0.0, 0.2), (0.5, 0.4), (1.0, 0.2)])
+    assert radii.shape == (11,)
+    assert radii[0] == pytest.approx(0.2)
+    assert radii[5] == pytest.approx(0.4)
+    assert radii[-1] == pytest.approx(0.2)
+    assert radii[2] == pytest.approx(0.2 + 0.2 * (0.2 / 0.5), abs=1e-6)
+
+
+def test_stent_radius_profile_requires_control_points():
+    pts = _straight_line(n=5)
+    with pytest.raises(ValueError, match="control point"):
+        stent_radius_profile(pts, [])
+
+
+def test_flared_stent_radius_profile_at_axis_end():
+    pts = _straight_line(n=21, length=2.0)
+    radii = flared_stent_radius_profile(pts, body_radius=0.4, flare_radius=0.6, flare_length=0.5)
+    assert radii.shape == (21,)
+    # Body radius away from the flare, flare radius exactly at the flared (last) vertex
+    assert radii[0] == pytest.approx(0.4)
+    assert radii[10] == pytest.approx(0.4)
+    assert radii[-1] == pytest.approx(0.6)
+    # Monotonic smoothstep transition within the flare length
+    transition = radii[15:]
+    assert np.all(np.diff(transition) >= 0.0)
+
+
+def test_flared_stent_radius_profile_at_axis_start():
+    pts = _straight_line(n=21, length=2.0)
+    radii = flared_stent_radius_profile(pts, 0.4, 0.6, 0.5, flare_at_axis_start=True)
+    assert radii[0] == pytest.approx(0.6)
+    assert radii[-1] == pytest.approx(0.4)
