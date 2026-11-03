@@ -11,7 +11,11 @@ from svmorph.core.deformation import (
     set_node_indices,
     stent_bounding_box,
 )
-from svmorph.core.geometry import resample_stent_axis
+from svmorph.core.geometry import (
+    flared_stent_radius_profile,
+    resample_stent_axis,
+    stent_radius_profile,
+)
 from svmorph.core.mesh_data import (
     apply_displacements,
     compute_material_constants,

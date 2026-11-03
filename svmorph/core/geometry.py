@@ -125,3 +125,90 @@ def resample_stent_axis(
         new_vertices[:, dim] = np.interp(new_s, subsegment_s, subsegment_points[:, dim])
 
     return jnp.array(new_vertices)
+
+
+def _normalized_arc_positions(stent_vertices: np.ndarray) -> np.ndarray:
+    """Arc-length position of each stent axis vertex, normalized to [0, 1] from the first vertex."""
+    points = np.asarray(stent_vertices, dtype=float)
+    if len(points) < 2:
+        return np.zeros(len(points))
+    segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    arc_positions = np.concatenate(([0.0], np.cumsum(segment_lengths)))
+    total_length = arc_positions[-1]
+    if total_length <= 0.0:
+        return np.zeros(len(points))
+    return arc_positions / total_length
+
+
+def stent_radius_profile(stent_vertices: np.ndarray, control_points) -> np.ndarray:
+    """Per-vertex stent radii from arbitrary (position, radius) control points.
+
+    Builds a variable radius profile for the tapered capsule-chain stent SDF
+    (see :func:`svmorph.core.deformation.compute_sdf_contact_displacements`):
+    one radius per stent axis vertex, linearly interpolated between the
+    control points along the stent axis.
+
+    Parameters
+    ----------
+    stent_vertices : np.ndarray
+        Stent axis vertices, shape ``(V, 3)`` (e.g. from
+        :func:`resample_stent_axis`).
+    control_points : iterable of (float, float)
+        ``(position, radius)`` pairs, where *position* is the normalized
+        arc-length position in ``[0, 1]`` measured from the first axis
+        vertex.
+
+    Returns
+    -------
+    np.ndarray
+        Per-vertex stent radii, shape ``(V,)``.
+    """
+    control_points = sorted((float(position), float(radius)) for position, radius in control_points)
+    if not control_points:
+        raise ValueError("At least one radius profile control point is required")
+    positions = [position for position, _ in control_points]
+    radii = [radius for _, radius in control_points]
+    return np.interp(_normalized_arc_positions(stent_vertices), positions, radii)
+
+
+def flared_stent_radius_profile(
+    stent_vertices: np.ndarray, body_radius: float, flare_radius: float,
+    flare_length: float, flare_at_axis_start: bool = False,
+) -> np.ndarray:
+    """Per-vertex stent radii for a stent with one flared (funnel/trumpet) end.
+
+    The radius transitions from *body_radius* to *flare_radius* over
+    *flare_length* at one end of the stent axis with a smoothstep profile.
+    The result can be passed (scaled to the current deployment radius) as the
+    per-vertex ``current_stent_radius`` of
+    :func:`svmorph.core.deformation.compute_sdf_contact_displacements`.
+
+    Parameters
+    ----------
+    stent_vertices : np.ndarray
+        Stent axis vertices, shape ``(V, 3)``.
+    body_radius : float
+        Stent radius away from the flared end.
+    flare_radius : float
+        Stent radius at the tip of the flared end (may also be smaller than
+        *body_radius* for a tapered stent).
+    flare_length : float
+        Length of the radius transition, measured along the stent axis from
+        the flared end, in the same unit as the vertex coordinates.
+    flare_at_axis_start : bool
+        Flare the first-vertex end of the stent axis instead of the
+        last-vertex end.
+
+    Returns
+    -------
+    np.ndarray
+        Per-vertex stent radii, shape ``(V,)``.
+    """
+    points = np.asarray(stent_vertices, dtype=float)
+    segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    arc_positions = np.concatenate(([0.0], np.cumsum(segment_lengths)))
+    total_length = arc_positions[-1]
+    distance_from_flared_end = arc_positions if flare_at_axis_start else total_length - arc_positions
+    t = np.clip(1.0 - distance_from_flared_end / float(flare_length), 0.0, 1.0)
+    t = t * t * (3.0 - 2.0 * t)  # smoothstep
+    return float(body_radius) + (float(flare_radius) - float(body_radius)) * t
