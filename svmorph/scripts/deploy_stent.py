@@ -143,7 +143,6 @@ def main(argv: list[str] | None = None) -> None:
     logger.info(f"Starting R = {args.start_R:.4f}, target R = {args.target_R:.4f}")
 
     iteration = 0
-    t0 = time.time()
     # The session applies each step to the mesh.  Under the Warp backend the mesh stays on the
     # GPU between steps, so ctx.data is only current after session.sync(): snapshots sync before
     # they are written, and leaving the block syncs before the final save.
@@ -164,6 +163,9 @@ def main(argv: list[str] | None = None) -> None:
             before_save=session.sync,
         )
         dR = session.step_size(s=-1.0)
+        # Timed from here: creating the session is what first asks for the backend, and under
+        # "auto" that is when Warp is initialised, which is start-up cost and not deployment
+        t0 = time.time()
         while True:
             if cur_R + dR > args.target_R:
                 logger.info("Next increment would overshoot target -- done.")

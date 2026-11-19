@@ -61,6 +61,7 @@ adapted from the Warp prototype by Andras Lasso
 # argument annotations into strings, which older Warp releases cannot resolve.
 # Annotations here therefore use typing.Optional rather than "X | None".
 
+import sys
 from typing import Optional, Tuple
 
 import numpy as np
@@ -1055,6 +1056,9 @@ class DeviceDeployment:
         self._surface_points = surface_points
         self._centerline_points = centerline_points
         self._device = _get_device(device)
+        # Build (or load from Warp's cache) the kernels now rather than at the first step, so
+        # that the first step of a deployment costs what the others do
+        wp.load_module(sys.modules[__name__], device=self._device)
         self._step: Optional[_DeviceStep] = None
         self._host_is_current = True
 
