@@ -66,7 +66,7 @@ from typing import Optional, Tuple
 import numpy as np
 import warp as wp
 
-from svmorph.core import backend
+from svmorph.core.deformation import _is_uniform_stent
 from svmorph.logging import get_logger
 
 logger = get_logger(__name__)
@@ -568,18 +568,15 @@ def _apply_kernel(points: wp.array(dtype=wp.vec3), displacement: wp.array(dtype=
 # ── Host-side helpers ────────────────────────────────────────────────────────
 
 def _get_device(device: Optional[str] = None):
-    """The Warp device to compute on: *device* if given, otherwise the backend's choice."""
+    """The Warp device to compute on: *device* if given, else the first CUDA device, else the CPU.
+
+    Which device a deployment runs on is decided by :mod:`svmorph.core.backend`
+    and passed in by the callers there; the default is for direct use of this
+    module.
+    """
     if device is not None:
         return wp.get_device(device)
-    if backend.get_backend() == "warp":
-        return wp.get_device(backend.warp_device())
-    # Called directly while the JAX backend is selected
     return wp.get_device("cuda:0") if wp.is_cuda_available() else wp.get_device("cpu")
-
-
-def _is_uniform_stent(radius, cap_height_fraction: float) -> bool:
-    """Whether the stent takes the constant-radius code path, as the reference decides it."""
-    return np.ndim(radius) == 0 and cap_height_fraction == 1.0
 
 
 def _as_points(points) -> np.ndarray:
@@ -667,6 +664,9 @@ class _DeviceStep:
                  number_of_stent_vertices: int):
         self.device = device
         self.sizes = (number_of_surface_points, number_of_centerline_points, number_of_stent_vertices)
+        logger.debug(
+            f"Allocating Warp buffers on {device.alias} for {number_of_surface_points} surface and "
+            f"{number_of_centerline_points} centerline points")
         self.number_of_surface_points = number_of_surface_points
         self.number_of_points = number_of_points = number_of_surface_points + number_of_centerline_points
 
@@ -877,7 +877,13 @@ _cached_step: Optional[_DeviceStep] = None
 
 
 def clear_cache() -> None:
-    """Release the device memory that :func:`sdf_contact_displacements` keeps between calls."""
+    """Release the memory that :func:`sdf_contact_displacements` keeps between calls.
+
+    That is about 90 bytes of device memory per mesh point, plus 12 bytes of
+    page-locked host memory per point on a GPU.  It is kept so that the next
+    step need not allocate it again, and is otherwise only replaced when a
+    mesh of another size comes along; call this to give it back sooner.
+    """
     global _cached_step
     _cached_step = None
 
@@ -909,7 +915,8 @@ def capsule_chain_sdf(
     smoothing : float
         Smoothing radius ``k`` of the smooth minimum.
     device : str or None
-        Warp device alias; by default the device of the backend in use.
+        Warp device alias; by default the first CUDA device, or the CPU where
+        there is none.
 
     Returns
     -------
@@ -980,7 +987,8 @@ def sdf_contact_displacements(
     magnitude_scale : float
         Displacement of a point in contact on the stent surface, ``f_scale * (-s)``.
     device : str or None
-        Warp device alias; by default the device of the backend in use.
+        Warp device alias; by default the first CUDA device, or the CPU where
+        there is none.
 
     Returns
     -------
@@ -1035,7 +1043,8 @@ class DeviceDeployment:
         float32 arrays (as the point buffers of a VTK mesh are), because
         :meth:`sync` writes the positions back into them in place.
     device : str or None
-        Warp device alias; by default the device of the backend in use.
+        Warp device alias; by default the first CUDA device, or the CPU where
+        there is none.
     """
 
     def __init__(self, surface_points: np.ndarray, centerline_points: np.ndarray,

@@ -6,7 +6,7 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
-from svmorph.core.backend import set_backend
+from svmorph.core import backend
 from svmorph.core.units import set_unit_scale
 from svmorph.logging import TIMING, setup_logging
 from svmorph.gui.main_window import MainWindow
@@ -30,12 +30,7 @@ def main():
         "--debug", action="store_true",
         help="Show all diagnostic output (DEBUG level)",
     )
-    parser.add_argument(
-        "--backend", choices=("auto", "jax", "warp"), default=None,
-        help="What computes stent deployment steps: 'jax' (CPU), 'warp' (NVIDIA Warp on a CUDA GPU; "
-             "needs the svmorph[warp] extra) or 'auto' (Warp if it is installed and finds a CUDA GPU, "
-             "else JAX). Default: $SVMORPH_BACKEND if set, else auto",
-    )
+    backend.add_backend_argument(parser)
     args, remaining = parser.parse_known_args()
 
     set_unit_scale(_UNIT_SCALES[args.units])
@@ -49,11 +44,9 @@ def main():
 
     setup_logging(log_level)
 
-    if args.backend is not None:
-        try:
-            set_backend(args.backend)
-        except ImportError as error:  # --backend warp without Warp installed
-            parser.error(str(error))
+    # A backend named on the command line or in the environment that cannot be used ends the
+    # run here, rather than at the first stent step, which runs inside a Qt callback
+    backend.configure_from_command_line(args.backend)
 
     sys.argv = [sys.argv[0]] + remaining
     app = QApplication(sys.argv)

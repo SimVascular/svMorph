@@ -112,6 +112,7 @@ def test_warp_session_on_the_device_equals_step_by_step(warp_device):
     data = make_tube()
     session = StentDeployment(data, target_stent_radius=TARGET_RADIUS)
     assert session.backend == "warp" and session._device_deployment is not None
+    assert session._device_deployment._device.alias == warp_device
     for radius in radii:
         session.step(axis, radius)
     session.sync()

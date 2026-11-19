@@ -63,6 +63,27 @@ def test_warp_backend_flag_without_warp_exits_with_the_reason(monkeypatch):
         common.setup_logging(args)
 
 
+@pytest.mark.parametrize("value", ["wrap", "warp"], ids=["a typo", "warp without Warp"])
+def test_unusable_backend_in_the_environment_exits_before_any_work(monkeypatch, value):
+    # Without a --backend flag the environment variable decides; a value that cannot be honoured
+    # ends a stent script at startup, as the flag does, not with a traceback at its first step
+    monkeypatch.setitem(sys.modules, "warp", None)
+    monkeypatch.setenv(backend.ENVIRONMENT_VARIABLE, value)
+    backend.set_backend(None)
+    with pytest.raises(SystemExit) as exit_info:
+        common.setup_logging(deploy_stent.build_parser().parse_args(_REQUIRED))
+    assert str(exit_info.value.code).startswith("error: ")
+
+
+def test_scripts_without_a_backend_flag_ignore_the_stent_backend(monkeypatch):
+    # The aneurysm and stenosis scripts share setup_logging and never deploy a stent
+    import argparse
+
+    monkeypatch.setenv(backend.ENVIRONMENT_VARIABLE, "wrap")
+    backend.set_backend(None)
+    common.setup_logging(argparse.Namespace(units="cm", verbose=False, debug=False))
+
+
 # ── A deployment, end to end, on a synthetic vessel ──────────────────────────
 
 VESSEL_RADIUS, VESSEL_LENGTH, START_POINT = 0.25, 4.0, 150

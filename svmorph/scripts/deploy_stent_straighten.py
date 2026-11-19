@@ -115,41 +115,39 @@ def main(argv: list[str] | None = None) -> None:
 
     a, b = mesh_data.compute_material_constants(1.0, 0.2)
 
-    # The session applies each step to the mesh.  Under the Warp backend the mesh stays on the
-    # GPU between steps, so ctx.data is only current after session.sync().
-    session = StentDeployment(ctx.data, target_stent_radius=args.target_R)
-
-    snapshots = common.SnapshotManager(
-        start_value=args.start_R,
-        target_value=args.target_R,
-        save_step=args.save_step,
-        out_mesh_path=args.out_mesh,
-        out_cl_path=args.out_cl,
-        surface_pd=ctx.surface_pd,
-        centerline_pd=ctx.centerline_pd,
-        data=ctx.data,
-        before_save=session.sync,
-    )
-
     cur_R = args.start_R - smoothing_k
-    dR = session.step_size(s=-1.0)
     logger.info(f"Starting R = {args.start_R:.4f}, target R = {args.target_R:.4f}")
 
     iteration = 0
     t0 = time.time()
-    while True:
-        if cur_R + dR > args.target_R:
-            logger.info("Next increment would overshoot target -- done.")
-            break
-        session.step(axis_pts, cur_R, s=-1.0)
-        cur_R += dR
-        axis_pts = straighten_axis(axis_pts, args.straightening_strength)
-        iteration += 1
-        displayed_R = cur_R + smoothing_k
-        logger.info(f"Step {iteration:3d}: dR={dR:.5f}  R={displayed_R:.5f}")
-        snapshots.check_and_save(displayed_R)
+    # The session applies each step to the mesh.  Under the Warp backend the mesh stays on the
+    # GPU between steps, so ctx.data is only current after session.sync(): snapshots sync before
+    # they are written, and leaving the block syncs before the final save.
+    with StentDeployment(ctx.data, target_stent_radius=args.target_R) as session:
+        snapshots = common.SnapshotManager(
+            start_value=args.start_R,
+            target_value=args.target_R,
+            save_step=args.save_step,
+            out_mesh_path=args.out_mesh,
+            out_cl_path=args.out_cl,
+            surface_pd=ctx.surface_pd,
+            centerline_pd=ctx.centerline_pd,
+            data=ctx.data,
+            before_save=session.sync,
+        )
+        dR = session.step_size(s=-1.0)
+        while True:
+            if cur_R + dR > args.target_R:
+                logger.info("Next increment would overshoot target -- done.")
+                break
+            session.step(axis_pts, cur_R, s=-1.0)
+            cur_R += dR
+            axis_pts = straighten_axis(axis_pts, args.straightening_strength)
+            iteration += 1
+            displayed_R = cur_R + smoothing_k
+            logger.info(f"Step {iteration:3d}: dR={dR:.5f}  R={displayed_R:.5f}")
+            snapshots.check_and_save(displayed_R)
 
-    session.sync()
     elapsed = time.time() - t0
     logger.info(f"Deployment complete: {iteration} steps in {elapsed:.2f} s")
     common.save_final(ctx, args)

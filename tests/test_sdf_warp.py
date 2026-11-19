@@ -126,7 +126,7 @@ def test_sdf_agrees_with_the_reference(warp_device, make_radius, cap_height_frac
 
     expected_distance, expected_direction = reference_sdf(query, axis, radius, cap_height_fraction)
     distance, direction = sdf_warp.capsule_chain_sdf(
-        query, axis, radius, cap_height_fraction, smoothing=SMOOTHING)
+        query, axis, radius, cap_height_fraction, smoothing=SMOOTHING, device=warp_device)
     assert distance.shape == (len(query),) and distance.dtype == np.float32
     assert direction.shape == (len(query), 3) and direction.dtype == np.float32
     np.testing.assert_allclose(distance, expected_distance, atol=SDF_TOLERANCE)
@@ -143,7 +143,7 @@ def test_sdf_of_the_shortest_stents_agrees_with_the_reference(warp_device, numbe
     for radius, cap_height_fraction in [(0.25, 1.0), (radii, 0.5)]:
         expected_distance, expected_direction = reference_sdf(query, axis, radius, cap_height_fraction)
         distance, direction = sdf_warp.capsule_chain_sdf(
-            query, axis, radius, cap_height_fraction, smoothing=SMOOTHING)
+            query, axis, radius, cap_height_fraction, smoothing=SMOOTHING, device=warp_device)
         np.testing.assert_allclose(distance, expected_distance, atol=SDF_TOLERANCE)
         np.testing.assert_allclose(direction, expected_direction, atol=DIRECTION_TOLERANCE)
 
@@ -154,22 +154,22 @@ def test_default_cap_is_spherical_and_flattened_cap_has_its_height(warp_device):
     axis = np.column_stack([np.zeros(11), np.zeros(11), np.linspace(0.0, 1.0, 11)])
     radius, fraction = 0.3, 0.35
     spherical, _ = sdf_warp.capsule_chain_sdf(
-        np.array([[0.0, 0.0, 1.0 + radius]]), axis, radius, smoothing=SMOOTHING)
+        np.array([[0.0, 0.0, 1.0 + radius]]), axis, radius, smoothing=SMOOTHING, device=warp_device)
     flattened, _ = sdf_warp.capsule_chain_sdf(
         np.array([[0.0, 0.0, 1.0 + fraction * radius], [0.0, 0.0, -fraction * radius]]), axis, radius, fraction,
-        smoothing=SMOOTHING)
+        smoothing=SMOOTHING, device=warp_device)
     assert spherical[0] == pytest.approx(0.0, abs=1e-6)
     np.testing.assert_allclose(flattened, 0.0, atol=1e-6)
 
 
 def test_sdf_of_no_points_is_empty(warp_device):
-    distance, direction = sdf_warp.capsule_chain_sdf(np.zeros((0, 3)), _curved_axis(), 0.3, smoothing=SMOOTHING)
+    distance, direction = sdf_warp.capsule_chain_sdf(np.zeros((0, 3)), _curved_axis(), 0.3, smoothing=SMOOTHING, device=warp_device)
     assert distance.shape == (0,) and direction.shape == (0, 3)
 
 
 def test_stent_needs_two_axis_vertices(warp_device):
     with pytest.raises(ValueError, match="two axis vertices"):
-        sdf_warp.capsule_chain_sdf(np.zeros((4, 3)), np.zeros((1, 3)), 0.3, smoothing=SMOOTHING)
+        sdf_warp.capsule_chain_sdf(np.zeros((4, 3)), np.zeros((1, 3)), 0.3, smoothing=SMOOTHING, device=warp_device)
 
 
 # ── A whole deployment step ──────────────────────────────────────────────────
@@ -276,13 +276,13 @@ def test_step_without_surface_or_centerline_points(warp_device):
     no_points = np.zeros((0, 3), dtype=np.float32)
 
     surface, centerline = sdf_warp.sdf_contact_displacements(
-        no_points, data["points"]["centerline"], axis, 0.505, **_kernel_arguments())
+        no_points, data["points"]["centerline"], axis, 0.505, device=warp_device, **_kernel_arguments())
     assert surface.shape == (0, 3) and not centerline.any()
 
     expected_surface, _ = sdf_warp.sdf_contact_displacements(
-        data["points"]["surface"], data["points"]["centerline"], axis, 0.505, **_kernel_arguments())
+        data["points"]["surface"], data["points"]["centerline"], axis, 0.505, device=warp_device, **_kernel_arguments())
     surface, centerline = sdf_warp.sdf_contact_displacements(
-        data["points"]["surface"], no_points, axis, 0.505, **_kernel_arguments())
+        data["points"]["surface"], no_points, axis, 0.505, device=warp_device, **_kernel_arguments())
     assert centerline.shape == (0, 3)
     np.testing.assert_array_equal(surface, expected_surface)
 
@@ -427,6 +427,14 @@ def test_order_is_refreshed_after_many_steps(warp_device, monkeypatch):
         _step(data, axis, 0.47)
         counts.append(sdf_warp._cached_step.steps_since_sort)
     assert counts == [1, 2, 3, 1, 2, 3, 1]
+
+
+def test_step_runs_on_the_device_the_backend_chose(warp_device):
+    # The device comes from svmorph.core.backend through the dispatch, not from a default of
+    # this module: on a machine with a GPU, the "cpu" run of this test must stay on the CPU
+    data, axis = _scattered_data(600, seed=3)
+    _step(data, axis, 0.47)
+    assert sdf_warp._cached_step.device.alias == warp_device
 
 
 def test_buffers_are_kept_for_a_mesh_of_the_same_size_and_replaced_for_another(warp_device):

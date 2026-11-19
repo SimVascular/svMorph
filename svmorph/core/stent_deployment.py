@@ -64,7 +64,8 @@ class StentDeployment:
             surface_points, centerline_points = data["points"]["surface"], data["points"]["centerline"]
             if (sdf_warp.DeviceDeployment.supports(surface_points)
                     and sdf_warp.DeviceDeployment.supports(centerline_points)):
-                self._device_deployment = sdf_warp.DeviceDeployment(surface_points, centerline_points)
+                self._device_deployment = sdf_warp.DeviceDeployment(
+                    surface_points, centerline_points, device=backend.warp_device())
 
     def step_size(self, s: float = -1.0) -> float:
         """Return the stent radius increment of one step at force scale *s*."""

@@ -472,9 +472,10 @@ they remain physically correct — you do not need to manually convert them.
 ## GPU acceleration (NVIDIA Warp)
 
 SDFStent deployment can run as [NVIDIA Warp](https://github.com/NVIDIA/warp) kernels on a
-CUDA GPU.  This is optional: JAX remains the reference implementation and the default, and
-an installation without Warp behaves exactly as before.  Unlike JAX, which has no GPU build
-for Windows, Warp runs on NVIDIA GPUs natively on both Windows and Linux.
+CUDA GPU.  This is optional: JAX remains the reference implementation, and an installation
+without Warp behaves exactly as before.  Once Warp is installed and finds a CUDA GPU it is
+used automatically, unless you choose otherwise (see below).  Unlike JAX, which has no GPU
+build for Windows, Warp runs on NVIDIA GPUs natively on both Windows and Linux.
 
 ### Setup
 
@@ -493,23 +494,25 @@ python -c "import warp as wp; wp.init(); print(wp.is_cuda_available(), wp.get_de
 
 | Backend | What computes a stent deployment step |
 |---|---|
-| `auto` (default) | Warp if `warp-lang` is installed **and** Warp finds a CUDA GPU; otherwise JAX. Never fails. |
+| `auto` (default) | Warp if `warp-lang` 1.5 or newer is installed, Warp finds a CUDA GPU **and** the kernels load on it; otherwise JAX. If anything about Warp goes wrong on the way, it computes with JAX and logs a warning. |
 | `jax` | JAX on the CPU, always. |
-| `warp` | Warp. Exits with an error if Warp is not installed, rather than computing with JAX. Without a CUDA GPU the kernels run on a single CPU core, which works but is not the speed-up a GPU gives. |
+| `warp` | Warp. Stops with an error if Warp cannot be used, rather than computing with JAX. Without a CUDA GPU the kernels run on a single CPU core, which works but is not the speed-up a GPU gives. |
 
-The backend can be chosen in three ways, in this order of precedence:
+The backend can be named on the command line, from Python, or in the environment.  The
+command-line flag and `set_backend()` are the same choice and take precedence; the
+environment variable is consulted only when neither was used.
 
 ```bash
-# 1. On the command line of the stent scripts and the GUI
+# On the command line of the stent scripts and the GUI
 svmorph-deploy-stent --backend warp --mesh surface.vtp --cline centerline.vtp --start 123
 svmorph-gui --backend jax
 
-# 2. In the environment
+# In the environment, for runs that do not pass --backend
 export SVMORPH_BACKEND=jax         # PowerShell: $env:SVMORPH_BACKEND = "jax"
 ```
 
 ```python
-# 3. From Python
+# From Python
 from svmorph.core import set_backend, get_backend
 set_backend("warp")                 # optionally: set_backend("warp", device="cuda:1")
 get_backend()                       # "warp"
@@ -593,6 +596,11 @@ python benchmarks/stent_benchmark.py --mesh surface.vtp --cline centerline.vtp -
   later runs start immediately.
 - **NVIDIA only.**  Warp's GPU support is CUDA.  On machines with an AMD or Intel GPU, and
   on macOS, `auto` computes with JAX.
+- **GPU memory is kept between steps.**  About 90 bytes per mesh point stay allocated on the
+  GPU (plus 12 bytes per point of page-locked host memory) so that the next step does not
+  allocate them again.  `svmorph.core.sdf_warp.clear_cache()` releases the buffers of
+  `compute_sdf_contact_displacements`; a `StentDeployment` releases its own when it is
+  discarded.
 - **Python API.**  `compute_sdf_contact_displacements` runs on the selected backend with no
   change to calling code.  To keep the mesh on the GPU across steps, deploy through a session:
 

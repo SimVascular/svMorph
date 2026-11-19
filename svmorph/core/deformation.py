@@ -833,6 +833,14 @@ def _sdf_contact_defaults(
         f_scale = 0.01 * L()
     return influence_radius, contact_distance, f_scale
 
+def _is_uniform_stent(current_stent_radius: float | jx.Array, cap_height_fraction: float) -> bool:
+    """Whether a stent takes the constant-radius code path: a scalar radius with spherical end caps.
+
+    The one definition of the choice between the two stent code paths, used
+    by the JAX reference and by the Warp kernels alike.
+    """
+    return np.ndim(current_stent_radius) == 0 and cap_height_fraction == 1.0
+
 def _warp_step_parameters(
     s: float, target_stent_radius: float | jx.Array,
     influence_radius: float, contact_distance: float, f_scale: float, cap_height_fraction: float,
@@ -927,7 +935,6 @@ def compute_sdf_contact_displacements(
         influence_radius, contact_distance, f_scale)
     if np.ndim(target_stent_radius) > 0:
         target_stent_radius = float(np.max(target_stent_radius))
-    is_uniform_stent = np.ndim(current_stent_radius) == 0 and cap_height_fraction == 1.0
 
     # ── 1. Extract geometry from simulation data ──────────────────────
     force_center_point_id = data["nodes"]["force_center_point_id"]
@@ -943,10 +950,13 @@ def compute_sdf_contact_displacements(
         start_time = time.time()
         surface_displacements, centerline_displacements = sdf_warp.sdf_contact_displacements(
             data_points, centerline_points, stent_vertices, current_stent_radius,
+            device=backend.warp_device(),
             **_warp_step_parameters(
                 s, target_stent_radius, influence_radius, contact_distance, f_scale, cap_height_fraction))
         logger.timing(f"Deployment step on the Warp device: {time.time() - start_time:.4f} s")
         return surface_displacements, centerline_displacements, f_scale * (-s)
+
+    is_uniform_stent = _is_uniform_stent(current_stent_radius, cap_height_fraction)
 
     # ── 2. Bounding-box culling ──────────────────────────────────────
     # Restrict the expensive SDF evaluation to the axis-aligned bounding

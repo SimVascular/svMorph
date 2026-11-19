@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import logging
 import pathlib
-import sys
 from dataclasses import dataclass
 from typing import Callable
 
@@ -207,13 +206,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
 
 def add_backend_arg(parser: argparse.ArgumentParser) -> None:
     """Add the ``--backend`` flag of the stent deployment scripts to *parser*."""
-    parser.add_argument(
-        "--backend", choices=("auto",) + backend.BACKENDS, default=None,
-        help="What computes the deployment steps: 'jax' (CPU, the reference), 'warp' (NVIDIA Warp "
-             "kernels on a CUDA GPU; needs the svmorph[warp] extra) or 'auto' (Warp if it is "
-             f"installed and finds a CUDA GPU, else JAX). Default: ${backend.ENVIRONMENT_VARIABLE} "
-             "if set, else auto",
-    )
+    backend.add_backend_argument(parser)
 
 
 def setup_logging(args: argparse.Namespace) -> None:
@@ -229,12 +222,10 @@ def setup_logging(args: argparse.Namespace) -> None:
         level = logging.INFO
     _setup_logging(level)
 
-    requested_backend = getattr(args, "backend", None)
-    if requested_backend is not None:
-        try:
-            backend.set_backend(requested_backend)
-        except ImportError as error:  # --backend warp without Warp installed
-            sys.exit(f"error: {error}")
+    # Only the stent scripts have a --backend flag; only they use the stent backend.  A backend
+    # named there or in the environment that cannot be used ends the run here, before any work.
+    if hasattr(args, "backend"):
+        backend.configure_from_command_line(args.backend)
 
 
 def save_final(ctx: SimulationContext, args: argparse.Namespace) -> None:

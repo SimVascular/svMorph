@@ -47,7 +47,7 @@ def with_jax_reference(function, *args, **kwargs):
 
 def reference_sdf(points, stent_vertices, radius, cap_height_fraction: float = 1.0):
     """Distance ``(N,)`` and direction ``(N, 3)`` from the JAX reference, on the code path a step would take."""
-    if np.ndim(radius) == 0 and cap_height_fraction == 1.0:
+    if deformation._is_uniform_stent(radius, cap_height_fraction):
         distance, direction = deformation.smin_sdf_capsule_contact_sculpt(points, stent_vertices, radius)
     else:
         distance, direction = deformation.smin_sdf_variable_radius_capsule_contact_sculpt(
