@@ -21,7 +21,9 @@ virtual stenting method that mimics stent-wall interaction during deployment, an
 **regularized Kelvinlet** displacement kernels (de Goes & James, 2017, Pham et al., 2024)
 for virtual aneurysm and synthetic stenosis modeling.
 All heavy numerics are JIT-compiled with [JAX](https://github.com/jax-ml/jax) for
-real-time feedback on commodity hardware.
+real-time feedback on commodity hardware.  SDFStent deployment can additionally run on
+an NVIDIA GPU through [NVIDIA Warp](https://github.com/NVIDIA/warp), an optional backend
+(see [GPU acceleration](#gpu-acceleration-nvidia-warp)).
 
 > **Citation guidance**
 > - If you use **SDFStent** (virtual stenting), please cite the **SDFStent paper** (reference forthcoming).
@@ -57,6 +59,7 @@ the flared stent, which is available through the CLI and the Python API only.
 | VTK | 9.3 | VTP mesh I/O and rendering |
 | JAX (CPU) | 0.4.30 | JIT compilation of deformation kernels |
 | PyQt6 | 6.7 | GUI only — not required for headless scripts |
+| NVIDIA Warp | 1.5+ | Optional — runs SDFStent deployment on an NVIDIA GPU; see [GPU acceleration](#gpu-acceleration-nvidia-warp) |
 
 ---
 
@@ -95,6 +98,11 @@ or if using uv:
 ```bash
 uv pip install svmorph
 ```
+- to also run SDFStent deployment on an NVIDIA GPU (Windows or Linux), add the `warp`
+  extra to either of the above, e.g.:
+```bash
+pip install "svmorph[gui,warp]"
+```
 
 ### Option B &mdash; Manual installation from source (development)
 Clone the repository first, 
@@ -109,6 +117,10 @@ pip install -r requirements-gui.txt
 For the deformation engine and scripts without the GUI:
 ```bash
 pip install -r requirements.txt
+```
+For the optional NVIDIA GPU backend, additionally:
+```bash
+pip install "warp-lang>=1.5"
 ```
 
 ### Option C &mdash; Micromamba (might be preferred by Apple Silicon developers)
@@ -172,6 +184,7 @@ svmorph-gui                    # default: units in cm, INFO logging on
 svmorph-gui --units mm         # for editing millimeter geometry, units in mm
 svmorph-gui --verbose          # show per-step timing
 svmorph-gui --debug            # full diagnostic output
+svmorph-gui --backend jax      # compute stent deployment with JAX even where Warp and a GPU are available
 ```
 
 If you cloned this repository and are running from source (Option B, developer workflow), launch with:
@@ -180,6 +193,7 @@ python main.py                  # default: units in cm, INFO logging on
 python main.py --units mm       # for editing millimeter geometry, units in mm
 python main.py --verbose        # show per-step timing
 python main.py --debug          # full diagnostic output
+python main.py --backend jax    # compute stent deployment with JAX even where Warp and a GPU are available
 ```
 
 **Workflow overview:**
@@ -380,6 +394,7 @@ python -m svmorph.scripts.create_stenosis \
 | `--units` | `cm` (default) or `mm` |
 | `--verbose` | TIMING-level log output |
 | `--debug` | DEBUG-level log output |
+| `--backend` | Stent scripts only: `auto` (default), `jax` or `warp` — see [GPU acceleration](#gpu-acceleration-nvidia-warp) |
 
 When `--save-step` is provided, intermediate results are written to a
 `{out_mesh_stem}_intermediates/` directory as milestone VTP files.
@@ -454,12 +469,160 @@ they remain physically correct — you do not need to manually convert them.
 
 ---
 
+## GPU acceleration (NVIDIA Warp)
+
+SDFStent deployment can run as [NVIDIA Warp](https://github.com/NVIDIA/warp) kernels on a
+CUDA GPU.  This is optional: JAX remains the reference implementation and the default, and
+an installation without Warp behaves exactly as before.  Unlike JAX, which has no GPU build
+for Windows, Warp runs on NVIDIA GPUs natively on both Windows and Linux.
+
+### Setup
+
+```bash
+pip install "svmorph[warp]"        # or "svmorph[gui,warp]"
+```
+
+This needs an NVIDIA GPU with a current driver; Warp brings its own CUDA runtime, so no
+CUDA toolkit has to be installed.  To check what Warp finds:
+
+```bash
+python -c "import warp as wp; wp.init(); print(wp.is_cuda_available(), wp.get_devices())"
+```
+
+### Choosing the backend
+
+| Backend | What computes a stent deployment step |
+|---|---|
+| `auto` (default) | Warp if `warp-lang` is installed **and** Warp finds a CUDA GPU; otherwise JAX. Never fails. |
+| `jax` | JAX on the CPU, always. |
+| `warp` | Warp. Exits with an error if Warp is not installed, rather than computing with JAX. Without a CUDA GPU the kernels run on a single CPU core, which works but is not the speed-up a GPU gives. |
+
+The backend can be chosen in three ways, in this order of precedence:
+
+```bash
+# 1. On the command line of the stent scripts and the GUI
+svmorph-deploy-stent --backend warp --mesh surface.vtp --cline centerline.vtp --start 123
+svmorph-gui --backend jax
+
+# 2. In the environment
+export SVMORPH_BACKEND=jax         # PowerShell: $env:SVMORPH_BACKEND = "jax"
+```
+
+```python
+# 3. From Python
+from svmorph.core import set_backend, get_backend
+set_backend("warp")                 # optionally: set_backend("warp", device="cuda:1")
+get_backend()                       # "warp"
+```
+
+svMorph logs the backend it ends up using (`Stent deployment backend: Warp on cuda:0 (...)`).
+
+### What runs where
+
+Warp accelerates the SDFStent deployment step and nothing else.  Every other computation
+stays on JAX/NumPy under either backend.
+
+| Computation | `jax` backend | `warp` backend |
+|---|---|---|
+| Stent SDF — uniform stent, and stent with a radius profile or flattened caps | JAX kernels | Warp kernels |
+| Bounding-box culling, contact set, movable points | JAX + NumPy | Warp kernels |
+| Distance to the nearest point in contact (influence blending) | SciPy k-d tree | Warp kernels (Morton-ordered bounding-box tree) |
+| Displacement assembly | NumPy | Warp kernels |
+| Applying a step to the mesh | NumPy | On the GPU in the stent scripts (`StentDeployment`); NumPy in the GUI |
+| Stent axis resampling, radius profiles, axis straightening | NumPy / JAX | NumPy / JAX |
+| "Visualize SDF" iso-surface in the GUI | JAX | JAX |
+| Aneurysm and stenosis creation | JAX | JAX |
+
+The two backends compute the same step in single precision and agree to about 10<sup>-6</sup>
+in the stent SDF and in a step's displacements.  On the patient-specific models used for
+the timings below, the deployed geometry differs by less than 10<sup>-5</sup> cm between them
+after a whole deployment.  Every Warp kernel is tested against its JAX counterpart
+(`tests/test_sdf_warp.py`).
+
+### Performance
+
+Measured with `benchmarks/stent_benchmark.py` on a Ryzen 7 5800X3D and a GeForce RTX 3080
+(Windows 11, `warp-lang` 1.19, JAX 0.12 on the CPU), compilation excluded.  "Near the
+stent" is the share of the mesh inside the stent's padded bounding box, which is all the
+JAX backend evaluates.  A 1.7 cm stent (2.5 cm where noted) is deployed from a radius of
+0.05 cm to 0.4-0.5 cm.
+
+**One deployment step with the stent in contact** — what the GUI computes per frame (ms):
+
+| Mesh | Surface points | Near the stent | JAX (CPU) | Warp (CUDA) | Speed-up |
+|---|---:|---:|---:|---:|---:|
+| Patient model A | 58,228 | 7% | 6.5 | 0.44 | 15× |
+| Patient model A, larger vessel | 58,228 | 13% | 7.6 | 0.46 | 17× |
+| Patient model B | 158,330 | 14% | 14.2 | 1.03 | 14× |
+| Patient model B, larger vessel, 2.5 cm stent | 158,330 | 35% | 27.0 | 1.02 | 26× |
+| Synthetic tube | 12,997 | 31% | 5.5 | 0.42 | 13× |
+| Synthetic tube | 49,977 | 30% | 10.8 | 0.55 | 20× |
+| Synthetic tube | 200,070 | 30% | 37.2 | 1.66 | 22× |
+| Synthetic tube | 999,844 | 30% | 229 | 4.21 | 54× |
+
+**A whole deployment** (35 to 45 steps) — what `svmorph-deploy-stent` runs (ms):
+
+| Mesh | Surface points | Near the stent | JAX (CPU) | Warp (CUDA) | Speed-up |
+|---|---:|---:|---:|---:|---:|
+| Patient model A | 58,228 | 7% | 170 | 6.2 | 27× |
+| Patient model A, larger vessel | 58,228 | 13% | 203 | 7.0 | 29× |
+| Patient model B | 158,330 | 14% | 355 | 7.7 | 46× |
+| Patient model B, larger vessel, 2.5 cm stent | 158,330 | 35% | 810 | 9.2 | 88× |
+| Synthetic tube | 12,997 | 31% | 118 | 6.5 | 18× |
+| Synthetic tube | 49,977 | 30% | 249 | 7.2 | 35× |
+| Synthetic tube | 200,070 | 30% | 796 | 10.9 | 73× |
+| Synthetic tube | 999,844 | 30% | 5,312 | 29.4 | 181× |
+
+The whole deployment gains more than a single step because the stent scripts keep the
+mesh on the GPU between steps (`StentDeployment`), where a step costs about 0.2 ms up to
+several hundred thousand points; a single step called on its own spends most of its time
+copying the mesh to the GPU and the displacements back.  In the GUI the step is then a
+small part of a frame, and the frame rate is set by rendering.
+
+To measure on your own hardware and geometry:
+
+```bash
+python benchmarks/stent_benchmark.py
+python benchmarks/stent_benchmark.py --mesh surface.vtp --cline centerline.vtp --start 123
+```
+
+### Things to know
+
+- **The first step compiles.**  Warp compiles its kernels the first time they run on a
+  device (about 5 s for CUDA and 8 s for the CPU on the machine above) and caches them, so
+  later runs start immediately.
+- **NVIDIA only.**  Warp's GPU support is CUDA.  On machines with an AMD or Intel GPU, and
+  on macOS, `auto` computes with JAX.
+- **Python API.**  `compute_sdf_contact_displacements` runs on the selected backend with no
+  change to calling code.  To keep the mesh on the GPU across steps, deploy through a session:
+
+  ```python
+  from svmorph.core import StentDeployment
+
+  with StentDeployment(data, target_stent_radius=0.4) as session:
+      radius = 0.05
+      while radius + session.step_size() <= 0.4:
+          radius += session.step(stent_axis_vertices, radius)
+  # data["points"] is up to date again here; inside the block, call session.sync() before reading it
+  ```
+
+- **Testing.**  Continuous integration runs the Warp kernels on Warp's CPU device, since
+  hosted runners have no GPU; the CUDA results above come from running the same test suite
+  and benchmark locally.
+
+The Warp backend builds on a prototype contributed by [Andras Lasso](https://github.com/lassoan).
+
+---
+
 ## Architecture
 
 ```
 svmorph/
 ├── core/                  # Pure computation — no VTK, no Qt
 │   ├── deformation.py     #   Kelvinlet kernels, SDFStent (SDF-contact), displacement assembly
+│   ├── backend.py          #   Choice of the stent deployment backend (JAX or NVIDIA Warp)
+│   ├── sdf_warp.py         #   SDFStent deployment step as NVIDIA Warp kernels (optional, GPU)
+│   ├── stent_deployment.py #   StentDeployment — the stent step loop, on either backend
 │   ├── geometry.py         #   Arc-length centerline resampling (branch-aware), stent radius profiles
 │   ├── mesh_data.py        #   Material constants, displacement application
 │   ├── defaults.py         #   Spatial default constants (cm)
@@ -483,8 +646,8 @@ svmorph/
 └── logging.py             # Structured logging with custom TIMING level
 ```
 
-The `core/` subpackage is **dependency-light** (JAX, NumPy, SciPy only) and carries
-no VTK or Qt dependency, making it straightforward for downstream tools — such as
+The `core/` subpackage is **dependency-light** (JAX, NumPy and SciPy; NVIDIA Warp only if
+installed and selected) and carries no VTK or Qt dependency, making it straightforward for downstream tools — such as
 [3D Slicer](https://www.slicer.org/) extensions or [ParaView](https://www.paraview.org/)
 plugins — to import and build upon the deformation engine independently:
 
@@ -496,6 +659,8 @@ from svmorph.core import (
     resample_stent_axis,
     stent_radius_profile,          # per-vertex stent radii from control points
     flared_stent_radius_profile,   # per-vertex stent radii for flared ends
+    StentDeployment,               # stent step loop; keeps the mesh on the GPU under Warp
+    set_backend,                   # "auto", "jax" or "warp" for stent deployment
 )
 ```
 
@@ -547,6 +712,7 @@ This project is licensed under the [MIT License](https://opensource.org/licenses
 
 - [VTK](https://vtk.org/) — 3D visualization and mesh processing
 - [JAX](https://github.com/jax-ml/jax) — composable transformations and JIT compilation
+- [NVIDIA Warp](https://github.com/NVIDIA/warp) — GPU kernels for SDFStent deployment
 - [PyQt6](https://riverbankcomputing.com/software/pyqt/) — cross-platform GUI framework
 - [SimVascular](https://simvascular.github.io/) — cardiovascular modeling pipeline
 
