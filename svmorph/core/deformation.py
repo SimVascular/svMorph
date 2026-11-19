@@ -174,13 +174,12 @@ def compute_min_dist_and_direction(d: jx.Array, direction: jx.Array) -> tuple[jx
     return final_d, final_dir
 
 @jx.jit
-def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float | jx.Array,
-                cap_height_fraction: float = 1.0) -> jx.Array:
-    """Evaluate the signed distance field of a (tapered) capsule-chain stent.
+def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float) -> jx.Array:
+    """Evaluate the signed distance field of a capsule-chain stent.
 
-    Each consecutive pair of *stent_vertices* defines a capsule segment.
-    The SDF is reduced via smooth-minimum so the iso-surface is
-    C¹-continuous at segment junctions.
+    Each consecutive pair of *stent_vertices* defines a capsule segment
+    with radius *r*.  The SDF is reduced via smooth-minimum so the
+    iso-surface is C¹-continuous at segment junctions.
 
     Parameters
     ----------
@@ -188,83 +187,27 @@ def capsule_sdf(p: jx.Array, stent_vertices: jx.Array, r: float | jx.Array,
         Query points, shape ``(N, 3)``.
     stent_vertices : jx.Array
         Stent axis vertices, shape ``(V, 3)``.
-    r : float or jx.Array
-        Capsule radius: scalar, or per-vertex radii of shape ``(V,)``,
-        linearly interpolated along each segment (arbitrary radius profile
-        along the centerline, e.g. a flared end).
-    cap_height_fraction : float
-        Axial semi-axis of the capsule end caps as a fraction of the local
-        radius; ``1.0`` (default) gives spherical caps, smaller values
-        flatten them into half ellipsoids (see
-        :func:`_tapered_capsule_segment_distances`).
+    r : float
+        Capsule radius.
 
     Returns
     -------
     jx.Array
         Signed distance for each query point, shape ``(N, 1)``.
     """
-    dist_to_surface_all, direction_all = _tapered_capsule_segment_distances(
-        p, stent_vertices, r, cap_height_fraction)
-    final_dist_to_surface, _ = jx.vmap(compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
-    final_dist_to_surface = final_dist_to_surface[:, None]
-    return final_dist_to_surface
-
-def _tapered_capsule_segment_distances(
-    p: jx.Array, stent_vertices: jx.Array, r: float | jx.Array, cap_height_fraction: float,
-) -> tuple[jx.Array, jx.Array]:
-    """Per-segment signed distances and outward directions of a tapered capsule chain.
-
-    Each consecutive pair of *stent_vertices* defines a capsule segment.  The
-    radius may be a single scalar (uniform stent) or a per-vertex array of
-    shape ``(V,)`` that is linearly interpolated along each segment, so the
-    stent can follow an arbitrary radius profile along the centerline (e.g. a
-    flared/trumpet end, a taper, or a local narrowing).
-
-    *cap_height_fraction* controls the shape of the capsule end caps: the
-    axial overshoot beyond the segment ends (nonzero only where the
-    closest-point parameter clamps) is scaled up by its reciprocal, which
-    turns each spherical cap into a half ellipsoid whose axial semi-axis is
-    ``cap_height_fraction`` times the local radius.  ``1.0`` gives the plain
-    spherical caps.  Flattened caps let a radius profile express concave
-    features — a wide capsule's spherical cap would otherwise bulge a full
-    radius deep into a neighboring narrow region — and keep a flared stent
-    end from inflating a ball into the vessel beyond the stent end.
-
-    Parameters
-    ----------
-    p : jx.Array
-        Query points, shape ``(N, 3)``.
-    stent_vertices : jx.Array
-        Stent axis vertices, shape ``(V, 3)``.
-    r : float or jx.Array
-        Capsule radius: scalar, or per-vertex radii of shape ``(V,)``.
-    cap_height_fraction : float
-        Axial semi-axis of the capsule end caps as a fraction of the local
-        radius, in ``(0, 1]``.
-
-    Returns
-    -------
-    dist_to_surface_all : jx.Array
-        Per-segment signed distances, shape ``(N, num_segments)``.
-    direction_all : jx.Array
-        Per-segment outward direction vectors, shape ``(N, num_segments, 3)``.
-    """
-    r = jnp.broadcast_to(jnp.asarray(r), (stent_vertices.shape[0],))
     ba_all = jnp.diff(stent_vertices, axis=0)
     pa_all = p[:, None, :] - stent_vertices[None, :-1, :]
     ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
     ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
-    h_unclamped_all = ba_dot_pa_all / ba_dot_ba_all
-    h_all = jnp.clip(h_unclamped_all, 0, 1)
-    cap_axial_scale = 1.0 / cap_height_fraction
-    axis_to_point_all = (pa_all - h_all[:, :, None] * ba_all[None, :, :]
-                         + ((h_unclamped_all - h_all) * (cap_axial_scale - 1.0))[:, :, None] * ba_all[None, :, :])
+    h_all = jnp.clip(ba_dot_pa_all / ba_dot_ba_all, 0, 1)
+    axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
     dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
     direction_all = axis_to_point_all / dist_all
     dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments)
-    r_at_closest_point_all = r[None, :-1] + h_all * (r[1:] - r[:-1])[None, :]
-    dist_to_surface_all = dist_all_squeezed - r_at_closest_point_all
-    return dist_to_surface_all, direction_all
+    dist_to_surface_all = dist_all_squeezed - r
+    final_dist_to_surface, _ = jx.vmap(compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
+    final_dist_to_surface = final_dist_to_surface[:, None]
+    return final_dist_to_surface
 
 def kelvinlets_truncated_spherical_contraction(
     rv: jx.Array, f_scale: float,
@@ -342,8 +285,7 @@ def kelvinlets_truncated_spherical_expansion(
 @jx.jit
 def smin_sdf_capsule_contact_sculpt(
     rv: jx.Array, stent_vertices: jx.Array,
-    r_current: float | jx.Array,
-    cap_height_fraction: float = 1.0,
+    r_current: float,
 ) -> tuple[jx.Array, jx.Array]:
     """Compute smooth-min SDF distances and outward directions from a capsule-chain stent.
 
@@ -358,15 +300,8 @@ def smin_sdf_capsule_contact_sculpt(
         Query points, shape ``(N, 3)``.
     stent_vertices : jx.Array
         Stent axis vertices, shape ``(V, 3)``.
-    r_current : float or jx.Array
-        Current stent deployment radius: scalar, or per-vertex radii of
-        shape ``(V,)``, linearly interpolated along each segment (arbitrary
-        radius profile along the centerline, e.g. a flared end).
-    cap_height_fraction : float
-        Axial semi-axis of the capsule end caps as a fraction of the local
-        radius; ``1.0`` (default) gives spherical caps, smaller values
-        flatten them into half ellipsoids (see
-        :func:`_tapered_capsule_segment_distances`).
+    r_current : float
+        Current stent deployment radius.
 
     Returns
     -------
@@ -375,10 +310,256 @@ def smin_sdf_capsule_contact_sculpt(
     final_direction : jx.Array
         Unit outward direction from the stent axis, shape ``(N, 3)``.
     """
-    dist_to_surface_all, direction_all = _tapered_capsule_segment_distances(
-        rv, stent_vertices, r_current, cap_height_fraction)
+    ba_all = jnp.diff(stent_vertices, axis=0)
+    pa_all = rv[:, None, :] - stent_vertices[None, :-1, :]
+    ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
+    ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
+    h_all = jnp.clip(ba_dot_pa_all / ba_dot_ba_all, 0, 1)
+    axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
+    dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
+    direction_all = axis_to_point_all / dist_all
+    dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments)
+    dist_to_surface_all = dist_all_squeezed - r_current
     # Vectorize the folding over all mesh points:
     final_dist_to_surface, final_direction = jx.vmap(compute_min_dist_and_direction)(dist_to_surface_all, direction_all)
+    final_dist_to_surface = final_dist_to_surface[:, None]
+    return final_dist_to_surface, final_direction
+
+def _radius_profile_slopes(arc_positions: jx.Array, radii: jx.Array) -> jx.Array:
+    """Monotone-cubic (PCHIP) slopes of the stent radius profile at the axis vertices.
+
+    Interior slopes are the weighted harmonic mean of the two adjacent
+    secant slopes, or zero where the secants vanish or change sign (local
+    extremum), so the interpolated profile never overshoots the per-vertex
+    radii.  End slopes are the secants of the terminal segments.
+
+    Parameters
+    ----------
+    arc_positions : jx.Array
+        Arc-length position of each stent axis vertex, shape ``(V,)``.
+    radii : jx.Array
+        Per-vertex stent radii, shape ``(V,)``.
+
+    Returns
+    -------
+    jx.Array
+        Radius slope (radius change per unit arc length) at each vertex,
+        shape ``(V,)``.
+    """
+    segment_lengths = jnp.diff(arc_positions)
+    secants = jnp.diff(radii) / segment_lengths
+    weight_prev = 2.0 * segment_lengths[1:] + segment_lengths[:-1]
+    weight_next = segment_lengths[1:] + 2.0 * segment_lengths[:-1]
+    same_sign = secants[:-1] * secants[1:] > 0.0
+    secants_prev = jnp.where(same_sign, secants[:-1], 1.0)
+    secants_next = jnp.where(same_sign, secants[1:], 1.0)
+    interior_slopes = jnp.where(
+        same_sign, (weight_prev + weight_next) / (weight_prev / secants_prev + weight_next / secants_next), 0.0)
+    return jnp.concatenate([secants[:1], interior_slopes, secants[-1:]])
+
+def _radius_at_arc_position(arc_position: jx.Array, arc_positions: jx.Array, radii: jx.Array) -> jx.Array:
+    """Evaluate the stent radius profile at arc-length positions along the stent axis.
+
+    The per-vertex *radii* are interpolated with a monotone cubic (see
+    :func:`_radius_profile_slopes`), so the profile passes through every
+    vertex radius, has no creases at the vertices, and does not overshoot.
+
+    Parameters
+    ----------
+    arc_position : jx.Array
+        Arc-length positions to evaluate, within ``[0, arc_positions[-1]]``,
+        shape ``(N,)``.
+    arc_positions : jx.Array
+        Arc-length position of each stent axis vertex, shape ``(V,)``.
+    radii : jx.Array
+        Per-vertex stent radii, shape ``(V,)``.
+
+    Returns
+    -------
+    jx.Array
+        Stent radius at each position, shape ``(N,)``.
+    """
+    slopes = _radius_profile_slopes(arc_positions, radii)
+    i = jnp.clip(jnp.searchsorted(arc_positions, arc_position, side="right") - 1, 0, arc_positions.shape[0] - 2)
+    segment_length = arc_positions[i + 1] - arc_positions[i]
+    t = (arc_position - arc_positions[i]) / segment_length
+    return (radii[i] + (radii[i + 1] - radii[i]) * (t * t * (3.0 - 2.0 * t))
+            + segment_length * (slopes[i] * (t * (t - 1.0) ** 2) + slopes[i + 1] * (t * t * (t - 1.0))))
+
+def _variable_radius_capsule_chain_sdf(
+    p: jx.Array, stent_vertices: jx.Array, r: float | jx.Array, cap_height_fraction: float,
+    with_direction: bool,
+) -> tuple[jx.Array, jx.Array | None]:
+    """Smooth-min signed distance (and outward direction) of a capsule-chain stent with a radius profile.
+
+    Variable-radius counterpart of the constant-radius capsule chain
+    (:func:`capsule_sdf`, :func:`smin_sdf_capsule_contact_sculpt`), kept as
+    a separate code path so the uniform stent is evaluated exactly as
+    before.  The radius is given per stent axis vertex and describes a
+    profile along the stent axis (e.g. a flared/trumpet end, a taper, or a
+    local narrowing).
+
+    The distance is assembled in three steps:
+
+    1. *Distance to the axis.*  The smooth minimum over the segments is taken
+       of the distance to each axis segment, exactly as for a uniform
+       radius.  The same fold also blends the arc-length coordinate at which
+       every segment sees the query point along (the extension of) its own
+       direction.
+    2. *Radius profile.*  The stent radius at that arc-length coordinate is
+       subtracted after the smooth minimum.  Subtracting per-segment radii
+       inside the smooth minimum instead lets the spherical joint cap of a
+       wide segment bulge into its narrower neighbors, and flattening the
+       joint caps to prevent that confines the smooth-min blending to the
+       joints, which shows up as a ripple with the period of the segment
+       length along the whole stent.
+    3. *End caps.*  An arc-length coordinate beyond either end of the axis is
+       the axial overshoot past that stent end.  There the distance to the
+       end vertex is measured with the overshoot scaled by the reciprocal of
+       *cap_height_fraction*, which turns the spherical end cap into a half
+       ellipsoid whose axial semi-axis is ``cap_height_fraction`` times the
+       end radius.  The result is divided by its gradient magnitude so it
+       stays a first-order distance, and is floored by the spherical-cap
+       distance.  This keeps a flared stent end from inflating a ball into
+       the vessel beyond the stent end.  Only the two stent ends are
+       affected; the joints between segments are not.
+
+    The returned direction is the blended axis-to-point direction in all
+    cases, so the cap shape changes where the stent surface is but not the
+    direction in which the vessel wall is pushed away from it.
+
+    Parameters
+    ----------
+    p : jx.Array
+        Query points, shape ``(N, 3)``.
+    stent_vertices : jx.Array
+        Stent axis vertices, shape ``(V, 3)``.
+    r : float or jx.Array
+        Stent radius: per-vertex radii of shape ``(V,)``, or a scalar.
+    cap_height_fraction : float
+        Axial semi-axis of the two stent end caps as a fraction of the end
+        radius, in ``(0, 1]``.
+    with_direction : bool
+        Whether to also compute the outward direction.
+
+    Returns
+    -------
+    dist_to_surface : jx.Array
+        Signed distance to the stent surface, shape ``(N,)``.
+    direction : jx.Array or None
+        Outward direction from the stent axis, shape ``(N, 3)``, or ``None``
+        when *with_direction* is false.
+    """
+    radii = jnp.broadcast_to(jnp.asarray(r), (stent_vertices.shape[0],))
+    ba_all = jnp.diff(stent_vertices, axis=0)
+    pa_all = p[:, None, :] - stent_vertices[None, :-1, :]
+    ba_dot_pa_all = jnp.sum(pa_all * ba_all[None, :, :], axis=-1)
+    ba_dot_ba_all = jnp.sum(ba_all**2, axis=-1)
+    h_unclamped_all = ba_dot_pa_all / ba_dot_ba_all
+    h_all = jnp.clip(h_unclamped_all, 0, 1)
+    axis_to_point_all = pa_all - h_all[:, :, None] * ba_all[None, :, :]
+    dist_all = jnp.linalg.norm(axis_to_point_all, axis=-1)[..., None]
+    dist_all_squeezed = jnp.squeeze(dist_all, axis=-1)  # shape: (num_mesh_points, num_segments)
+
+    # Arc-length coordinate of each query point as seen by each segment (not clamped to the
+    # segment, so all segments of a straight stretch agree on it)
+    segment_lengths = jnp.sqrt(ba_dot_ba_all)
+    arc_positions = jnp.concatenate([jnp.zeros(1, dtype=segment_lengths.dtype), jnp.cumsum(segment_lengths)])
+    arc_position_all = (arc_positions[None, :-1] + h_unclamped_all * segment_lengths[None, :])[..., None]
+    if with_direction:
+        direction_all = axis_to_point_all / dist_all
+        blended_all = jnp.concatenate([direction_all, arc_position_all], axis=-1)
+    else:
+        blended_all = arc_position_all
+
+    # Vectorize the folding over all mesh points:
+    axis_dist, blended = jx.vmap(compute_min_dist_and_direction)(dist_all_squeezed, blended_all)
+    arc_position = blended[:, -1]
+    arc_position_on_stent = jnp.clip(arc_position, 0.0, arc_positions[-1])
+    dist_to_surface = axis_dist - _radius_at_arc_position(arc_position_on_stent, arc_positions, radii)
+
+    # End caps: stretch the axial overshoot past the stent ends (zero along the stent body)
+    cap_overshoot_ratio = jnp.clip((arc_position - arc_position_on_stent) / jnp.maximum(axis_dist, 1e-12), -1.0, 1.0)
+    cap_stretch = 1.0 / cap_height_fraction**2 - 1.0
+    stretched_dist_scale = jnp.sqrt(1.0 + cap_stretch * cap_overshoot_ratio**2)
+    stretched_gradient_scale = jnp.sqrt(1.0 + cap_stretch * (cap_stretch + 2.0) * cap_overshoot_ratio**2)
+    flattened_cap_dist = ((dist_to_surface + axis_dist * (stretched_dist_scale - 1.0))
+                          * stretched_dist_scale / stretched_gradient_scale)
+    # The flattened cap lies inside the spherical one, so it is never closer than the latter
+    dist_to_surface = jnp.maximum(flattened_cap_dist, dist_to_surface)
+
+    direction = blended[:, :3] if with_direction else None
+    return dist_to_surface, direction
+
+@jx.jit
+def variable_radius_capsule_sdf(
+    p: jx.Array, stent_vertices: jx.Array, r: float | jx.Array,
+    cap_height_fraction: float = 1.0,
+) -> jx.Array:
+    """Evaluate the signed distance field of a capsule-chain stent with a radius profile.
+
+    Variable-radius counterpart of :func:`capsule_sdf`; see
+    :func:`_variable_radius_capsule_chain_sdf` for the formulation.
+
+    Parameters
+    ----------
+    p : jx.Array
+        Query points, shape ``(N, 3)``.
+    stent_vertices : jx.Array
+        Stent axis vertices, shape ``(V, 3)``.
+    r : float or jx.Array
+        Stent radius: per-vertex radii of shape ``(V,)`` that define a
+        radius profile along the stent axis (e.g. a flared end), or a
+        scalar.
+    cap_height_fraction : float
+        Axial semi-axis of the two stent end caps as a fraction of the end
+        radius; ``1.0`` (default) gives spherical caps, smaller values
+        flatten them into half ellipsoids.
+
+    Returns
+    -------
+    jx.Array
+        Signed distance for each query point, shape ``(N, 1)``.
+    """
+    dist_to_surface, _ = _variable_radius_capsule_chain_sdf(
+        p, stent_vertices, r, cap_height_fraction, with_direction=False)
+    return dist_to_surface[:, None]
+
+@jx.jit
+def smin_sdf_variable_radius_capsule_contact_sculpt(
+    rv: jx.Array, stent_vertices: jx.Array,
+    r_current: float | jx.Array,
+    cap_height_fraction: float = 1.0,
+) -> tuple[jx.Array, jx.Array]:
+    """Compute smooth-min SDF distances and outward directions from a capsule-chain stent with a radius profile.
+
+    Variable-radius counterpart of :func:`smin_sdf_capsule_contact_sculpt`;
+    see :func:`_variable_radius_capsule_chain_sdf` for the formulation.
+
+    Parameters
+    ----------
+    rv : jx.Array
+        Query points, shape ``(N, 3)``.
+    stent_vertices : jx.Array
+        Stent axis vertices, shape ``(V, 3)``.
+    r_current : float or jx.Array
+        Current stent deployment radius: per-vertex radii of shape ``(V,)``
+        that define a radius profile along the stent axis (e.g. a flared
+        end), or a scalar.
+    cap_height_fraction : float
+        Axial semi-axis of the two stent end caps as a fraction of the end
+        radius; ``1.0`` (default) gives spherical caps, smaller values
+        flatten them into half ellipsoids.
+
+    Returns
+    -------
+    final_dist_to_surface : jx.Array
+        Signed distance to stent surface, shape ``(N, 1)``.
+    final_direction : jx.Array
+        Outward direction from the stent axis, shape ``(N, 3)``.
+    """
+    final_dist_to_surface, final_direction = _variable_radius_capsule_chain_sdf(
+        rv, stent_vertices, r_current, cap_height_fraction, with_direction=True)
     final_dist_to_surface = final_dist_to_surface[:, None]
     return final_dist_to_surface, final_direction
 
@@ -617,9 +798,8 @@ def stent_bounding_box(
         Mesh vertices, shape ``(N, 3)``.
     stent_vertices : jx.Array
         Stent axis vertices, shape ``(V, 3)``.
-    target_stent_radius : float or jx.Array
-        Target stent radius (the maximum is used when a per-vertex radius
-        array is given).
+    target_stent_radius : float
+        Target stent radius.
     influence_radius : float
         Additional radial padding for the influence zone.
     contact_distance : float
@@ -630,9 +810,8 @@ def stent_bounding_box(
     jx.Array
         Boolean mask of length *N*.
     """
-    max_stent_radius = jnp.max(jnp.asarray(target_stent_radius))
-    min_coords = jnp.min(stent_vertices, axis=0) - max_stent_radius - influence_radius - contact_distance - 0.01 * L()
-    max_coords = jnp.max(stent_vertices, axis=0) + max_stent_radius + influence_radius + contact_distance + 0.01 * L()
+    min_coords = jnp.min(stent_vertices, axis=0) - target_stent_radius - influence_radius - contact_distance - 0.01 * L()
+    max_coords = jnp.max(stent_vertices, axis=0) + target_stent_radius + influence_radius + contact_distance + 0.01 * L()
     mask = jnp.all((data_points >= min_coords) & (data_points <= max_coords), axis=1)
     return mask
 
@@ -654,6 +833,12 @@ def compute_sdf_contact_displacements(
     4. Builds a KD-tree of contact points for influence-zone blending.
     5. Assembles displacement vectors that push the vessel wall outward.
 
+    A uniform stent (scalar *current_stent_radius*, default spherical caps)
+    is evaluated by the constant-radius capsule chain
+    (:func:`smin_sdf_capsule_contact_sculpt`).  Per-vertex radii or
+    flattened caps take the separate variable-radius code path
+    (:func:`smin_sdf_variable_radius_capsule_contact_sculpt`).
+
     Parameters
     ----------
     data : dict
@@ -667,11 +852,12 @@ def compute_sdf_contact_displacements(
         of shape ``(V,)``; only the maximum is used, for bounding-box
         culling).
     current_stent_radius : float or jx.Array
-        Current deployment radius of the stent: scalar, or per-vertex radii
-        of shape ``(V,)``, linearly interpolated along each capsule segment
-        so the stent can follow an arbitrary radius profile along the
-        centerline (e.g. a flared/trumpet end, a taper, or a local
-        narrowing).
+        Current deployment radius of the stent: scalar for a uniform stent,
+        or per-vertex radii of shape ``(V,)`` so the stent can follow an
+        arbitrary radius profile along the centerline (e.g. a
+        flared/trumpet end, a taper, or a local narrowing).  The profile
+        passes through the per-vertex radii and is interpolated smoothly
+        between them.
     influence_radius : float
         Radial distance beyond the stent within which points are displaced.
     contact_distance : float
@@ -679,11 +865,10 @@ def compute_sdf_contact_displacements(
     f_scale : float
         Force magnitude scaling factor.
     cap_height_fraction : float
-        Axial semi-axis of the capsule end caps as a fraction of the local
+        Axial semi-axis of the two stent end caps as a fraction of the end
         radius; ``1.0`` (default) gives spherical caps, smaller values
         (e.g. ``0.35``) flatten them into half ellipsoids, which is
-        recommended for flared or concave radius profiles (see
-        :func:`_tapered_capsule_segment_distances`).
+        recommended for flared ends.
 
     Returns
     -------
@@ -700,6 +885,9 @@ def compute_sdf_contact_displacements(
         contact_distance = 0.001 * L()
     if f_scale is None:
         f_scale = 0.01 * L()
+    if np.ndim(target_stent_radius) > 0:
+        target_stent_radius = float(np.max(target_stent_radius))
+    is_uniform_stent = np.ndim(current_stent_radius) == 0 and cap_height_fraction == 1.0
 
     # ── 1. Extract geometry from simulation data ──────────────────────
     force_center_point_id = data["nodes"]["force_center_point_id"]
@@ -739,7 +927,10 @@ def compute_sdf_contact_displacements(
     # segments ensures C¹-continuous distance and direction fields.
     start_time = time.time()
     logger.debug(f"Total # surface and centerline points combined: {query_points.shape[0]}")
-    combined_final_dist_to_surface, combined_final_direction = smin_sdf_capsule_contact_sculpt(query_points, stent_vertices, current_stent_radius, cap_height_fraction)
+    if is_uniform_stent:
+        combined_final_dist_to_surface, combined_final_direction = smin_sdf_capsule_contact_sculpt(query_points, stent_vertices, current_stent_radius)
+    else:
+        combined_final_dist_to_surface, combined_final_direction = smin_sdf_variable_radius_capsule_contact_sculpt(query_points, stent_vertices, current_stent_radius, cap_height_fraction)
     combined_final_dist_to_surface = np.array(combined_final_dist_to_surface)
     combined_final_direction = np.array(combined_final_direction)
 

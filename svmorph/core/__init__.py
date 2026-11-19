@@ -10,6 +10,7 @@ from svmorph.core.deformation import (
     set_force_center,
     set_node_indices,
     stent_bounding_box,
+    variable_radius_capsule_sdf,
 )
 from svmorph.core.geometry import (
     flared_stent_radius_profile,

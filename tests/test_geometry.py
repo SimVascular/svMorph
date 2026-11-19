@@ -107,6 +107,24 @@ def test_flared_stent_radius_profile_at_axis_end():
 
 def test_flared_stent_radius_profile_at_axis_start():
     pts = _straight_line(n=21, length=2.0)
-    radii = flared_stent_radius_profile(pts, 0.4, 0.6, 0.5, flare_at_axis_start=True)
+    radii = flared_stent_radius_profile(pts, 0.4, 0.6, 0.5, flare_end="start")
     assert radii[0] == pytest.approx(0.6)
     assert radii[-1] == pytest.approx(0.4)
+
+
+def test_flared_stent_radius_profile_at_both_ends():
+    pts = _straight_line(n=21, length=2.0)
+    radii = flared_stent_radius_profile(pts, 0.4, 0.6, 0.5, flare_end="both")
+    assert radii[0] == pytest.approx(0.6)
+    assert radii[-1] == pytest.approx(0.6)
+    assert radii[10] == pytest.approx(0.4)
+    # Symmetric about the middle of the stent
+    np.testing.assert_allclose(radii, radii[::-1], atol=1e-12)
+
+
+def test_flared_stent_radius_profile_rejects_invalid_arguments():
+    pts = _straight_line(n=21, length=2.0)
+    with pytest.raises(ValueError, match="flare_end"):
+        flared_stent_radius_profile(pts, 0.4, 0.6, 0.5, flare_end="middle")
+    with pytest.raises(ValueError, match="flare_length"):
+        flared_stent_radius_profile(pts, 0.4, 0.6, 0.0)

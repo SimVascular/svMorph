@@ -49,30 +49,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--length", type=float, default=None, help="Stent length along centerline (default: 1.7 cm)")
     parser.add_argument(
         "--flare-R", type=float, default=None,
-        help="Optional flared (funnel/trumpet) end: stent radius at the tip of the flared end "
+        help="Optional flared (funnel/trumpet) ends: stent radius at the tip of a flared end "
              "(default: no flare)",
     )
     parser.add_argument(
         "--flare-length", type=float, default=None,
-        help="Length of the flare radius transition along the stent axis (default: 0.5 cm)",
+        help="Length of each flare radius transition along the stent axis (default: 0.5 cm)",
     )
     parser.add_argument(
-        "--flare-end", choices=("start", "end"), default="end",
+        "--flare-end", choices=("start", "end", "both"), default="end",
         help="Which end of the stent axis is flared: 'start' is the --start point side, "
-             "'end' is the opposite (proximally resampled) side",
+             "'end' is the opposite (proximally resampled) side, 'both' flares both ends",
     )
     parser.add_argument(
         "--cap-height-fraction", type=float, default=1.0,
-        help="Axial height of the capsule end caps as a fraction of the local stent radius; "
+        help="Axial height of the two stent end caps as a fraction of the end radius, in (0, 1]; "
              "1.0 keeps the classic spherical caps, smaller values (e.g. 0.35) flatten them "
-             "into half ellipsoids, recommended for flared or concave radius profiles",
+             "into half ellipsoids, recommended for flared ends",
     )
     parser.set_defaults(out_mesh="deployed_surface.vtp", out_cl="deployed_centerline.vtp")
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not 0.0 < args.cap_height_fraction <= 1.0:
+        parser.error("--cap-height-fraction must be in (0, 1]")
+    if args.flare_length is not None and args.flare_length <= 0.0:
+        parser.error("--flare-length must be positive")
     common.setup_logging(args)
 
     if args.target_R is None:
@@ -102,21 +107,29 @@ def main(argv: list[str] | None = None) -> None:
     )
     logger.info(f"Stent axis: {len(axis_pts)} vertices over {deployed_length:.2f}")
 
-    # Optional flared end: per-vertex radius profile as fractions of the nominal target
+    # Optional flared ends: per-vertex radius profile as fractions of the nominal target
     # radius, so the whole profile can be scaled proportionally during deployment
     radius_profile_fractions = None
     if args.flare_R is not None:
         if args.flare_length is None:
             args.flare_length = 0.5 * L()
+        num_flared_ends = 2 if args.flare_end == "both" else 1
+        if num_flared_ends * args.flare_length > deployed_length:
+            logger.warning(
+                f"Flare transitions ({num_flared_ends} x {args.flare_length:.2f}) are longer than the "
+                f"deployed stent ({deployed_length:.2f}); the stent has no constant-radius body"
+            )
         target_radii = geometry.flared_stent_radius_profile(
             np.asarray(axis_pts), args.target_R, args.flare_R, args.flare_length,
-            flare_at_axis_start=(args.flare_end == "start"),
+            flare_end=args.flare_end,
         )
         radius_profile_fractions = target_radii / args.target_R
         logger.info(
-            f"Flared '{args.flare_end}' end: radius {args.target_R:.4f} -> {args.flare_R:.4f} "
+            f"Flared '{args.flare_end}' end(s): radius {args.target_R:.4f} -> {args.flare_R:.4f} "
             f"over {args.flare_length:.2f}"
         )
+    elif args.flare_length is not None or args.flare_end != "end":
+        logger.warning("--flare-length / --flare-end have no effect without --flare-R")
 
     a, b = mesh_data.compute_material_constants(1.0, 0.2)
 
