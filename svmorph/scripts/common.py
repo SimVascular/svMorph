@@ -9,12 +9,14 @@ from __future__ import annotations
 import argparse
 import logging
 import pathlib
+import sys
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 import vtk
 
-from svmorph.core import deformation
+from svmorph.core import backend, deformation
 from svmorph.core.units import set_unit_scale
 from svmorph.logging import get_logger, setup_logging as _setup_logging, TIMING
 from svmorph.visualization import vtk_io
@@ -113,6 +115,9 @@ class SnapshotManager:
         Polydata objects to write.
     data : dict
         Simulation data dict (for ``sync_polydata``).
+    before_save : callable or None
+        Called before each snapshot is written, to bring *data* up to date
+        (e.g. :meth:`svmorph.core.stent_deployment.StentDeployment.sync`).
     """
 
     def __init__(
@@ -125,10 +130,12 @@ class SnapshotManager:
         surface_pd: vtk.vtkPolyData,
         centerline_pd: vtk.vtkPolyData | None,
         data: dict,
+        before_save: Callable[[], None] | None = None,
     ):
         self._surface_pd = surface_pd
         self._centerline_pd = centerline_pd
         self._data = data
+        self._before_save = before_save
 
         increasing = target_value > start_value
 
@@ -167,6 +174,8 @@ class SnapshotManager:
             self._next_idx += 1
 
     def _write(self, value: float) -> None:
+        if self._before_save is not None:
+            self._before_save()
         suffix = f"_{value:.3f}.vtp"
         vtk_io.sync_polydata(self._surface_pd, self._data, "surface")
         mesh_path = self._mesh_prefix.with_name(self._mesh_prefix.name + suffix)
@@ -196,8 +205,19 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging")
 
 
+def add_backend_arg(parser: argparse.ArgumentParser) -> None:
+    """Add the ``--backend`` flag of the stent deployment scripts to *parser*."""
+    parser.add_argument(
+        "--backend", choices=("auto",) + backend.BACKENDS, default=None,
+        help="What computes the deployment steps: 'jax' (CPU, the reference), 'warp' (NVIDIA Warp "
+             "kernels on a CUDA GPU; needs the svmorph[warp] extra) or 'auto' (Warp if it is "
+             f"installed and finds a CUDA GPU, else JAX). Default: ${backend.ENVIRONMENT_VARIABLE} "
+             "if set, else auto",
+    )
+
+
 def setup_logging(args: argparse.Namespace) -> None:
-    """Configure svmorph logging and unit scale from parsed CLI args."""
+    """Configure svmorph logging, unit scale and stent backend from parsed CLI args."""
     units = getattr(args, "units", "cm")
     set_unit_scale(_UNIT_SCALES[units])
 
@@ -208,6 +228,13 @@ def setup_logging(args: argparse.Namespace) -> None:
     else:
         level = logging.INFO
     _setup_logging(level)
+
+    requested_backend = getattr(args, "backend", None)
+    if requested_backend is not None:
+        try:
+            backend.set_backend(requested_backend)
+        except ImportError as error:  # --backend warp without Warp installed
+            sys.exit(f"error: {error}")
 
 
 def save_final(ctx: SimulationContext, args: argparse.Namespace) -> None:

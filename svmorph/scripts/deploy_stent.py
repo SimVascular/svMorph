@@ -27,6 +27,7 @@ import time
 import numpy as np
 
 from svmorph.core import deformation, geometry, mesh_data
+from svmorph.core.stent_deployment import StentDeployment
 from svmorph.core.units import L
 from svmorph.logging import get_logger
 from svmorph.scripts import common
@@ -40,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     common.add_common_args(parser)
+    common.add_backend_arg(parser)
     parser.add_argument(
         "--start", type=int, required=True,
         help="Centerline point ID for stent distal tip",
@@ -133,6 +135,18 @@ def main(argv: list[str] | None = None) -> None:
 
     a, b = mesh_data.compute_material_constants(1.0, 0.2)
 
+    if radius_profile_fractions is None:
+        bounding_stent_radius = args.target_R
+    else:
+        bounding_stent_radius = float(radius_profile_fractions.max()) * args.target_R
+    # The session applies each step to the mesh.  Under the Warp backend the mesh stays on the
+    # GPU between steps, so ctx.data is only current after session.sync().
+    session = StentDeployment(
+        ctx.data,
+        target_stent_radius=bounding_stent_radius,
+        cap_height_fraction=args.cap_height_fraction,
+    )
+
     snapshots = common.SnapshotManager(
         start_value=args.start_R,
         target_value=args.target_R,
@@ -142,41 +156,33 @@ def main(argv: list[str] | None = None) -> None:
         surface_pd=ctx.surface_pd,
         centerline_pd=ctx.centerline_pd,
         data=ctx.data,
+        before_save=session.sync,
     )
 
     cur_R = args.start_R - smoothing_k
+    dR = session.step_size(s=-1.0)
     logger.info(f"Starting R = {args.start_R:.4f}, target R = {args.target_R:.4f}")
 
     iteration = 0
     t0 = time.time()
     while True:
+        if cur_R + dR > args.target_R:
+            logger.info("Next increment would overshoot target -- done.")
+            break
         if radius_profile_fractions is None:
             current_stent_radius = cur_R
-            bounding_stent_radius = args.target_R
         else:
             # Scale the whole radius profile proportionally with the nominal radius, keeping
             # the smooth-min smoothing offset constant along the stent
             current_stent_radius = radius_profile_fractions * (cur_R + smoothing_k) - smoothing_k
-            bounding_stent_radius = float(radius_profile_fractions.max()) * args.target_R
-        surf_disp, cl_disp, dR = deformation.compute_sdf_contact_displacements(
-            ctx.data,
-            axis_pts,
-            s=-1.0,
-            target_stent_radius=bounding_stent_radius,
-            current_stent_radius=current_stent_radius,
-            cap_height_fraction=args.cap_height_fraction,
-        )
-        if cur_R + dR > args.target_R:
-            logger.info("Next increment would overshoot target -- done.")
-            break
-        mesh_data.apply_displacements(ctx.data, surf_disp, "surface")
-        mesh_data.apply_displacements(ctx.data, cl_disp, "centerline")
+        session.step(axis_pts, current_stent_radius, s=-1.0)
         cur_R += dR
         iteration += 1
         displayed_R = cur_R + smoothing_k
         logger.info(f"Step {iteration:3d}: dR={dR:.5f}  R={displayed_R:.5f}")
         snapshots.check_and_save(displayed_R)
 
+    session.sync()
     elapsed = time.time() - t0
     logger.info(f"Deployment complete: {iteration} steps in {elapsed:.2f} s")
     common.save_final(ctx, args)
