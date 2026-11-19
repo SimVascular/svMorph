@@ -27,3 +27,4 @@ from svmorph.core.mesh_data import (
     compute_material_constants,
     get_centroid,
 )
+from svmorph.core.stent_deployment import StentDeployment
