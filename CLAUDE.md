@@ -30,7 +30,7 @@ python -m svmorph.scripts.create_stenosis --help
 - No linter, formatter, or type checker is configured.
 - Tests need only NumPy/SciPy/JAX (no VTK, no Qt) and import `svmorph` from the source tree, so they run without installing the package. The one exception is `tests/test_deploy_stent_cli.py`, which imports the CLI script and with it VTK; it is skipped when VTK is missing.
 - CI runs Python 3.9–3.12. Code must stay 3.9-compatible, which is why modules using `X | None` annotations start with `from __future__ import annotations`.
-- Pushing a `v*.*.*` tag triggers `.github/workflows/release.yml`, which publishes to PyPI. The version is hand-maintained in three places that must be bumped together: `pyproject.toml` (what the release uses), `__version__` in `svmorph/__init__.py`, and the README badge.
+- Pushing a `v*.*.*` tag triggers `.github/workflows/release.yml`, which publishes to PyPI. The version is hand-maintained in three places that must be bumped together: `pyproject.toml` (what the release uses), `__version__` in `svmorph/__init__.py`, and the README badge. `README.md` is uploaded as the PyPI project description and is frozen once a version is published, so all three must already match in the commit that gets tagged; the release workflow checks this and refuses to publish otherwise. A README change made after a release only reaches PyPI with the next version.
 
 ### What the tests do not cover
 

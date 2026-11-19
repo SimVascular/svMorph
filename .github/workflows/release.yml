@@ -19,6 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # README.md is uploaded as the PyPI project description and cannot be
+      # changed once a version is published, so every hand-maintained version
+      # string has to match the tag in the tagged commit itself.
+      - name: Check that the tag matches all version strings
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pyproject=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          package=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' svmorph/__init__.py)
+          badge=$(sed -n 's/.*badge\/version-\([^-]*\)-.*/\1/p' README.md)
+          echo "tag=$tag pyproject.toml=$pyproject __version__=$package README badge=$badge"
+          if [ "$tag" != "$pyproject" ] || [ "$tag" != "$package" ] || [ "$tag" != "$badge" ]; then
+            echo "::error::Version mismatch: bump pyproject.toml, svmorph/__init__.py and the README badge to $tag in the tagged commit."
+            exit 1
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
