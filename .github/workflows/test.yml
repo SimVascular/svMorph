@@ -50,3 +50,47 @@ jobs:
         with:
           name: coverage-report
           path: coverage.xml
+
+  # The jobs above install svMorph without Warp, which shows that the optional
+  # backend really is optional: its tests skip and everything else passes.
+  # These install the "warp" extra so that the Warp kernels are tested too.
+  # GitHub-hosted runners have no NVIDIA GPU, so the kernels run on Warp's CPU
+  # device here; they are the same kernels that run on CUDA.
+  test-warp:
+    name: Warp backend / Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+          # Oldest Python that current warp-lang releases support
+          - os: ubuntu-latest
+            python-version: "3.10"
+          # Python 3.9 resolves to the last warp-lang release that supports it
+          - os: ubuntu-24.04
+            python-version: "3.9"
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install core dependencies and Warp
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev,warp]"
+
+      - name: Run tests with the Warp backend available
+        run: |
+          python -c "import warp; print('warp-lang', warp.__version__)"
+          pytest tests/ -v -rs

@@ -5,6 +5,11 @@ evaluation against capsule stent geometries, and top-level routines that
 assemble per-vertex displacement fields for aneurysm inflation, stenosis
 creation, and SDF-contact stent deployment.  All heavy numerics use JAX
 for automatic vectorization and JIT compilation.
+
+This module is the reference implementation.  The stent deployment step can
+also be computed by NVIDIA Warp kernels on a GPU (:mod:`svmorph.core.sdf_warp`),
+chosen through :mod:`svmorph.core.backend`;
+:func:`compute_sdf_contact_displacements` is where that choice takes effect.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from scipy.spatial import cKDTree
 import jax as jx
 import jax.numpy as jnp
 
+from svmorph.core import backend
 from svmorph.core.units import L
 from svmorph.logging import get_logger
 
@@ -815,6 +821,48 @@ def stent_bounding_box(
     mask = jnp.all((data_points >= min_coords) & (data_points <= max_coords), axis=1)
     return mask
 
+def _sdf_contact_defaults(
+    influence_radius: float | None, contact_distance: float | None, f_scale: float | None,
+) -> tuple[float, float, float]:
+    """Fill in the unit-scaled defaults of :func:`compute_sdf_contact_displacements`."""
+    if influence_radius is None:
+        influence_radius = 0.65 * L()
+    if contact_distance is None:
+        contact_distance = 0.001 * L()
+    if f_scale is None:
+        f_scale = 0.01 * L()
+    return influence_radius, contact_distance, f_scale
+
+def _is_uniform_stent(current_stent_radius: float | jx.Array, cap_height_fraction: float) -> bool:
+    """Whether a stent takes the constant-radius code path: a scalar radius with spherical end caps.
+
+    The one definition of the choice between the two stent code paths, used
+    by the JAX reference and by the Warp kernels alike.
+    """
+    return np.ndim(current_stent_radius) == 0 and cap_height_fraction == 1.0
+
+def _warp_step_parameters(
+    s: float, target_stent_radius: float | jx.Array,
+    influence_radius: float, contact_distance: float, f_scale: float, cap_height_fraction: float,
+) -> dict:
+    """Translate the arguments of a deployment step into those of the Warp kernels.
+
+    The kernels take every length explicitly, so the values that the JAX
+    kernels read from :func:`svmorph.core.units.L` are spelled out here.
+    """
+    if np.ndim(target_stent_radius) > 0:
+        target_stent_radius = float(np.max(target_stent_radius))
+    return {
+        # as stent_bounding_box pads the box
+        "box_padding": target_stent_radius + influence_radius + contact_distance + 0.01 * L(),
+        "cap_height_fraction": cap_height_fraction,
+        # the smoothing radius smin_and_gradient uses when it is given none
+        "smoothing": 0.01 * L(),
+        "contact_distance": contact_distance,
+        "influence_radius": influence_radius,
+        "magnitude_scale": f_scale * (-s),
+    }
+
 def compute_sdf_contact_displacements(
     data: dict, stent_vertices: jx.Array,
     s: float,
@@ -838,6 +886,10 @@ def compute_sdf_contact_displacements(
     (:func:`smin_sdf_capsule_contact_sculpt`).  Per-vertex radii or
     flattened caps take the separate variable-radius code path
     (:func:`smin_sdf_variable_radius_capsule_contact_sculpt`).
+
+    Under the ``warp`` backend (:mod:`svmorph.core.backend`) the same step is
+    computed by the kernels of :mod:`svmorph.core.sdf_warp`, and the
+    displacement arrays are returned in single precision.
 
     Parameters
     ----------
@@ -879,21 +931,32 @@ def compute_sdf_contact_displacements(
     step_size : float
         Scalar step size for stent radius increment tracking.
     """
-    if influence_radius is None:
-        influence_radius = 0.65 * L()
-    if contact_distance is None:
-        contact_distance = 0.001 * L()
-    if f_scale is None:
-        f_scale = 0.01 * L()
+    influence_radius, contact_distance, f_scale = _sdf_contact_defaults(
+        influence_radius, contact_distance, f_scale)
     if np.ndim(target_stent_radius) > 0:
         target_stent_radius = float(np.max(target_stent_radius))
-    is_uniform_stent = np.ndim(current_stent_radius) == 0 and cap_height_fraction == 1.0
 
     # ── 1. Extract geometry from simulation data ──────────────────────
     force_center_point_id = data["nodes"]["force_center_point_id"]
     logger.debug(f"Selected pointId: {force_center_point_id}")
     data_points = data["points"]["surface"]
     centerline_points = data["points"]["centerline"]
+
+    if backend.get_backend() == "warp":
+        # Steps 2 to 9 below as Warp kernels on the device.  What follows this block is the
+        # JAX reference implementation of the same computation.
+        from svmorph.core import sdf_warp
+
+        start_time = time.time()
+        surface_displacements, centerline_displacements = sdf_warp.sdf_contact_displacements(
+            data_points, centerline_points, stent_vertices, current_stent_radius,
+            device=backend.warp_device(),
+            **_warp_step_parameters(
+                s, target_stent_radius, influence_radius, contact_distance, f_scale, cap_height_fraction))
+        logger.timing(f"Deployment step on the Warp device: {time.time() - start_time:.4f} s")
+        return surface_displacements, centerline_displacements, f_scale * (-s)
+
+    is_uniform_stent = _is_uniform_stent(current_stent_radius, cap_height_fraction)
 
     # ── 2. Bounding-box culling ──────────────────────────────────────
     # Restrict the expensive SDF evaluation to the axis-aligned bounding

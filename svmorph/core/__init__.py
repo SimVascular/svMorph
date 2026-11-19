@@ -1,5 +1,10 @@
 """Headless-compatible computation core (no VTK, no Qt)."""
 
+from svmorph.core.backend import (
+    available_backends,
+    get_backend,
+    set_backend,
+)
 from svmorph.core.deformation import (
     capsule_sdf,
     compute_aneurysm_displacements,
@@ -22,3 +27,4 @@ from svmorph.core.mesh_data import (
     compute_material_constants,
     get_centroid,
 )
+from svmorph.core.stent_deployment import StentDeployment
