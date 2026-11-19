@@ -27,6 +27,7 @@ from svmorph.core import geometry
 from svmorph.core import mesh_data
 from svmorph.core.units import L, unit_name
 from svmorph.core.defaults import (
+    ANEURYSM_MAX_RADIUS_DEFAULT_CM,
     STENT_DIAMETER_DEFAULT_CM,
     STENT_LENGTH_DEFAULT_CM,
     SMOOTHING_K_CM,
@@ -102,6 +103,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
         self.sharpness = 1.0
         self.force_scale = -1.0
+        self.aneurysm_radius = ANEURYSM_MAX_RADIUS_DEFAULT_CM * L()
         self.stent_radius = (STENT_DIAMETER_DEFAULT_CM / 2) * L()
         self.stent_length = STENT_LENGTH_DEFAULT_CM * L()
         self.smoothing_k = SMOOTHING_K_CM * L()
@@ -132,7 +134,7 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
     def timer_callback(self, obj, event):
         """Repeating timer callback that drives one sequential deformation step."""
-        self.deform_mesh_aneurysm(self.sharpness, self.force_scale)
+        self.deform_mesh_aneurysm(self.sharpness, self.force_scale, self.aneurysm_radius)
 
     def key_release_event(self, obj, event):
         """Handle key-release events.  Releasing 'd' destroys the deformation timer."""
@@ -469,6 +471,8 @@ class MeshInteractor(vtkInteractorStyleTrackballCamera):
 
     def deform_mesh_aneurysm(self, sharpness, force_scale, aneurysm_radius):
         """Run one step of the aneurysm deformation pipeline."""
+        # Remember the target so the repeating-timer path continues with the latest value
+        self.aneurysm_radius = aneurysm_radius
         if len(self.selected_points) < 1:
             logger.warning("Please select the distal start of the stent along the centerline.")
             return
