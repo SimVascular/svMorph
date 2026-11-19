@@ -42,6 +42,9 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["pyqt6>=6.7,<6.10"]
+# NVIDIA Warp runs the SDFStent deployment step on a CUDA GPU (svmorph/core/sdf_warp.py).
+# Optional: without it svMorph computes with JAX, exactly as before.
+warp = ["warp-lang>=1.5"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
