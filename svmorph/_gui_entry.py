@@ -17,6 +17,12 @@ _UNIT_SCALES = {"cm": 1.0, "mm": 10.0}
 
 def main() -> None:
     """Parse CLI arguments, configure logging, and launch the Qt application."""
+    # JAX before Qt.  PyQt6's Windows wheels bundle an older Microsoft C++ runtime (msvcp140.dll)
+    # than recent jaxlib builds need, and whichever of the two is imported first decides which
+    # copy the process loads: with Qt's loaded first, "import jax" fails with "DLL load failed
+    # while importing _jax".  Harmless elsewhere - JAX is imported a few lines down in any case.
+    import jax  # noqa: F401
+
     try:
         from PyQt6.QtWidgets import QApplication
     except ModuleNotFoundError:
