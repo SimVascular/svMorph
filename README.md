@@ -365,8 +365,9 @@ pipelines.
 | `MaximumInscribedSphereRadius` | scalar | MIS radius at each centerline point |
 | `CenterlineSectionArea` | scalar | Cross-sectional lumen area |
 
-Branching centerlines are supported; the `BranchIdTmp` and `CenterlineId` arrays
-are used to construct a parent-tip map for arc-length walks across bifurcations.
+Branching centerlines are supported; the `CenterlineId` array is used to construct
+a parent-tip map for arc-length walks across bifurcations.  If the array is absent,
+the centerline is treated as a single unbranched polyline.
 
 ---
 
