@@ -37,11 +37,13 @@ real-time feedback on commodity hardware.
 |---|---|
 | **SDFStent deployment** | Signed-distance-field virtual stenting with expansion of a crimped capsule-chain stent against the vessel wall, with bounding-box culling, KD-tree influence blending, and smooth-min C&sup1;-continuous distance fields. |
 | **SDFStent + straightening** | Same SDFStent deployment, with concurrent projection of the stent axis toward a straight line at each step. |
+| **SDFStent, flared stent** | Same SDFStent deployment, with a radius profile along the stent axis (one or both ends flared, tapers, local narrowings) and optionally flattened end caps. |
 | **Aneurysm creation** | Outward inflation at a centerline point via the scaling regularized Kelvinlet (F&nbsp;=&nbsp;s&middot;I). |
 | **Stenosis creation** | Inward contraction using a truncated-sphere quartic bump profile. |
 
-All four modes are available through both the **interactive GUI** (PyQt6 + VTK) and
-**headless CLI scripts** suitable for batch processing and CI pipelines.
+All modes are available through both the **interactive GUI** (PyQt6 + VTK) and
+**headless CLI scripts** suitable for batch processing and CI pipelines, except
+the flared stent, which is available through the CLI and the Python API only.
 
 ---
 
@@ -295,6 +297,41 @@ python -m svmorph.scripts.deploy_stent \
     --out-mesh deployed_surface.vtp --out-cl deployed_centerline.vtp
 ```
 
+**Deploy a flared stent (SDFStent, variable radius)** — same as above, but the
+stent radius follows a profile along the centerline instead of being uniform:
+the end opposite the `--start` point flares from the 0.4 cm body radius to
+0.6 cm over the last 0.5 cm of the stent (funnel/trumpet shape).  Use
+`--flare-end start` to flare the `--start` point side instead, or
+`--flare-end both` to flare both ends.
+`--cap-height-fraction` flattens the two stent end caps into half ellipsoids
+(axial semi-axis = fraction × end radius); this keeps a wide flared end from
+inflating a spherical bulge into the vessel beyond the stent end.  It only
+changes the stent ends: the stent body follows the radius profile regardless,
+including concave profiles (local narrowings).  Arbitrary radius profiles can
+be built programmatically with `svmorph.core.stent_radius_profile` (control
+points) or `svmorph.core.flared_stent_radius_profile` and passed as the
+per-vertex `current_stent_radius` of `compute_sdf_contact_displacements`.
+
+```bash
+python -m svmorph.scripts.deploy_stent \
+    --mesh surface.vtp --cline centerline.vtp \
+    --start 123 --target-R 0.4 --start-R 0.05 --length 1.7 \
+    --flare-R 0.6 --flare-length 0.5 --flare-end end \
+    --cap-height-fraction 0.35 \
+    --out-mesh deployed_surface.vtp --out-cl deployed_centerline.vtp
+```
+
+| Flag | Description |
+|---|---|
+| `--flare-R` | Stent radius at the tip of a flared end; omit for a uniform stent |
+| `--flare-length` | Length of each flare transition along the stent axis (default 0.5 cm) |
+| `--flare-end` | `end` (default, the side opposite `--start`), `start`, or `both` |
+| `--cap-height-fraction` | Axial height of the two stent end caps as a fraction of the end radius, in (0, 1]; `1.0` (default) keeps spherical caps |
+
+A uniform stent (no `--flare-R`, default `--cap-height-fraction`) is still
+evaluated by the original constant-radius SDF, so its results and run time are
+unaffected by these options.
+
 **Deploy with concurrent axis straightening (SDFStent)** — same stent geometry as above,
 but after each expansion step the stent axis is projected toward the straight
 line connecting its endpoints (strength 0.075), gradually removing curvature
@@ -391,6 +428,7 @@ they remain physically correct — you do not need to manually convert them.
 | Stent length | 1.7 cm | 17.0 mm |
 | Target stent radius | 0.4 cm | 4.0 mm |
 | Initial crimped radius | 0.05 cm | 0.5 mm |
+| Flare transition length | 0.5 cm | 5.0 mm |
 | Stenosis target radius | 0.1 cm | 1.0 mm |
 | Influence radius (doi in paper) | 0.65 cm | 6.5 mm |
 | Contact distance (doc in paper) | 0.001 cm | 0.01 mm|
@@ -422,7 +460,7 @@ they remain physically correct — you do not need to manually convert them.
 svmorph/
 ├── core/                  # Pure computation — no VTK, no Qt
 │   ├── deformation.py     #   Kelvinlet kernels, SDFStent (SDF-contact), displacement assembly
-│   ├── geometry.py         #   Arc-length centerline resampling (branch-aware)
+│   ├── geometry.py         #   Arc-length centerline resampling (branch-aware), stent radius profiles
 │   ├── mesh_data.py        #   Material constants, displacement application
 │   ├── defaults.py         #   Spatial default constants (cm)
 │   └── units.py            #   Runtime cm ↔ mm unit scaling
@@ -456,6 +494,8 @@ from svmorph.core import (
     compute_aneurysm_displacements,
     compute_stenosis_displacements,
     resample_stent_axis,
+    stent_radius_profile,          # per-vertex stent radii from control points
+    flared_stent_radius_profile,   # per-vertex stent radii for flared ends
 )
 ```
 

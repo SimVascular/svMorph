@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-svMorph edits patient-specific vascular geometry — a triangulated surface `.vtp` plus its centerline `.vtp` — through three workflows: SDFStent virtual stenting (optionally with axis straightening), regularized-Kelvinlet aneurysm creation, and stenosis creation. Every workflow exists both in a PyQt6 + VTK GUI and as a headless CLI script. Published to PyPI as `svmorph`.
+svMorph edits patient-specific vascular geometry — a triangulated surface `.vtp` plus its centerline `.vtp` — through three workflows: SDFStent virtual stenting (optionally with axis straightening), regularized-Kelvinlet aneurysm creation, and stenosis creation. Every workflow exists both in a PyQt6 + VTK GUI and as a headless CLI script; the one exception is the flared (variable-radius) stent, which is CLI and Python API only. Published to PyPI as `svmorph`.
 
 ## Commands
 
@@ -28,13 +28,13 @@ python -m svmorph.scripts.create_stenosis --help
 ```
 
 - No linter, formatter, or type checker is configured.
-- Tests need only NumPy/SciPy/JAX (no VTK, no Qt) and import `svmorph` from the source tree, so they run without installing the package.
+- Tests need only NumPy/SciPy/JAX (no VTK, no Qt) and import `svmorph` from the source tree, so they run without installing the package. The one exception is `tests/test_deploy_stent_cli.py`, which imports the CLI script and with it VTK; it is skipped when VTK is missing.
 - CI runs Python 3.9–3.12. Code must stay 3.9-compatible, which is why modules using `X | None` annotations start with `from __future__ import annotations`.
 - Pushing a `v*.*.*` tag triggers `.github/workflows/release.yml`, which publishes to PyPI. The version is hand-maintained in three places that must be bumped together: `pyproject.toml` (what the release uses), `__version__` in `svmorph/__init__.py`, and the README badge.
 
 ### What the tests do not cover
 
-The tracked tests cover only `core/units`, `core/defaults`, `core/geometry`, and `logging`. Nothing exercises `core/deformation.py`, `scripts/`, `visualization/`, or `gui/`, and no geometry is tracked (`*.vtp`, `input/`, and `tests/input|data|results/` are gitignored). Verifying a kernel or CLI change therefore means supplying a surface/centerline pair yourself. A synthetic straight tube is enough to run all four scripts end to end: `vtkLineSource` → `vtkTubeFilter` → `vtkTriangleFilter` for the surface, and a `vtkLineSource` polyline carrying a `MaximumInscribedSphereRadius` point array for the centerline.
+The tracked tests cover `core/units`, `core/defaults`, `core/geometry`, `logging`, the stent SDFs in `core/deformation.py` (uniform and variable-radius, on synthetic stent axes, plus the dispatch between the two in `compute_sdf_contact_displacements`), and argument validation of `scripts/deploy_stent.py`. Nothing exercises the aneurysm or stenosis kernels, any script's step loop end to end, `visualization/`, or `gui/`, and no geometry is tracked (`*.vtp`, `input/`, and `tests/input|data|results/` are gitignored). Verifying a deployment or CLI change therefore means supplying a surface/centerline pair yourself. A synthetic straight tube is enough to run all four scripts end to end: `vtkLineSource` → `vtkTubeFilter` → `vtkTriangleFilter` for the surface, and a `vtkLineSource` polyline carrying a `MaximumInscribedSphereRadius` point array for the centerline.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ Every workflow is an iteration of small displacement steps until a target radius
 - **GUI** — `MainWindow` → `SceneManager` (loads the VTPs, builds actors) → `MeshInteractor`, a `vtkInteractorStyleTrackballCamera` subclass that owns all simulation state (selected centerline point, stent axis vertices, current radius). Its `deform_mesh_*` methods check termination and its `run_*` methods perform one step; each button click or timer tick is one step. It reports progress by writing to the window title through a `_main_window` back-reference.
 - **CLI** — each script runs its own `while` loop over the same `compute_*` functions.
 
-Termination conditions, the foreshortening factor, axis straightening, the sharpness → epsilon mapping, and material constants are implemented in both `interactor.py` and the scripts, and the scripts hard-code their defaults as literals instead of importing `core/defaults.py`. A change to a workflow's behaviour or defaults has to be made in both places. The same goes for the GUI entry point: `main.py` (source runs) and `svmorph/_gui_entry.py` (the `svmorph-gui` console script) are parallel copies of the same argument handling.
+Termination conditions, the foreshortening factor, axis straightening, the sharpness → epsilon mapping, and material constants are implemented in both `interactor.py` and the scripts, and the scripts hard-code their defaults as literals instead of importing `core/defaults.py`. A change to a workflow's behaviour or defaults has to be made in both places. The flared stent is the exception: only `scripts/deploy_stent.py` builds a radius profile (`--flare-R`, `--flare-length`, `--flare-end`, `--cap-height-fraction`); the GUI and `deploy_stent_straighten.py` always deploy a uniform stent. The same goes for the GUI entry point: `main.py` (source runs) and `svmorph/_gui_entry.py` (the `svmorph-gui` console script) are parallel copies of the same argument handling.
 
 ### The simulation data dict is a live view of the VTK buffers
 
@@ -71,7 +71,9 @@ Each public `compute_*_displacements` is a NumPy-level wrapper around `@jx.jit` 
 
 - **Aneurysm / stenosis** build a Householder matrix reflecting the centerline tangent onto z, evaluate the kernel in that local frame with the axial component zeroed, and reflect back. They move the surface only. Progress is the distance from the center point to a single "representative" surface vertex picked once up front by `find_stenosis_minimum_radius_representative` (used for aneurysms too, despite the name).
 - **SDF contact (stent)** culls to the stent's padded bounding box, evaluates the smooth-min capsule-chain SDF for surface and centerline points in one batch, finds the contact set, uses a `cKDTree` over it to blend an influence zone, and scatters the result back to full size. It moves both surface and centerline. Progress is a radius incremented by the returned `step_size`.
-- The stent radius handed to the SDF kernel is the nominal radius **minus** the smooth-min constant `k` (`SMOOTHING_K_CM`), because the smooth-min blend inflates the capsule surface by up to `k` at segment junctions; `k` is added back wherever a radius is displayed or compared with the target.
+- **The stent SDF has two code paths, kept separate on purpose.** A scalar radius with the default spherical caps is evaluated by the constant-radius chain (`capsule_sdf`, `smin_sdf_capsule_contact_sculpt`). Per-vertex radii, or `cap_height_fraction` below 1, make `compute_sdf_contact_displacements` dispatch to `variable_radius_capsule_sdf` / `smin_sdf_variable_radius_capsule_contact_sculpt`, which cost about 25% more per evaluation. Do not route the uniform stent through the variable-radius kernel or merge the two: the uniform stent is what most users run and must keep its speed and its exact results. `tests/test_deformation.py` fails if either kind of deployment takes the other path.
+- In the variable-radius path the smooth minimum runs over the distance to the axis segments only. The fold also blends each segment's unclamped arc-length coordinate of the query point; the radius (a monotone cubic through the per-vertex radii) is evaluated there and subtracted after the smooth minimum, and only arc length beyond the two stent ends is shaped into the flattened half-ellipsoid caps. Subtracting per-segment radii or flattening caps inside the smooth minimum confines its blending to the joints and ripples the stent surface with the period of the segment length.
+- The stent radius handed to the SDF kernel is the nominal radius **minus** the smooth-min constant `k` (`SMOOTHING_K_CM`), because the smooth-min blend inflates the capsule surface by up to `k` at segment junctions; `k` is added back wherever a radius is displayed or compared with the target. For a flared stent the CLI scales the whole radius profile with the nominal radius and subtracts `k` per vertex.
 - Sign convention for the force scale `s`: aneurysm and SDF-contact kernels expand for `s < 0` (the GUI negates the slider value before passing it); stenosis contracts for `s > 0`.
 
 JAX runs in its default float32 mode. Jitted kernels retrace whenever input shapes change (a different mesh, or a stent length that changes the number of axis vertices).
